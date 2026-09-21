@@ -1,0 +1,653 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model actions {
+  id         BigInt    @id @unique(map: "idx_139996_primary") @default(autoincrement())
+  name       String    @db.VarChar(45)
+  created_at DateTime? @db.Timestamp(0)
+  updated_at DateTime? @db.Timestamp(0)
+  deleted_at DateTime? @db.Timestamp(0)
+  created_by String?   @db.VarChar(191)
+  updated_by String?   @db.VarChar(191)
+  deleted_by String?   @db.VarChar(191)
+}
+
+model activity_log {
+  id           BigInt    @id @unique(map: "idx_140006_primary") @default(autoincrement())
+  log_name     String?   @db.VarChar(191)
+  description  String
+  subject_id   Decimal?  @db.Decimal
+  subject_type String?   @db.VarChar(191)
+  causer_id    Decimal?  @db.Decimal
+  causer_type  String?   @db.VarChar(191)
+  properties   String?
+  created_at   DateTime? @db.Timestamp(0)
+  updated_at   DateTime? @db.Timestamp(0)
+
+  @@index([log_name], map: "idx_140006_activity_log_log_name_index")
+  @@index([causer_id, causer_type], map: "idx_140006_causer")
+  @@index([subject_id, subject_type], map: "idx_140006_subject")
+}
+
+model bank_data_categories {
+  id         BigInt    @id @unique(map: "idx_140016_primary") @default(autoincrement())
+  parent_id  BigInt?
+  name       String    @db.VarChar(100)
+  type       String?   @db.VarChar(100)
+  created_at DateTime? @db.Timestamp(0)
+  updated_at DateTime? @db.Timestamp(0)
+  deleted_at DateTime? @db.Timestamp(0)
+  created_by String?   @db.VarChar(191)
+  updated_by String?   @db.VarChar(191)
+  deleted_by String?   @db.VarChar(191)
+  image      String?   @db.VarChar(225)
+}
+
+model bank_data_contacts {
+  id                    BigInt    @id @unique(map: "idx_140028_primary") @default(autoincrement())
+  bank_data_category_id BigInt
+  name                  String?   @db.VarChar(100)
+  phone_number          String?   @db.VarChar(20)
+  instance              String?   @db.VarChar(255)
+  description           String?
+  image                 String?   @db.VarChar(200)
+  created_at            DateTime? @db.Timestamp(0)
+  updated_at            DateTime? @db.Timestamp(0)
+  deleted_at            DateTime? @db.Timestamp(0)
+  created_by            String?   @db.VarChar(191)
+  updated_by            String?   @db.VarChar(191)
+  deleted_by            String?   @db.VarChar(191)
+}
+
+model bank_data_documents {
+  id                    BigInt    @id @unique(map: "idx_140042_primary") @default(autoincrement())
+  bank_data_category_id BigInt
+  name                  String?   @db.VarChar(100)
+  letter_number         String?   @db.VarChar(100)
+  date                  DateTime? @db.Date
+  file                  String?   @db.VarChar(200)
+  description           String?
+  created_at            DateTime? @db.Timestamp(0)
+  updated_at            DateTime? @db.Timestamp(0)
+  deleted_at            DateTime? @db.Timestamp(0)
+  created_by            String?   @db.VarChar(191)
+  updated_by            String?   @db.VarChar(191)
+  deleted_by            String?   @db.VarChar(191)
+}
+
+model bank_data_foods {
+  id                    BigInt    @id @unique(map: "idx_140055_primary") @default(autoincrement())
+  bank_data_category_id BigInt
+  name                  String?   @db.VarChar(100)
+  phone_number          String?   @db.VarChar(20)
+  pic_name              String?   @db.VarChar(100)
+  pic_phone_number      String?   @db.VarChar(20)
+  description           String?
+  location              String?   @db.VarChar(255)
+  latitude              String?   @db.VarChar(255)
+  longitude             String?   @db.VarChar(255)
+  image                 String?   @db.VarChar(200)
+  created_at            DateTime? @db.Timestamp(0)
+  updated_at            DateTime? @db.Timestamp(0)
+  deleted_at            DateTime? @db.Timestamp(0)
+  created_by            String?   @db.VarChar(191)
+  updated_by            String?   @db.VarChar(191)
+  deleted_by            String?   @db.VarChar(191)
+}
+
+model bank_data_instances {
+  id                    BigInt    @id @unique(map: "idx_140073_primary") @default(autoincrement())
+  bank_data_category_id BigInt
+  name                  String?   @db.VarChar(100)
+  pic_name              String?   @db.VarChar(100)
+  pic_phone_number      String?   @db.VarChar(255)
+  description           String?
+  location              String?   @db.VarChar(255)
+  latitude              String?   @db.VarChar(255)
+  longitude             String?   @db.VarChar(255)
+  image                 String?   @db.VarChar(200)
+  created_at            DateTime? @db.Timestamp(0)
+  updated_at            DateTime? @db.Timestamp(0)
+  deleted_at            DateTime? @db.Timestamp(0)
+  created_by            String?   @db.VarChar(191)
+  updated_by            String?   @db.VarChar(191)
+  deleted_by            String?   @db.VarChar(191)
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model banners {
+  id          BigInt    @id @unique(map: "idx_140090_primary") @default(autoincrement())
+  image       String    @db.VarChar(225)
+  status      Int       @db.SmallInt
+  description String?
+  created_at  DateTime? @db.Timestamp(0)
+  updated_at  DateTime? @db.Timestamp(0)
+  deleted_at  DateTime? @db.Timestamp(0)
+  created_by  String?   @db.VarChar(191)
+  updated_by  String?   @db.VarChar(191)
+  deleted_by  String?   @db.VarChar(191)
+}
+
+model comments {
+  id         BigInt    @id @unique(map: "idx_140100_primary") @default(autoincrement())
+  text       String?
+  image      String?   @db.VarChar(200)
+  created_at DateTime? @db.Timestamp(0)
+  updated_at DateTime? @db.Timestamp(0)
+  deleted_at DateTime? @db.Timestamp(0)
+  created_by String?   @db.VarChar(191)
+  updated_by String?   @db.VarChar(191)
+  deleted_by String?   @db.VarChar(191)
+  user_id    BigInt?
+  event_id   BigInt?
+}
+
+model contact_people {
+  id                    BigInt    @id @unique(map: "idx_140111_primary") @default(autoincrement())
+  bank_data_category_id BigInt?
+  name                  String    @db.VarChar(100)
+  phonenumber           String    @db.VarChar(20)
+  job                   String    @db.VarChar(45)
+  instance              String?   @db.VarChar(255)
+  image                 String?   @db.VarChar(200)
+  created_at            DateTime? @db.Timestamp(0)
+  updated_at            DateTime? @db.Timestamp(0)
+  deleted_at            DateTime? @db.Timestamp(0)
+  created_by            String?   @db.VarChar(191)
+  updated_by            String?   @db.VarChar(191)
+  deleted_by            String?   @db.VarChar(191)
+}
+
+model disposition_actions {
+  id             BigInt    @id @unique(map: "idx_140135_primary") @default(autoincrement())
+  disposition_id BigInt
+  action_id      BigInt
+  note           String?
+  created_at     DateTime? @db.Timestamp(0)
+  updated_at     DateTime? @db.Timestamp(0)
+  deleted_at     DateTime? @db.Timestamp(0)
+  created_by     String?   @db.VarChar(191)
+  updated_by     String?   @db.VarChar(191)
+  deleted_by     String?   @db.VarChar(191)
+}
+
+model disposition_positions {
+  id             BigInt    @id @unique(map: "idx_140145_primary") @default(autoincrement())
+  disposition_id BigInt
+  position_id    BigInt
+  note           String?
+  created_at     DateTime? @db.Timestamp(0)
+  updated_at     DateTime? @db.Timestamp(0)
+  deleted_at     DateTime? @db.Timestamp(0)
+  created_by     String?   @db.VarChar(191)
+  updated_by     String?   @db.VarChar(191)
+  deleted_by     String?   @db.VarChar(191)
+}
+
+model disposition_sends {
+  id             BigInt    @id @unique(map: "idx_140155_primary") @default(autoincrement())
+  disposition_id BigInt
+  name           String    @default("") @db.VarChar(191)
+  created_at     DateTime? @db.Timestamp(0)
+  updated_at     DateTime? @db.Timestamp(0)
+  deleted_at     DateTime? @db.Timestamp(0)
+  created_by     String?   @db.VarChar(191)
+  updated_by     String?   @db.VarChar(191)
+  deleted_by     String?   @db.VarChar(191)
+}
+
+model dispositions {
+  id         BigInt    @id @unique(map: "idx_140123_primary") @default(autoincrement())
+  letter_id  BigInt
+  date       DateTime? @db.Date
+  note       String?
+  file       String?   @db.VarChar(225)
+  send_by    String?   @db.VarChar(225)
+  created_at DateTime? @db.Timestamp(0)
+  updated_at DateTime? @db.Timestamp(0)
+  deleted_at DateTime? @db.Timestamp(0)
+  created_by String?   @db.VarChar(191)
+  updated_by String?   @db.VarChar(191)
+  deleted_by String?   @db.VarChar(191)
+
+  @@index([id, letter_id, date, created_at], map: "idx_140123_idx_dispositions")
+}
+
+model event_letters {
+  id             BigInt    @id @unique(map: "idx_140182_primary") @default(autoincrement())
+  event_id       Decimal   @db.Decimal
+  letter_id      Decimal   @db.Decimal
+  disposition_id BigInt?
+  created_at     DateTime? @db.Timestamp(0)
+  updated_at     DateTime? @db.Timestamp(0)
+  deleted_at     DateTime? @db.Timestamp(0)
+  created_by     String?   @db.VarChar(191)
+  updated_by     String?   @db.VarChar(191)
+  deleted_by     String?   @db.VarChar(191)
+
+  @@unique([event_id, letter_id], map: "idx_140182_uk_event_letter")
+  @@index([disposition_id], map: "idx_140182_idx_event_letters_disposition_id")
+  @@index([event_id], map: "idx_140182_idx_event_letters_event_id")
+  @@index([letter_id], map: "idx_140182_idx_event_letters_letter_id")
+}
+
+model event_members {
+  id         BigInt    @id @unique(map: "idx_140192_primary") @default(autoincrement())
+  event_id   BigInt
+  user_id    BigInt
+  created_at DateTime? @db.Timestamp(0)
+  updated_at DateTime? @db.Timestamp(0)
+  deleted_at DateTime? @db.Timestamp(0)
+  created_by String?   @db.VarChar(191)
+  updated_by String?   @db.VarChar(191)
+  deleted_by String?   @db.VarChar(191)
+
+  @@index([id, event_id, user_id, created_at], map: "idx_140192_idx_event_members")
+}
+
+model event_reschedules {
+  id              BigInt    @id @default(autoincrement())
+  event_id        BigInt
+  old_time_start  DateTime? @db.Timestamp(0)
+  old_time_finish DateTime? @db.Timestamp(0)
+  new_time_start  DateTime? @db.Timestamp(0)
+  new_time_finish DateTime? @db.Timestamp(0)
+  until_finish    Int       @default(0)
+  reason          String?
+  created_at      DateTime? @default(now()) @db.Timestamp(0)
+  created_by      String?   @db.VarChar(191)
+  events          events    @relation(fields: [event_id], references: [id], onDelete: Cascade)
+
+  @@index([event_id])
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model events {
+  id                BigInt              @id @unique(map: "idx_140166_primary") @default(autoincrement())
+  disposition_id    BigInt?
+  letter_id         BigInt?
+  title             String
+  event_time_start  DateTime?           @db.Timestamp(0)
+  event_time_finish DateTime?           @db.Timestamp(0)
+  until_finish      Int                 @default(0)
+  is_internal       String?             @db.VarChar(1)
+  is_hide_location  String?             @db.VarChar(1)
+  time_zone         String?             @db.VarChar(10)
+  status            BigInt?
+  location          String?
+  longitude         Float?
+  latitude          Float?
+  pic_json          String?
+  pic_name          String?             @db.VarChar(225)
+  pic_phonenumber   String?             @db.VarChar(100)
+  created_at        DateTime?           @db.Timestamp(0)
+  updated_at        DateTime?           @db.Timestamp(0)
+  deleted_at        DateTime?           @db.Timestamp(0)
+  created_by        String?             @db.VarChar(191)
+  updated_by        String?             @db.VarChar(191)
+  deleted_by        String?             @db.VarChar(191)
+  notes             String?
+  event_reschedules event_reschedules[]
+
+  @@index([id, disposition_id, letter_id, created_at], map: "idx_140166_idx_events")
+}
+
+model forwards {
+  id          BigInt    @id @unique(map: "idx_140202_primary") @default(autoincrement())
+  letter_id   BigInt
+  position_id BigInt
+  description String?
+  created_at  DateTime? @db.Timestamp(0)
+  updated_at  DateTime? @db.Timestamp(0)
+  deleted_at  DateTime? @db.Timestamp(0)
+  created_by  String?   @db.VarChar(191)
+  updated_by  String?   @db.VarChar(191)
+  deleted_by  String?   @db.VarChar(191)
+}
+
+model guest_books {
+  id           BigInt    @id @unique(map: "idx_140211_primary")
+  agency_name  String    @db.VarChar(250)
+  pic          BigInt
+  phone_number String    @db.VarChar(45)
+  created_at   DateTime? @db.Timestamp(0)
+  updated_at   DateTime? @db.Timestamp(0)
+  deleted_at   DateTime? @db.Timestamp(0)
+  created_by   String?   @db.VarChar(191)
+  updated_by   String?   @db.VarChar(191)
+  deleted_by   String?   @db.VarChar(191)
+}
+
+model ingredient_categories {
+  id         BigInt    @id @unique(map: "idx_140230_primary") @default(autoincrement())
+  name       String    @db.VarChar(100)
+  created_at DateTime? @db.Timestamp(0)
+  updated_at DateTime? @db.Timestamp(0)
+  deleted_at DateTime? @db.Timestamp(0)
+  created_by String?   @db.VarChar(191)
+  updated_by String?   @db.VarChar(191)
+  deleted_by String?   @db.VarChar(191)
+  color      String?   @db.VarChar(100)
+  image      String?   @db.VarChar(225)
+
+  @@index([id, name, created_at], map: "idx_140230_idx_ingredient_categories")
+}
+
+model ingredients {
+  id                     BigInt    @id @unique(map: "idx_140220_primary") @default(autoincrement())
+  event_id               BigInt
+  ingredient_category_id BigInt
+  name                   String    @db.VarChar(225)
+  file                   String    @db.VarChar(225)
+  created_at             DateTime? @db.Timestamp(0)
+  updated_at             DateTime? @db.Timestamp(0)
+  deleted_at             DateTime? @db.Timestamp(0)
+  created_by             String?   @db.VarChar(191)
+  updated_by             String?   @db.VarChar(191)
+  deleted_by             String?   @db.VarChar(191)
+
+  @@index([id, event_id, ingredient_category_id, created_at], map: "idx_140220_idx_ingredients")
+}
+
+model itineraries {
+  id           BigInt    @id @unique(map: "idx_140242_primary") @default(autoincrement())
+  event_id     BigInt?
+  title        String
+  date_from    DateTime? @db.Date
+  date_to      DateTime? @db.Date
+  group        String?
+  advance_team String?
+  destination  String?   @db.VarChar(225)
+  area         BigInt?
+  description  String?
+  created_at   DateTime? @db.Timestamp(0)
+  updated_at   DateTime? @db.Timestamp(0)
+  deleted_at   DateTime? @db.Timestamp(0)
+  created_by   String?   @db.VarChar(191)
+  updated_by   String?   @db.VarChar(191)
+  deleted_by   String?   @db.VarChar(191)
+  time_zone    String?   @db.VarChar(45)
+}
+
+model itinerary_details {
+  id           BigInt    @id @unique(map: "idx_140254_primary") @default(autoincrement())
+  time_from    DateTime? @db.Timestamp(0)
+  time_to      DateTime? @db.Timestamp(0)
+  activity     String?
+  information  String?
+  created_at   DateTime? @db.Timestamp(0)
+  updated_at   DateTime? @db.Timestamp(0)
+  deleted_at   DateTime? @db.Timestamp(0)
+  created_by   String?   @db.VarChar(191)
+  updated_by   String?   @db.VarChar(191)
+  deleted_by   String?   @db.VarChar(191)
+  itinerary_id BigInt?
+}
+
+model letter_categories {
+  id         BigInt    @id @unique(map: "idx_140282_primary") @default(autoincrement())
+  name       String    @db.VarChar(45)
+  created_at DateTime? @db.Timestamp(0)
+  updated_at DateTime? @db.Timestamp(0)
+  deleted_at DateTime? @db.Timestamp(0)
+  created_by String?   @db.VarChar(191)
+  updated_by String?   @db.VarChar(191)
+  deleted_by String?   @db.VarChar(191)
+  image      String?   @db.VarChar(225)
+  color      String?   @db.VarChar(100)
+
+  @@index([id, name, created_at], map: "idx_140282_idx_letter_categories")
+}
+
+model letter_types {
+  id         BigInt    @id @unique(map: "idx_140294_primary") @default(autoincrement())
+  name       String    @db.VarChar(45)
+  created_at DateTime? @db.Timestamp(0)
+  updated_at DateTime? @db.Timestamp(0)
+  deleted_at DateTime? @db.Timestamp(0)
+  created_by String?   @db.VarChar(191)
+  updated_by String?   @db.VarChar(191)
+  deleted_by String?   @db.VarChar(191)
+
+  @@index([id, name, created_at], map: "idx_140294_idx_letter_types")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model letters {
+  id                     BigInt    @id @unique(map: "idx_140264_primary") @default(autoincrement())
+  letter_category_id     BigInt
+  agenda_number          String    @db.VarChar(100)
+  date_letter            DateTime? @db.Date
+  from                   String    @db.VarChar(225)
+  subject                String?   @db.VarChar(225)
+  date_event             DateTime? @db.Date
+  time_event             DateTime? @db.Time(6)
+  time_event_finish      DateTime? @db.Time(6)
+  place_event            String?   @db.VarChar(225)
+  type_letter            BigInt?
+  note                   String?
+  file                   String?   @db.VarChar(225)
+  number_or_date         String?   @db.VarChar(100)
+  time_zone              String?   @db.VarChar(100)
+  pic_name               String?   @db.VarChar(100)
+  pic_phone_number       String?   @db.VarChar(50)
+  delivery_via           String?   @db.VarChar(100)
+  status                 Int?      @db.SmallInt
+  created_at             DateTime? @db.Timestamp(0)
+  updated_at             DateTime? @db.Timestamp(0)
+  deleted_at             DateTime? @db.Timestamp(0)
+  created_by             String?   @db.VarChar(191)
+  updated_by             String?   @db.VarChar(191)
+  deleted_by             String?   @db.VarChar(191)
+  disposition_printed_at DateTime? @db.Timestamp(0)
+  institution_origin     String    @default("Lainnya")
+  date_event_end         DateTime? @db.Date
+  pic_json               String?
+
+  @@index([id, letter_category_id, created_at], map: "idx_140264_idx_letter")
+  @@index([status], map: "idx_140264_idx_letters_status")
+}
+
+model migrations {
+  id        BigInt @id @unique(map: "idx_140304_primary") @default(autoincrement())
+  migration String @db.VarChar(191)
+  batch     BigInt
+}
+
+model model_has_permissions {
+  permission_id BigInt
+  model_type    String      @db.VarChar(191)
+  model_id      Decimal     @db.Decimal
+  permissions   permissions @relation(fields: [permission_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "model_has_permissions_permission_id_foreign")
+
+  @@id([permission_id, model_id, model_type])
+  @@unique([permission_id, model_id, model_type], map: "idx_140308_primary")
+  @@index([model_id, model_type], map: "idx_140308_model_has_permissions_model_id_model_type_index")
+}
+
+model model_has_roles {
+  role_id    BigInt
+  model_type String  @db.VarChar(191)
+  model_id   Decimal @db.Decimal
+  roles      roles   @relation(fields: [role_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "model_has_roles_role_id_foreign")
+
+  @@id([role_id, model_id, model_type])
+  @@unique([role_id, model_id, model_type], map: "idx_140313_primary")
+  @@index([model_id, model_type], map: "idx_140313_model_has_roles_model_id_model_type_index")
+}
+
+model monitoring_members {
+  id            BigInt    @id @unique(map: "idx_140319_primary") @default(autoincrement())
+  letter_id     BigInt?
+  name          String?   @db.VarChar(100)
+  position      String?   @db.VarChar(100)
+  phone_number  String?   @db.VarChar(45)
+  email         String?   @db.VarChar(255)
+  police_number String?   @db.VarChar(45)
+  created_at    DateTime? @db.Timestamp(0)
+  updated_at    DateTime? @db.Timestamp(0)
+  deleted_at    DateTime? @db.Timestamp(0)
+  created_by    String?   @db.VarChar(191)
+  updated_by    String?   @db.VarChar(191)
+  deleted_by    String?   @db.VarChar(191)
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model notifications {
+  id              BigInt    @id @unique(map: "idx_140334_primary") @default(autoincrement())
+  created_user_id BigInt
+  user_id         BigInt
+  event_id        BigInt?
+  itinerary_id    BigInt?
+  type            String    @db.VarChar(100)
+  message         String
+  status          Int       @default(0) @db.SmallInt
+  created_at      DateTime? @db.Timestamp(0)
+  updated_at      DateTime? @db.Timestamp(0)
+  deleted_at      DateTime? @db.Timestamp(0)
+  created_by      String?   @db.VarChar(100)
+  updated_by      String?   @db.VarChar(100)
+  deleted_by      String?   @db.VarChar(100)
+}
+
+model oauth_access_tokens {
+  id         String    @id @unique(map: "idx_140344_primary") @db.VarChar(100)
+  user_id    BigInt?
+  client_id  BigInt
+  name       String?   @db.VarChar(255)
+  scopes     String?
+  revoked    Int       @db.SmallInt
+  created_at DateTime? @db.Timestamp(0)
+  updated_at DateTime? @db.Timestamp(0)
+  expires_at DateTime? @db.Timestamp(0)
+
+  @@index([user_id], map: "idx_140344_oauth_access_tokens_user_id_index")
+}
+
+model oauth_auth_codes {
+  id         String    @id @unique(map: "idx_140350_primary") @db.VarChar(100)
+  user_id    BigInt
+  client_id  BigInt
+  scopes     String?
+  revoked    Int       @db.SmallInt
+  expires_at DateTime? @db.Timestamp(0)
+}
+
+model oauth_clients {
+  id                     BigInt    @id @unique(map: "idx_140356_primary") @default(autoincrement())
+  user_id                BigInt?
+  name                   String    @db.VarChar(255)
+  secret                 String    @db.VarChar(100)
+  redirect               String
+  personal_access_client Int       @db.SmallInt
+  password_client        Int       @db.SmallInt
+  revoked                Int       @db.SmallInt
+  created_at             DateTime? @db.Timestamp(0)
+  updated_at             DateTime? @db.Timestamp(0)
+
+  @@index([user_id], map: "idx_140356_oauth_clients_user_id_index")
+}
+
+model oauth_personal_access_clients {
+  id         BigInt    @id @unique(map: "idx_140363_primary") @default(autoincrement())
+  client_id  BigInt
+  created_at DateTime? @db.Timestamp(0)
+  updated_at DateTime? @db.Timestamp(0)
+
+  @@index([client_id], map: "idx_140363_oauth_personal_access_clients_client_id_index")
+}
+
+model oauth_refresh_tokens {
+  id              String    @id @unique(map: "idx_140367_primary") @db.VarChar(100)
+  access_token_id String    @db.VarChar(100)
+  revoked         Int       @db.SmallInt
+  expires_at      DateTime? @db.Timestamp(0)
+
+  @@index([access_token_id], map: "idx_140367_oauth_refresh_tokens_access_token_id_index")
+}
+
+model permissions {
+  id                    BigInt                  @id @unique(map: "idx_140371_primary") @default(autoincrement())
+  name                  String                  @db.VarChar(191)
+  guard_name            String                  @db.VarChar(191)
+  created_at            DateTime?               @db.Timestamp(0)
+  updated_at            DateTime?               @db.Timestamp(0)
+  model_has_permissions model_has_permissions[]
+  role_has_permissions  role_has_permissions[]
+}
+
+model position_itineraries {
+  id         BigInt    @id @unique(map: "idx_140387_primary") @default(autoincrement())
+  name       String    @db.VarChar(255)
+  created_at DateTime? @db.Timestamp(0)
+  updated_at DateTime? @db.Timestamp(0)
+  deleted_at DateTime? @db.Timestamp(0)
+  created_by String?   @db.VarChar(191)
+  updated_by String?   @db.VarChar(191)
+  deleted_by String?   @db.VarChar(191)
+}
+
+model positions {
+  id         BigInt    @id @unique(map: "idx_140376_primary") @default(autoincrement())
+  name       String    @db.VarChar(255)
+  alias      String?   @db.VarChar(255)
+  created_at DateTime? @db.Timestamp(0)
+  updated_at DateTime? @db.Timestamp(0)
+  deleted_at DateTime? @db.Timestamp(0)
+  created_by String?   @db.VarChar(191)
+  updated_by String?   @db.VarChar(191)
+  deleted_by String?   @db.VarChar(191)
+}
+
+model role_has_permissions {
+  permission_id BigInt
+  role_id       BigInt
+  permissions   permissions @relation(fields: [permission_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "role_has_permissions_permission_id_foreign")
+  roles         roles       @relation(fields: [role_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "role_has_permissions_role_id_foreign")
+
+  @@id([permission_id, role_id])
+  @@unique([permission_id, role_id], map: "idx_140401_primary")
+  @@index([role_id], map: "idx_140401_role_has_permissions_role_id_foreign")
+}
+
+model roles {
+  id                   BigInt                 @id @unique(map: "idx_140397_primary") @default(autoincrement())
+  name                 String                 @db.VarChar(191)
+  guard_name           String                 @db.VarChar(191)
+  created_at           DateTime?              @db.Timestamp(0)
+  updated_at           DateTime?              @db.Timestamp(0)
+  model_has_roles      model_has_roles[]
+  role_has_permissions role_has_permissions[]
+}
+
+model schema_change_log {
+  id          BigInt   @id @unique(map: "idx_140405_primary") @default(autoincrement())
+  script_name String   @unique(map: "idx_140405_uk_script_name") @db.VarChar(255)
+  applied_at  DateTime @default(now()) @db.Timestamp(0)
+  applied_by  String?  @db.VarChar(100)
+  notes       String?
+}
+
+model users {
+  id             BigInt    @id @unique(map: "idx_140414_primary") @default(autoincrement())
+  name           String    @db.VarChar(100)
+  email          String    @unique(map: "idx_140414_users_email_unique") @db.VarChar(50)
+  image          String?   @db.VarChar(50)
+  password       String    @db.VarChar(191)
+  remember_token String?   @db.VarChar(100)
+  created_at     DateTime? @db.Timestamp(0)
+  updated_at     DateTime? @db.Timestamp(0)
+  deleted_at     DateTime? @db.Timestamp(0)
+  role           String?   @db.VarChar(100)
+  phone_number   String    @db.VarChar(100)
+  device_id      String?
+
+  @@index([id, name, email, created_at], map: "idx_140414_idx_users")
+}

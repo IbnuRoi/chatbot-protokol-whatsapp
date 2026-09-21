@@ -1,0 +1,57 @@
+{
+  "name": "chatbot-whatsapp-protokol",
+  "version": "1.0.0",
+  "description": "Sistem Chatbot WhatsApp Administrasi Protokol Kemnaker",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "simulate": "tsx src/bot/simulator.ts",
+    "simulator": "tsx src/bot/simulator.ts",
+    "dev:simulator": "tsx src/bot/simulator.ts",
+    "db:push": "prisma db push",
+    "db:pull": "tsx src/tools/dbPull.ts",
+    "db:generate": "prisma generate",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:studio": "prisma studio",
+    "db:tunnel": "tsx src/tools/dbTunnel.ts",
+    "db:test": "tsx src/tools/testDbConnection.ts",
+    "user:add": "tsx src/tools/addUser.ts",
+    "user:delete": "tsx src/tools/deleteUser.ts",
+    "user:sync-lids": "tsx src/tools/syncLids.ts",
+    "schedule:add": "tsx src/tools/addUpcomingSchedules.ts",
+    "letters:add": "tsx src/tools/addDiverseSampleLetters.ts",
+    "test:pdf": "tsx src/tools/generateSamplePdf.ts",
+    "build": "tsc"
+  },
+  "keywords": [
+    "whatsapp",
+    "chatbot",
+    "protokol",
+    "kemnaker",
+    "baileys",
+    "prisma"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/genai": "^2.21.0",
+    "@prisma/client": "6.4.1",
+    "@whiskeysockets/baileys": "6.7.24",
+    "cloudinary": "^2.11.0",
+    "dotenv": "^17.4.2",
+    "openai": "^7.12.1",
+    "pdf-parse": "^2.4.5",
+    "pino": "^10.3.1",
+    "prisma": "6.4.1",
+    "qrcode-terminal": "^0.12.0",
+    "ssh2": "^1.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "@types/qrcode-terminal": "^0.12.2",
+    "@types/ssh2": "^1.15.6",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  }
+}
