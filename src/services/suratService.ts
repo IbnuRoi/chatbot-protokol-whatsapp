@@ -198,12 +198,13 @@ export class SuratService {
     }
 
     let nextSeq = maxSeq + 1;
-    const padSeq = (seq: number) => String(seq).padStart(3, '0');
+    // Format urutan nomor agenda di database mengikuti angka natural (contoh: 56/M/UNR/..., 248/M/UND/...)
+    const formatSeq = (seq: number) => String(seq);
 
-    let candidate = `${padSeq(nextSeq)}/M/${cleanJenis}/${romanMonth}/${tahun}`;
+    let candidate = `${formatSeq(nextSeq)}/M/${cleanJenis}/${romanMonth}/${tahun}`;
     while (await this.isNomorAgendaExists(candidate)) {
       nextSeq++;
-      candidate = `${padSeq(nextSeq)}/M/${cleanJenis}/${romanMonth}/${tahun}`;
+      candidate = `${formatSeq(nextSeq)}/M/${cleanJenis}/${romanMonth}/${tahun}`;
     }
 
     return candidate;
