@@ -27,6 +27,9 @@ export interface NluEntities {
   tanggal?: string; // Format ISO: YYYY-MM-DD
   rentangHari?: number; // Jumlah hari ke depan (misal: 2, 3, 5, 7, 14)
   rentangLabel?: string; // Label rentang hari (misal: "2 Hari ke Depan", "Seminggu ke Depan")
+  location?: string; // Lokasi acara/kegiatan (misal: "Bali", "Hotel Mulia", "Bandung")
+  sender?: string; // Nama instansi/pengirim (misal: "Kemenkeu", "APINDO", "DPR RI")
+  categoryFilter?: string; // Filter jenis dokumen/acara (misal: "undangan", "permohonan", "rakor")
   nomorSurat?: string;
   jenisSurat?: 'UND' | 'UNR' | 'PH' | 'AU' | 'WR' | 'LP' | 'TAP';
   agendaAction?: 'CONFIRM' | 'MANUAL';
@@ -276,6 +279,9 @@ export class NluService {
         tanggal: parsed.entities?.tanggal || undefined,
         rentangHari: parsed.entities?.rentangHari || undefined,
         rentangLabel: parsed.entities?.rentangLabel || undefined,
+        location: parsed.entities?.location || undefined,
+        sender: parsed.entities?.sender || undefined,
+        categoryFilter: parsed.entities?.categoryFilter || undefined,
         nomorSurat: parsed.entities?.nomorSurat || undefined,
         jenisSurat: parsed.entities?.jenisSurat || undefined,
         agendaAction: parsed.entities?.agendaAction || undefined,
@@ -378,7 +384,7 @@ export class NluService {
 
     // 3. Bersihkan kata pengantar, awalan kata kerja, filler, kata hubung secara berulang
     const prefixRegex =
-      /^(tolong|mohon|bisa|bisakah|coba|min|halo|hai|ada|apakah ada|apakah|punya|punya ngga|berikan|beri|kasih|kasih tau|beritahu|beri tahu|minta|tampilkan|tampilkanlah|jelaskan|terangkan|detail|rincian|keterangan|penjelasan|informasi|info|carikan|cari|searching|search|cek|lacak|lihat|liat|temukan|kan|in|dokumen|arsip|berkas|data|surat masuk|surat dinas|surat|jadwal|agenda|kegiatan|acara|tentang|perihal|mengenai|terkait|soal|dari|dengan topik|topik|hal)\s+/i;
+      /^(tolong|mohon|bisa|bisakah|coba|min|halo|hai|ada|apakah ada|apakah|punya|punya ngga|berikan|beri|kasih|kasih tau|beritahu|beri tahu|minta|tampilkan|tampilkanlah|jelaskan|terangkan|detail|rincian|keterangan|penjelasan|informasi|info|carikan|cari|searching|search|cek|lacak|lihat|liat|temukan|kan|in|dokumen|arsip|berkas|data|surat masuk|surat dinas|surat|jadwal|agenda|kegiatan|acara|tentang|perihal|mengenai|terkait|soal|dari|dengan topik|topik|hal|di)\s+/i;
 
     let previous = '';
     while (clean !== previous && prefixRegex.test(clean)) {
@@ -391,8 +397,21 @@ export class NluService {
       }
     }
 
-    // Bersihkan lagi jika masih tersisa kata hubung di awal seperti "tentang", "mengenai", dsb.
-    clean = clean.replace(/^(tentang|mengenai|terkait|soal|hal|perihal)\s+/i, '').trim();
+    // Bersihkan lagi jika masih tersisa kata hubung/preposisi di awal seperti "tentang", "mengenai", "dari", "di", dsb.
+    clean = clean.replace(/^(tentang|mengenai|terkait|soal|hal|perihal|dari|pada|di)\s+/i, '').trim();
+
+    // 4. Bersihkan penanda waktu dari kata kunci pencarian jika masih ada kata inti lainnya
+    const temporalSuffixRegex = /\s+(hari ini|besok|esok|lusa|kemarin|minggu ini|minggu depan|pekan ini|pekan depan|bulan ini|bulan depan|tahun ini)\b/gi;
+    const withoutTemporal = clean.replace(temporalSuffixRegex, '').trim();
+    if (withoutTemporal.length >= 2) {
+      clean = withoutTemporal;
+    }
+
+    const temporalPrefixRegex = /^(hari ini|besok|esok|lusa|kemarin|minggu ini|minggu depan|pekan ini|pekan depan|bulan ini|bulan depan)\s+/gi;
+    const withoutPrefixTemporal = clean.replace(temporalPrefixRegex, '').trim();
+    if (withoutPrefixTemporal.length >= 2) {
+      clean = withoutPrefixTemporal;
+    }
 
     return clean;
   }

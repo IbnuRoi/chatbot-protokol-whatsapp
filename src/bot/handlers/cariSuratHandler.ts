@@ -23,16 +23,25 @@ export class CariSuratHandler {
   /**
    * Memproses input kata kunci dan menampilkan hasil pencarian
    */
-  public async handleSearchKeyword(session: UserSession, input: string): Promise<BotResponse> {
-    let clean = input.trim();
-    const lowerRaw = clean.toLowerCase();
+  public async handleSearchKeyword(
+    session: UserSession,
+    input: string,
+    options?: { dateStart?: Date; dateEnd?: Date; sender?: string; dateLabel?: string }
+  ): Promise<BotResponse> {
+    const raw = input.trim();
+    let clean = raw;
 
-    if (lowerRaw === 'batal' || lowerRaw === 'menu' || lowerRaw === '0') {
+    if (clean === '0' || clean.toLowerCase() === 'batal' || clean.toLowerCase() === 'menu') {
       sessionService.resetSession(session.whatsappNumber);
       return menuHandler.getMainGreeting(session);
     }
 
-    // Jika pengguna meminta melihat riwayat atau surat terbaru
+    if (clean === '5' || clean.toLowerCase() === 'cari surat') {
+      return this.promptKeyword(session);
+    }
+
+    // Jika pengguna meminta surat terbaru
+    const lowerRaw = raw.toLowerCase();
     if (
       lowerRaw === 'terbaru' ||
       lowerRaw === 'terakhir' ||
@@ -66,7 +75,19 @@ export class CariSuratHandler {
       };
     }
 
-    const results = await suratService.searchSuratByPerihal(clean);
+    let results = await suratService.searchSuratByPerihal(clean, options);
+    let timeFilterNotice = '';
+
+    // Smart fallback jika tidak ada surat pada tanggal spesifik
+    if (results.length === 0 && (options?.dateStart || options?.dateEnd)) {
+      const broadResults = await suratService.searchSuratByPerihal(clean);
+      if (broadResults.length > 0) {
+        results = broadResults;
+        timeFilterNotice = options.dateLabel
+          ? `_ℹ️ Catatan: Belum ditemukan surat pada ${options.dateLabel}. Berikut arsip surat terdekat terkait "${clean}":_\n\n`
+          : `_ℹ️ Catatan: Menampilkan arsip surat terdekat terkait "${clean}":_\n\n`;
+      }
+    }
 
     session.searchKeyword = clean;
     session.searchResults = results;
@@ -82,7 +103,13 @@ export class CariSuratHandler {
     }
 
     sessionService.setState(session.whatsappNumber, BotState.CARI_SURAT_HASIL_LIST);
-    return this.renderSearchResults(session);
+    const res = this.renderSearchResults(session);
+    if (timeFilterNotice) {
+      return typeof res === 'string'
+        ? `${timeFilterNotice}${res}`
+        : { ...res, text: `${timeFilterNotice}${res.text}` };
+    }
+    return res;
   }
 
   /**

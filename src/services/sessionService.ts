@@ -49,6 +49,17 @@ export interface ExtractedSuratData {
   event: string;
   picPengirim: string;
   perihal: string;
+  // Entitas klasifikasi kategori & perihal template
+  kategoriSurat?: 'UND' | 'PH' | 'UNR' | 'WR' | 'AU' | 'TAP' | 'LP';
+  alasanKategori?: string;
+  namaAcara?: string;
+  temaAcara?: string;
+  penyelenggara?: string;
+  sesiAcara?: string; // misal: "Sambutan", "Keynote Speech", "Arahan", "Narasumber"
+  mempelai1?: string; // misal: "Anisa Rahmawati, S.E. (Putri Bapak H. Ahmad dan Ibu Hj. Siti)"
+  mempelai2?: string; // misal: "Dimas Pratama, S.T. (Putra Bapak Ir. Bambang dan Ibu Sri)"
+  pokokBahasan?: string; // untuk WR / AU
+  rangkaUcapan?: string; // untuk TAP (misal: "Hari Ulang Tahun ke-75 PT Aneka Tambang Tbk")
 }
 
 export interface SuratDraftData {

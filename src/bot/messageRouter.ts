@@ -9,6 +9,7 @@ import { hybridSearchHandler } from './handlers/hybridSearchHandler';
 import { bantuanHandler } from './handlers/bantuanHandler';
 import { sessionService, BotState, UserSession } from '../services/sessionService';
 import { nluService, NluResult } from '../services/nluService';
+import { jadwalService } from '../services/jadwalService';
 import { extractDateRangeFromText } from '../utils/dateHelper';
 import { BotResponse } from './types';
 
@@ -537,11 +538,33 @@ export class MessageRouter {
       }
 
       case 'JADWAL_HARI_INI': {
+        const keyword = nlu.entities?.keyword || nluService.extractSearchKeyword(textInput);
+        if (keyword && keyword.length >= 2 && !['hari ini', 'jadwal', 'agenda', 'kegiatan'].includes(keyword.toLowerCase())) {
+          const range = jadwalService.getWibDayRange(0);
+          const res = await hybridSearchHandler.handleSearch(session, keyword, {
+            startDate: range.startOfDay,
+            endDate: range.endOfDay,
+            dateLabel: 'hari ini',
+            location: nlu.entities?.location,
+          });
+          return prependIntro(res, nlu.conversationalReply);
+        }
         const res = await jadwalHandler.showJadwalMenu(session);
         return prependIntro(res, nlu.conversationalReply);
       }
 
       case 'JADWAL_BESOK': {
+        const keyword = nlu.entities?.keyword || nluService.extractSearchKeyword(textInput);
+        if (keyword && keyword.length >= 2 && !['besok', 'esok', 'jadwal', 'agenda', 'kegiatan'].includes(keyword.toLowerCase())) {
+          const range = jadwalService.getWibDayRange(1);
+          const res = await hybridSearchHandler.handleSearch(session, keyword, {
+            startDate: range.startOfDay,
+            endDate: range.endOfDay,
+            dateLabel: 'besok',
+            location: nlu.entities?.location,
+          });
+          return prependIntro(res, nlu.conversationalReply);
+        }
         const res = await jadwalHandler.showJadwalBesok(session);
         return prependIntro(res, nlu.conversationalReply);
       }
@@ -560,20 +583,45 @@ export class MessageRouter {
         const parsedRange = extractDateRangeFromText(textInput);
         const days = nlu.entities?.rentangHari || parsedRange?.daysCount || 7;
         const label = nlu.entities?.rentangLabel || parsedRange?.label || `${days} Hari ke Depan`;
+        const keyword = nlu.entities?.keyword || nluService.extractSearchKeyword(textInput);
+        if (keyword && keyword.length >= 2 && !label.toLowerCase().includes(keyword.toLowerCase()) && !['jadwal', 'agenda', 'kegiatan'].includes(keyword.toLowerCase())) {
+          const startRange = jadwalService.getWibDayRange(0);
+          const endRange = jadwalService.getWibDayRange(days);
+          const res = await hybridSearchHandler.handleSearch(session, keyword, {
+            startDate: startRange.startOfDay,
+            endDate: endRange.endOfDay,
+            dateLabel: label,
+            location: nlu.entities?.location,
+          });
+          return prependIntro(res, nlu.conversationalReply);
+        }
         const res = await jadwalHandler.showJadwalRentang(session, days, label);
         return prependIntro(res, nlu.conversationalReply);
       }
 
       case 'JADWAL_CARI': {
+        const keyword = nlu.entities?.keyword || nluService.extractSearchKeyword(textInput);
         if (nlu.entities?.tanggal) {
+          if (keyword && keyword.length >= 2 && !['jadwal', 'agenda', 'kegiatan', 'tanggal'].includes(keyword.toLowerCase())) {
+            const dateRange = jadwalService.getWibRangeForDate(nlu.entities.tanggal);
+            const res = await hybridSearchHandler.handleSearch(session, keyword, {
+              startDate: dateRange.startOfDay,
+              endDate: dateRange.endOfDay,
+              dateLabel: `tanggal ${nlu.entities.tanggal}`,
+              location: nlu.entities?.location,
+            });
+            return prependIntro(res, nlu.conversationalReply);
+          }
           const res = await jadwalHandler.showJadwalTanggal(session, nlu.entities.tanggal);
           return prependIntro(res, nlu.conversationalReply);
         }
-        const keyword = nlu.entities?.keyword || nluService.extractSearchKeyword(textInput);
+
         if (keyword && keyword.length >= 2) {
-          // Jika pertanyaan tidak spesifik hanya jadwal (misal menanyakan topik umum atau menyebut surat dan agenda sekaligus):
           if (isUnspecificSearch(textInput)) {
-            const res = await hybridSearchHandler.handleSearch(session, keyword);
+            const res = await hybridSearchHandler.handleSearch(session, keyword, {
+              location: nlu.entities?.location,
+              sender: nlu.entities?.sender,
+            });
             return prependIntro(res, nlu.conversationalReply);
           }
           const res = await jadwalHandler.handleSearchKeyword(session, keyword);
@@ -612,14 +660,30 @@ export class MessageRouter {
           return prependIntro(res, nlu.conversationalReply);
         }
 
+        const searchOptions: any = {};
+        if (nlu.entities?.tanggal) {
+          const dateRange = jadwalService.getWibRangeForDate(nlu.entities.tanggal);
+          searchOptions.dateStart = dateRange.startOfDay;
+          searchOptions.dateEnd = dateRange.endOfDay;
+          searchOptions.dateLabel = `tanggal ${nlu.entities.tanggal}`;
+        }
+        if (nlu.entities?.sender) {
+          searchOptions.sender = nlu.entities.sender;
+        }
+
         // Jika pertanyaan tidak spesifik hanya surat (misal menanyakan topik umum atau menyebut surat dan agenda sekaligus):
         if (keyword && keyword.length >= 2 && isUnspecificSearch(textInput)) {
-          const res = await hybridSearchHandler.handleSearch(session, keyword);
+          const res = await hybridSearchHandler.handleSearch(session, keyword, {
+            startDate: searchOptions.dateStart,
+            endDate: searchOptions.dateEnd,
+            sender: searchOptions.sender,
+            dateLabel: searchOptions.dateLabel,
+          });
           return prependIntro(res, nlu.conversationalReply);
         }
 
         if (keyword && keyword.length >= 2) {
-          const res = await cariSuratHandler.handleSearchKeyword(session, keyword);
+          const res = await cariSuratHandler.handleSearchKeyword(session, keyword, searchOptions);
           return prependIntro(res, nlu.conversationalReply);
         }
         const res = await cariSuratHandler.promptKeyword(session);
@@ -629,7 +693,24 @@ export class MessageRouter {
       case 'CARI_UMUM': {
         const keyword = nlu.entities?.keyword || nluService.extractSearchKeyword(textInput);
         if (keyword && keyword.length >= 2) {
-          const res = await hybridSearchHandler.handleSearch(session, keyword);
+          const context: any = {
+            location: nlu.entities?.location,
+            sender: nlu.entities?.sender,
+          };
+          if (nlu.entities?.tanggal) {
+            const dateRange = jadwalService.getWibRangeForDate(nlu.entities.tanggal);
+            context.startDate = dateRange.startOfDay;
+            context.endDate = dateRange.endOfDay;
+            context.dateLabel = `tanggal ${nlu.entities.tanggal}`;
+          } else if (nlu.entities?.rentangHari) {
+            const startRange = jadwalService.getWibDayRange(0);
+            const endRange = jadwalService.getWibDayRange(nlu.entities.rentangHari);
+            context.startDate = startRange.startOfDay;
+            context.endDate = endRange.endOfDay;
+            context.dateLabel = nlu.entities.rentangLabel || `${nlu.entities.rentangHari} hari ke depan`;
+          }
+
+          const res = await hybridSearchHandler.handleSearch(session, keyword, context);
           return prependIntro(res, nlu.conversationalReply);
         }
         return {

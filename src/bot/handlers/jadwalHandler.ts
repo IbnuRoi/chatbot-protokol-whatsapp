@@ -1,6 +1,6 @@
 import { sessionService, BotState, UserSession } from '../../services/sessionService';
 import { jadwalService, formatTanggalIndo, NormalizedJadwal } from '../../services/jadwalService';
-import { NluResult } from '../../services/nluService';
+import { nluService, NluResult } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { cariSuratHandler } from './cariSuratHandler';
 import { BotResponse } from '../types';
@@ -250,21 +250,65 @@ export class JadwalHandler {
       return cariSuratHandler.handleSearchKeyword(session, clean);
     }
 
-    // Jika kata kunci adalah rentang tanggal (contoh: "2 hari kedepan", "seminggu kedepan")
+    // Ekstrak kemungkinan tanggal, rentang waktu, dan kata kunci inti
+    const dateMatch = extractDateFromText(clean);
     const rangeMatch = extractDateRangeFromText(clean);
-    if (rangeMatch) {
+    const keywordOnly = nluService.extractSearchKeyword(clean);
+
+    // Kasus 1: Ada tanggal DAN ada kata kunci topik (contoh: "rakor tanggal 18 september")
+    if (dateMatch && keywordOnly && keywordOnly.length >= 2) {
+      const dateRange = jadwalService.getWibRangeForDate(dateMatch.dateStr);
+      let results = await jadwalService.searchJadwal(keywordOnly, {
+        startDate: dateRange.startOfDay,
+        endDate: dateRange.endOfDay,
+      });
+
+      let fallbackNotice = '';
+      if (results.length === 0) {
+        // Fallback: cari agenda topik tersebut tanpa batasan tanggal
+        results = await jadwalService.searchJadwal(keywordOnly);
+        if (results.length > 0) {
+          fallbackNotice = `_ℹ️ Catatan: Belum ada agenda terkait "${keywordOnly}" pada tanggal ${dateMatch.formattedIndo}. Berikut agenda terdekat yang ditemukan:_\n\n`;
+        }
+      }
+
+      session.jadwalSearchKeyword = keywordOnly;
+      session.jadwalSearchResults = results;
+
+      if (results.length === 0) {
+        sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_INPUT);
+        return {
+          text:
+            `🔍 *HASIL PENCARIAN JADWAL*\n\n` +
+            `Saya belum menemukan agenda kegiatan terkait *"${keywordOnly}"* baik pada tanggal ${dateMatch.formattedIndo} maupun tanggal lainnya.\n\n` +
+            `Boleh coba dengan nama kegiatan atau topik yang lain?`,
+        };
+      }
+
+      sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
+      const res = this.renderSearchResultList(session, results, keywordOnly);
+      if (fallbackNotice) {
+        return typeof res === 'string'
+          ? `${fallbackNotice}${res}`
+          : { ...res, text: `${fallbackNotice}${res.text}` };
+      }
+      return res;
+    }
+
+    // Kasus 2: Murni rentang waktu (contoh: "2 hari kedepan", "seminggu kedepan")
+    if (rangeMatch && (!keywordOnly || keywordOnly.length < 2)) {
       return this.showJadwalRentang(session, rangeMatch.daysCount, rangeMatch.label);
     }
 
-    // Jika kata kunci adalah tanggal (contoh: "18 september", "23/09/2026", "2026-09-18")
-    const dateMatch = extractDateFromText(clean);
-    if (dateMatch) {
+    // Kasus 3: Murni tanggal spesifik (contoh: "18 september", "23/09/2026", "2026-09-18")
+    if (dateMatch && (!keywordOnly || keywordOnly.length < 2)) {
       return this.showJadwalTanggal(session, dateMatch.dateStr);
     }
 
-    const results = await jadwalService.searchJadwal(clean);
+    const searchTarget = keywordOnly && keywordOnly.length >= 2 ? keywordOnly : clean;
+    const results = await jadwalService.searchJadwal(searchTarget);
 
-    session.jadwalSearchKeyword = clean;
+    session.jadwalSearchKeyword = searchTarget;
     session.jadwalSearchResults = results;
 
     if (results.length === 0) {
@@ -272,13 +316,19 @@ export class JadwalHandler {
       return {
         text:
           `🔍 *HASIL PENCARIAN JADWAL*\n\n` +
-          `Saya belum menemukan agenda kegiatan dengan kata kunci *"${clean}"*.\n\n` +
+          `Saya belum menemukan agenda kegiatan dengan kata kunci *"${searchTarget}"*.\n\n` +
           `Boleh coba dengan nama kegiatan atau topik yang lain?`,
       };
     }
 
     sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
+    return this.renderSearchResultList(session, results, searchTarget);
+  }
 
+  /**
+   * Merender format teks daftar hasil pencarian jadwal
+   */
+  private renderSearchResultList(session: UserSession, results: NormalizedJadwal[], keyword: string): BotResponse {
     const listText = results
       .map((j, idx) => {
         const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
@@ -298,9 +348,9 @@ export class JadwalHandler {
 
     const text =
       `🔍 *HASIL PENCARIAN JADWAL KEGIATAN*\n` +
-      `Ditemukan *${results.length} agenda kegiatan* untuk pencarian *"${clean}"*:\n\n` +
+      `Ditemukan *${results.length} agenda kegiatan* untuk kata kunci *"${keyword}"*:\n\n` +
       `${listText}\n\n` +
-      `Silakan ketik nomor kegiatan (contoh: _jadwal 1_), atau cukup sebutkan *nama kegiatan* yang ingin Anda lihat rinciannya ya. 😊`;
+      `Silakan ketik nomor kegiatan (contoh: _jadwal 1_), atau sebutkan *nama kegiatan* yang ingin Anda lihat rinciannya ya. 😊`;
 
     return { text };
   }

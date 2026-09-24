@@ -98,6 +98,42 @@ export const ACRONYM_DICTIONARY: Record<string, string[]> = {
   'gaspermindo': ['gabungan serikat pekerja merdeka indonesia'],
   'iterati': ['ikatan teknisi dan teknolog rekayasa indonesia'],
   'iai': ['ikatan akuntan indonesia'],
+
+  // Kementerian, Lembaga & Mitra Strategis
+  'kemenkeu': ['kementerian keuangan', 'kemenkeu ri', 'menkeu'],
+  'kemendagri': ['kementerian dalam negeri', 'mendagri'],
+  'kemenperin': ['kementerian perindustrian', 'menperin'],
+  'kemendag': ['kementerian perdagangan', 'mendag'],
+  'kemenkes': ['kementerian kesehatan', 'menkes'],
+  'kemendikbud': ['kementerian pendidikan', 'kemendikbudristek', 'pendidikan dan kebudayaan', 'mendikbud'],
+  'kemenkumham': ['kementerian hukum dan ham', 'kemenkum', 'menkumham'],
+  'kemenpanrb': ['kementerian pendayagunaan aparatur negara', 'kemenpan', 'panrb'],
+  'kominfo': ['kementerian komunikasi dan informatika', 'komdigi', 'komunikasi dan digital', 'menkominfo'],
+  'bappenas': ['badan perencanaan pembangunan nasional', 'kementerian ppn'],
+  'bpk': ['badan pemeriksa keuangan'],
+  'bpkp': ['badan pengawasan keuangan dan pembangunan'],
+  'bkn': ['badan kepegawaian negara'],
+  'lan': ['lembaga administrasi negara'],
+  'bnn': ['badan narkotika nasional'],
+  'paspampres': ['pasukan pengamanan presiden'],
+
+  // Isu Protokol, Agenda & Ketenagakerjaan
+  'kunker': ['kunjungan kerja', 'kunjungan lapangan', 'tinjau lapangan'],
+  'audiensi': ['permohonan audiensi', 'menerima audiensi', 'silaturahmi'],
+  'magang': ['pemagangan', 'maganghub', 'program magang', 'peserta magang'],
+  'tka': ['tenaga kerja asing', 'penggunaan tenaga kerja asing', 'izin tka'],
+  'umr': ['upah minimum regional', 'upah minimum', 'ump', 'umk', 'dewan pengupahan'],
+  'sertijab': ['serah terima jabatan'],
+  'pelantikan': ['pengambilan sumpah jabatan', 'pelantikan pejabat', 'pengukuhan'],
+  'gladi': ['gladi resik', 'gladi bersih', 'gladi kotor', 'persiapan acara'],
+  'bimtek': ['bimbingan teknis'],
+  'tot': ['training of trainer', 'pelatihan pelatih'],
+  'sosialisasi': ['penyuluhan', 'sosialisasi kebijakan'],
+  'harlah': ['hari lahir', 'ulang tahun', 'milad', 'peringatan hari'],
+  'milad': ['ulang tahun', 'hari jadi', 'harlah', 'anniversary'],
+  'apel': ['apel pagi', 'apel kerja', 'upacara bendera'],
+  'dpr-ri': ['dewan perwakilan rakyat', 'komisi ix', 'parlemen'],
+  'komisi ix': ['komisi 9', 'komisi ix dpr ri', 'dpr ri'],
 };
 
 // Peta kebalikan (frasa kepanjangan -> singkatan)

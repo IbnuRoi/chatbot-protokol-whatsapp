@@ -1,15 +1,25 @@
 import { sessionService, BotState, UserSession, ExtractedSuratData } from '../../services/sessionService';
 import { suratService } from '../../services/suratService';
 import { pdfService } from '../../services/pdfService';
-import { aiService } from '../../services/aiService';
+import { aiService, formatPerihalByTemplate } from '../../services/aiService';
 import { NluResult } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
 import { formatNomorAgendaLink, generateLetterFileName } from '../../utils/textHelper';
 
+export const KATEGORI_LABEL_MAP: Record<string, string> = {
+  UND: 'UND (Undangan Acara / Rapat)',
+  PH: 'PH (Permohonan Hadir / Sambutan)',
+  UNR: 'UNR (Undangan Pernikahan)',
+  AU: 'AU (Permohonan Audiensi)',
+  WR: 'WR (Permohonan Wawancara)',
+  TAP: 'TAP (Permohonan Video Ucapan)',
+  LP: 'LP (Laporan Pelaksanaan)',
+};
+
 export class SuratMasukHandler {
   /**
-   * Memulai alur Surat Masuk: Tampilkan pilihan Jenis Surat
+   * Memulai alur Surat Masuk: Tampilkan instruksi kirim dokumen PDF
    */
   public async startFlow(session: UserSession): Promise<BotResponse> {
     sessionService.setState(session.whatsappNumber, BotState.SURAT_MASUK_UPLOAD_PDF);
@@ -18,7 +28,7 @@ export class SuratMasukHandler {
     const text =
       `📥 *REGISTRASI SURAT MASUK*\n\n` +
       `Silakan langsung kirimkan berkas dokumen surat berformat *PDF* ke chat ini. 📄\n\n` +
-      `Sistem akan otomatis mengekstrak data surat (Nomor Surat, Tanggal, Pengirim, Perihal, dll.) dengan kategori default *UND* dan jenis *Biasa*.\n\n` +
+      `Sistem cerdas Protokol akan otomatis membaca isi surat, menentukan kategori (*UND / PH / UNR / AU / WR / TAP*), meng-generate nomor agenda sesuai kategori, dan menyusun perihal resmi sesuai template standar.\n\n` +
       `Ketik *batal* jika ingin membatalkan.`;
 
     return { text };
@@ -233,17 +243,19 @@ export class SuratMasukHandler {
     // Ekstraksi teks dari berkas PDF
     const rawPdfText = await pdfService.extractText(tempFilePath);
 
-    // AI Ekstraksi Data Dokumen
+    // AI Ekstraksi Data Dokumen & Pemahaman Isi Surat
     const extractedData = await aiService.extractSuratData(rawPdfText, originalFileName);
 
-    // Default jenis UND & tipe Biasa
-    const defaultJenis = 'UND';
+    // Kategori surat hasil pemahaman AI (UND, PH, UNR, WR, AU, TAP, LP)
+    const detectedJenis = (extractedData.kategoriSurat || 'UND').toUpperCase();
     const defaultTipe = 'Biasa';
-    const generatedAgenda = await suratService.generateNomorAgenda(defaultJenis);
+
+    // Generate Nomor Agenda otomatis berdasarkan kategori surat yang dihasilkan chatbot
+    const generatedAgenda = await suratService.generateNomorAgenda(detectedJenis);
     const finalFileName = generateLetterFileName(originalFileName);
 
     sessionService.updateDraft(session.whatsappNumber, {
-      jenisSurat: defaultJenis,
+      jenisSurat: detectedJenis,
       tipeSurat: defaultTipe,
       nomorAgenda: generatedAgenda,
       asalInstansi: 'Lainnya',
@@ -279,23 +291,27 @@ export class SuratMasukHandler {
     const data = draft?.extractedData;
     const finalName = draft?.finalFileName || generateLetterFileName(draft?.tempPdfName);
     const agendaLink = formatNomorAgendaLink(draft?.nomorAgenda, finalName);
+    const jenisCode = (draft?.jenisSurat || 'UND').toUpperCase();
+    const jenisLabel = KATEGORI_LABEL_MAP[jenisCode] || jenisCode;
+    const finalPerihalDanAcara = draft?.finalPerihal || data?.perihal || data?.subject || '-';
 
-    const title = isUpdated ? `📄 *DATA SURAT BERHASIL DIPERBARUI*` : `📄 *HASIL EKSTRAKSI DOKUMEN SURAT MASUK*`;
+    const title = isUpdated ? `📄 *DATA SURAT BERHASIL DIPERBARUI*` : `📄 *HASIL ANALISIS & EKSTRAKSI DOKUMEN*`;
 
     const text =
       `${title}\n\n` +
-      `Berikut data surat yang berhasil diekstrak oleh sistem:\n\n` +
+      `Sistem telah membaca isi surat dan menentukan kategori serta perihalnya:\n\n` +
       `• 📌 *Nomor Agenda* : ${agendaLink}\n` +
-      `• 📑 *Jenis / Tipe*  : ${draft?.jenisSurat || 'UND'} / ${draft?.tipeSurat || 'Biasa'} _(Default)_\n` +
+      `• 📑 *Kategori Surat*: *${jenisLabel}* _(Auto-Detect)_\n` +
+      `• 🏷️ *Tipe Klasifikasi*: ${draft?.tipeSurat || 'Biasa'}\n` +
       `• 🔢 *Nomor Surat*   : ${data?.nomorSurat || '-'}\n` +
       `• 📅 *Tanggal Surat* : ${data?.tanggalSurat || '-'}\n` +
       `• 🏛️ *Asal Surat*    : ${data?.asalSurat || '-'}\n` +
-      `• 📝 *Perihal*       : ${draft?.finalPerihal || data?.perihal || data?.subject || '-'}\n` +
-      `• 📍 *Event / Acara* : ${data?.event || '-'}\n` +
+      `• 📝 *Perihal Resmi* : ${finalPerihalDanAcara}\n` +
+      `• 📍 *Kegiatan/Acara*: ${finalPerihalDanAcara}\n` +
       `• 👤 *PIC & Kontak*  : ${data?.picPengirim || '-'}\n\n` +
       `Apakah data di atas sudah benar?\n` +
       `👉 Ketik *Ya* / *Benar* untuk langsung menyimpan ke database.\n` +
-      `👉 Ketik *Salah* / *Koreksi* jika ada data yang ingin diperbaiki.`;
+      `👉 Ketik *Salah* / *Koreksi* jika ada data atau kategori yang ingin diperbaiki.`;
 
     return { text };
   }
@@ -343,6 +359,8 @@ export class SuratMasukHandler {
         const savedData = session.draftSurat.extractedData;
         const finalPerihal = session.draftSurat.finalPerihal || savedData?.perihal || '-';
         const agendaLink = formatNomorAgendaLink(result.nomorAgenda, savedFileName);
+        const jenisCode = (session.draftSurat?.jenisSurat || 'UND').toUpperCase();
+        const jenisLabel = KATEGORI_LABEL_MAP[jenisCode] || jenisCode;
 
         sessionService.resetSession(session.whatsappNumber);
 
@@ -351,12 +369,13 @@ export class SuratMasukHandler {
             `✅ *SURAT BERHASIL DISIMPAN KE DATABASE!*\n\n` +
             `Data surat dan berkas fisik telah berhasil diregistrasi ke sistem:\n` +
             `• 📌 *Nomor Agenda* : ${agendaLink}\n` +
-            `• 📑 *Kategori/Tipe*: ${session.draftSurat?.jenisSurat || 'UND'} / ${session.draftSurat?.tipeSurat || 'Biasa'}\n` +
+            `• 📑 *Kategori Surat*: *${jenisLabel}*\n` +
+            `• 🏷️ *Tipe Klasifikasi*: ${session.draftSurat?.tipeSurat || 'Biasa'}\n` +
             `• 🔢 *Nomor Surat*  : ${savedData?.nomorSurat || '-'}\n` +
             `• 🏛️ *Pengirim*     : ${savedData?.asalSurat || '-'}\n` +
-            `• 📝 *Perihal*      : ${finalPerihal}\n` +
+            `• 📝 *Perihal Resmi*: ${finalPerihal}\n` +
             `• 📂 *Status Disposisi*: 🟡 BELUM DISPOSISI\n\n` +
-            `_Catatan: Berkas telah tersimpan di database. Kategori (UND) dan klasifikasi (Biasa) dapat disesuaikan kembali melalui website protokol jika diperlukan._\n\n` +
+            `_Catatan: Berkas telah tersimpan di database dan siap ditindaklanjuti lebih lanjut melalui sistem protokol._\n\n` +
             `Bila ada hal lain yang ingin Anda kelola atau cari, silakan beri tahu saya ya. 😊`,
         };
       } else {
@@ -408,18 +427,22 @@ export class SuratMasukHandler {
    * Menampilkan template teks koreksi yang bisa disalin langsung oleh pengguna tanpa menu pilihan
    */
   public renderEditTemplatePrompt(session: UserSession): BotResponse {
-    const data = session.draftSurat?.extractedData;
-    const perihal = session.draftSurat?.finalPerihal || data?.perihal || data?.subject || '-';
+    const draft = session.draftSurat;
+    const data = draft?.extractedData;
+    const perihal = draft?.finalPerihal || data?.perihal || data?.subject || '-';
+    const kategori = (draft?.jenisSurat || 'UND').toUpperCase();
 
     const text =
       `✏️ *TEMPLATE KOREKSI DATA SURAT*\n\n` +
       `Silakan **salin (copy)** template teks di bawah ini, ubah data pada bagian yang salah, lalu **kirimkan kembali** ke chat ini tanpa perlu memilih menu:\n\n` +
+      `Kategori: ${kategori}\n` +
       `Nomor Surat: ${data?.nomorSurat || '-'}\n` +
       `Tanggal Surat: ${data?.tanggalSurat || '-'}\n` +
       `Asal Surat: ${data?.asalSurat || '-'}\n` +
       `Perihal: ${perihal}\n` +
-      `Event: ${data?.event || '-'}\n` +
+      `Event: ${perihal}\n` +
       `PIC: ${data?.picPengirim || '-'}\n\n` +
+      `_Pilihan Kategori: UND (Undangan Acara), PH (Permohonan Hadir/Sambutan), UNR (Pernikahan), AU (Audiensi), WR (Wawancara), TAP (Video Ucapan)_\n\n` +
       `_(Cukup salin teks di atas, sesuaikan isinya, lalu kirimkan kembali ke sini ya. Ketik *batal* jika ingin membatalkan)_`;
 
     return { text };
@@ -460,6 +483,22 @@ export class SuratMasukHandler {
     const parsed = this.parseSuratTemplate(clean);
     const updatedKeys: string[] = [];
 
+    // Jika pengguna mengubah kategori surat
+    if (parsed.kategori && parsed.kategori !== session.draftSurat.jenisSurat) {
+      session.draftSurat.jenisSurat = parsed.kategori;
+      session.draftSurat.extractedData.kategoriSurat = parsed.kategori as any;
+      const newAgenda = await suratService.generateNomorAgenda(parsed.kategori);
+      session.draftSurat.nomorAgenda = newAgenda;
+      updatedKeys.push(`Kategori (${parsed.kategori}) & Nomor Agenda (${newAgenda})`);
+
+      // Jika perihal tidak diisi manual oleh user di koreksi, generate ulang template perihal sesuai kategori baru
+      if (!parsed.perihal) {
+        const autoPerihal = formatPerihalByTemplate(session.draftSurat.extractedData);
+        session.draftSurat.finalPerihal = autoPerihal;
+        session.draftSurat.extractedData.perihal = autoPerihal;
+      }
+    }
+
     if (parsed.nomorSurat) {
       session.draftSurat.extractedData.nomorSurat = parsed.nomorSurat;
       updatedKeys.push('Nomor Surat');
@@ -475,12 +514,15 @@ export class SuratMasukHandler {
     if (parsed.perihal) {
       session.draftSurat.extractedData.perihal = parsed.perihal;
       session.draftSurat.extractedData.subject = parsed.perihal;
+      session.draftSurat.extractedData.event = parsed.perihal;
       session.draftSurat.finalPerihal = parsed.perihal;
-      updatedKeys.push('Perihal');
-    }
-    if (parsed.event) {
+      updatedKeys.push('Perihal & Acara');
+    } else if (parsed.event) {
       session.draftSurat.extractedData.event = parsed.event;
-      updatedKeys.push('Event');
+      session.draftSurat.extractedData.perihal = parsed.event;
+      session.draftSurat.extractedData.subject = parsed.event;
+      session.draftSurat.finalPerihal = parsed.event;
+      updatedKeys.push('Perihal & Acara');
     }
     if (parsed.picPengirim) {
       session.draftSurat.extractedData.picPengirim = parsed.picPengirim;
@@ -497,6 +539,7 @@ export class SuratMasukHandler {
         text:
           `⚠️ Format perubahan belum dikenali.\n\n` +
           `Silakan salin template berikut dan kirimkan kembali dengan perubahan Anda:\n\n` +
+          `Kategori: ${session.draftSurat.jenisSurat || 'UND'}\n` +
           `Nomor Surat: ${session.draftSurat.extractedData.nomorSurat || '-'}\n` +
           `Tanggal Surat: ${session.draftSurat.extractedData.tanggalSurat || '-'}\n` +
           `Asal Surat: ${session.draftSurat.extractedData.asalSurat || '-'}\n` +
@@ -518,6 +561,8 @@ export class SuratMasukHandler {
   public hasTemplateFields(text: string): boolean {
     const lower = text.toLowerCase();
     return (
+      lower.includes('kategori') ||
+      lower.includes('jenis') ||
       lower.includes('nomor surat') ||
       lower.includes('tanggal surat') ||
       lower.includes('asal surat') ||
@@ -532,6 +577,7 @@ export class SuratMasukHandler {
    * Parsing teks template berformat key: value yang dikirim kembali oleh pengguna
    */
   public parseSuratTemplate(text: string): {
+    kategori?: string;
     nomorSurat?: string;
     tanggalSurat?: string;
     asalSurat?: string;
@@ -540,6 +586,7 @@ export class SuratMasukHandler {
     picPengirim?: string;
   } {
     const result: {
+      kategori?: string;
       nomorSurat?: string;
       tanggalSurat?: string;
       asalSurat?: string;
@@ -559,7 +606,24 @@ export class SuratMasukHandler {
 
       if (!rawVal || rawVal === '-') continue;
 
-      if (rawKey.includes('nomor surat') || rawKey === 'nomor' || rawKey === 'no surat') {
+      if (rawKey.includes('kategori') || rawKey.includes('jenis')) {
+        const valUpper = rawVal.toUpperCase();
+        if (['UND', 'PH', 'UNR', 'AU', 'WR', 'TAP', 'LP'].includes(valUpper)) {
+          result.kategori = valUpper;
+        } else if (valUpper.includes('NIKAH') || valUpper.includes('PERNIKAHAN') || valUpper.includes('UNR')) {
+          result.kategori = 'UNR';
+        } else if (valUpper.includes('SAMBUTAN') || valUpper.includes('NARASUMBER') || valUpper.includes('PERMOHONAN HADIR') || valUpper.includes('PH')) {
+          result.kategori = 'PH';
+        } else if (valUpper.includes('AUDIENSI') || valUpper.includes('AU')) {
+          result.kategori = 'AU';
+        } else if (valUpper.includes('WAWANCARA') || valUpper.includes('LIPUTAN') || valUpper.includes('WR')) {
+          result.kategori = 'WR';
+        } else if (valUpper.includes('UCAPAN') || valUpper.includes('VIDEO') || valUpper.includes('TAP')) {
+          result.kategori = 'TAP';
+        } else if (valUpper.includes('UNDANGAN') || valUpper.includes('UND')) {
+          result.kategori = 'UND';
+        }
+      } else if (rawKey.includes('nomor surat') || rawKey === 'nomor' || rawKey === 'no surat') {
         result.nomorSurat = rawVal;
       } else if (rawKey.includes('tanggal') || rawKey.includes('tgl')) {
         result.tanggalSurat = rawVal;
@@ -661,16 +725,38 @@ export class SuratMasukHandler {
     if (field === 'jenisSurat') {
       const cleanJenis = val.toUpperCase();
       const validJenis = ['UND', 'UNR', 'PH', 'AU', 'WR', 'LP', 'TAP'];
-      const chosen = validJenis.includes(cleanJenis) ? cleanJenis : 'UND';
+      let chosen = 'UND';
+      if (validJenis.includes(cleanJenis)) {
+        chosen = cleanJenis;
+      } else if (cleanJenis.includes('NIKAH') || cleanJenis.includes('UNR')) {
+        chosen = 'UNR';
+      } else if (cleanJenis.includes('SAMBUTAN') || cleanJenis.includes('NARASUMBER') || cleanJenis.includes('PERMOHONAN HADIR') || cleanJenis.includes('PH')) {
+        chosen = 'PH';
+      } else if (cleanJenis.includes('AUDIENSI') || cleanJenis.includes('AU')) {
+        chosen = 'AU';
+      } else if (cleanJenis.includes('WAWANCARA') || cleanJenis.includes('WR')) {
+        chosen = 'WR';
+      } else if (cleanJenis.includes('UCAPAN') || cleanJenis.includes('VIDEO') || cleanJenis.includes('TAP')) {
+        chosen = 'TAP';
+      }
       const generatedAgenda = await suratService.generateNomorAgenda(chosen);
       session.draftSurat.jenisSurat = chosen;
       session.draftSurat.nomorAgenda = generatedAgenda;
+      if (session.draftSurat.extractedData) {
+        session.draftSurat.extractedData.kategoriSurat = chosen as any;
+        const autoPerihal = formatPerihalByTemplate(session.draftSurat.extractedData);
+        session.draftSurat.finalPerihal = autoPerihal;
+        session.draftSurat.extractedData.perihal = autoPerihal;
+        session.draftSurat.extractedData.event = autoPerihal;
+      }
     } else if (field === 'tipeSurat') {
       session.draftSurat.tipeSurat = val;
     } else if (session.draftSurat.extractedData) {
       (session.draftSurat.extractedData as any)[field] = val;
-      if (field === 'perihal') {
+      if (field === 'perihal' || field === 'event') {
         session.draftSurat.finalPerihal = val;
+        session.draftSurat.extractedData.perihal = val;
+        session.draftSurat.extractedData.event = val;
       }
     }
 

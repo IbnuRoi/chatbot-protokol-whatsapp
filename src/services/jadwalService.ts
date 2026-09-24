@@ -1,4 +1,5 @@
 import { prisma } from '../database/prisma';
+import { Prisma } from '@prisma/client';
 import { cleanHtml } from '../utils/textHelper';
 import { expandSearchTermsWithAcronyms, calculateRelevanceScore } from '../utils/acronymHelper';
 import { formatTanggalIndo, formatWaktuDisplay } from '../utils/dateHelper';
@@ -57,6 +58,13 @@ export function formatStatusDisposisi(status: number | bigint | null | undefined
 }
 
 
+export interface JadwalSearchOptions {
+  limit?: number;
+  startDate?: Date;
+  endDate?: Date;
+  location?: string;
+}
+
 export class JadwalService {
   /**
    * Mengembalikan rentang waktu query basis data untuk tanggal tertentu (offset hari dari hari ini)
@@ -65,7 +73,7 @@ export class JadwalService {
    * Oleh karena itu, 00:00:00 WIB tersimpan sebagai 07:00:00 UTC pada hari berjalan,
    * dan 23:59:59.999 WIB tersimpan sebagai 06:59:59.999 UTC pada keesokan harinya.
    */
-  private getWibDayRange(daysOffset: number = 0) {
+  public getWibDayRange(daysOffset: number = 0) {
     const now = new Date();
     // Offset waktu ke WIB (UTC+7)
     const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
@@ -528,17 +536,69 @@ export class JadwalService {
 
   /**
    * Mencari jadwal kegiatan secara cerdas dan relevan dengan memprioritaskan agenda terkini & terdekat dari hari ini
+   * Mendukung pencarian multi-dimensi: judul kegiatan, lokasi, PIC, surat bertaut (pengirim & perihal surat), dan rentang waktu
    */
-  public async searchJadwal(keyword: string, limit: number = 10): Promise<NormalizedJadwal[]> {
+  public async searchJadwal(
+    keyword: string,
+    limitOrOptions: number | JadwalSearchOptions = 10
+  ): Promise<NormalizedJadwal[]> {
     const clean = keyword.trim().toLowerCase();
     if (!clean) return [];
+
+    const options: JadwalSearchOptions =
+      typeof limitOrOptions === 'number' ? { limit: limitOrOptions } : limitOrOptions;
+    const limit = options.limit || 10;
+
+    // Filter rentang waktu jika ada
+    const dateFilter =
+      options.startDate || options.endDate
+        ? {
+            event_time_start: {
+              ...(options.startDate ? { gte: options.startDate } : {}),
+              ...(options.endDate ? { lte: options.endDate } : {}),
+            },
+          }
+        : {};
 
     // 1. Ekspansi cerdas kata kunci dengan akronim & kepanjangannya
     const expansion = expandSearchTermsWithAcronyms(clean);
     const searchTermsArray = expansion.expandedTerms;
 
-    // 2. Ambil kandidat events dengan case-insensitive di PostgreSQL
-    // Mengutamakan kandidat terdekat/terkini (event_time_start desc)
+    // 1b. Cari ID event yang bertaut dengan surat masuk yang sesuai dengan kata kunci
+    const qMode: Prisma.QueryMode = 'insensitive';
+    let letterEventIds: bigint[] = [];
+    try {
+      const matchingLetters = await prisma.letters.findMany({
+        where: {
+          deleted_at: null,
+          OR: searchTermsArray.flatMap((term) => [
+            { subject: { contains: term, mode: qMode } },
+            { from: { contains: term, mode: qMode } },
+            { number_or_date: { contains: term, mode: qMode } },
+            { place_event: { contains: term, mode: qMode } },
+          ]),
+        },
+        select: { id: true },
+        take: 40,
+      });
+
+      const letterIds = matchingLetters.map((l) => l.id);
+      if (letterIds.length > 0) {
+        const linkedEvents = await prisma.events.findMany({
+          where: {
+            deleted_at: null,
+            letter_id: { in: letterIds },
+          },
+          select: { id: true },
+          take: 40,
+        });
+        letterEventIds = linkedEvents.map((e) => e.id);
+      }
+    } catch {
+      // Abaikan jika relasi surat belum terisi
+    }
+
+    // 2. Ambil kandidat events dengan case-insensitive di PostgreSQL (mengutamakan tanggal terkini)
     let candidates: any[] = [];
 
     // Jika query terdiri dari 2 kata atau lebih, coba cari dengan klausa AND terlebih dahulu
@@ -546,11 +606,13 @@ export class JadwalService {
       candidates = await prisma.events.findMany({
         where: {
           deleted_at: null,
+          ...dateFilter,
           AND: expansion.meaningfulTokens.map((tok) => ({
             OR: [
-              { title: { contains: tok, mode: 'insensitive' } },
-              { location: { contains: tok, mode: 'insensitive' } },
-              { pic_name: { contains: tok, mode: 'insensitive' } },
+              { title: { contains: tok, mode: qMode } },
+              { location: { contains: tok, mode: qMode } },
+              { pic_name: { contains: tok, mode: qMode } },
+              ...(letterEventIds.length > 0 ? [{ id: { in: letterEventIds } }] : []),
             ],
           })),
         },
@@ -567,11 +629,15 @@ export class JadwalService {
       candidates = await prisma.events.findMany({
         where: {
           deleted_at: null,
-          OR: searchTermsArray.flatMap((term) => [
-            { title: { contains: term, mode: 'insensitive' } },
-            { location: { contains: term, mode: 'insensitive' } },
-            { pic_name: { contains: term, mode: 'insensitive' } },
-          ]),
+          ...dateFilter,
+          OR: [
+            ...searchTermsArray.flatMap((term) => [
+              { title: { contains: term, mode: qMode } },
+              { location: { contains: term, mode: qMode } },
+              { pic_name: { contains: term, mode: qMode } },
+            ]),
+            ...(letterEventIds.length > 0 ? [{ id: { in: letterEventIds } }] : []),
+          ],
         },
         take: 60,
         orderBy: [
@@ -589,13 +655,19 @@ export class JadwalService {
     const enrichedCandidates = await this.enrichAndMapEvents(candidates);
 
     const scored = candidates.map((e, idx) => {
+      const item = enrichedCandidates[idx] || this.mapEventToJadwal(e);
       const title = cleanHtml(e.title);
-      const metadata = [e.location || '', e.pic_name || ''];
+      const metadata = [
+        e.location || '',
+        e.pic_name || '',
+        item.surat?.nomorSurat || '',
+        item.surat?.nomorAgenda || '',
+        item.pejabatHadir || '',
+      ];
 
       const relevance = calculateRelevanceScore(expansion, title, metadata);
       const timeBonus = this.calculateJadwalTimeBonus(e.event_time_start);
       const totalScore = relevance.score + timeBonus;
-      const item = enrichedCandidates[idx] || this.mapEventToJadwal(e);
 
       return {
         item,

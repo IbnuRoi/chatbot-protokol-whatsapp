@@ -36,6 +36,10 @@ pnpm-debug.log*
 # File & Document Storage
 storage/temp/*
 !storage/temp/.gitkeep
+storage/letters/*
+!storage/letters/.gitkeep
+!storage/letters/README.md
+!storage/letters/sample_surat_dummy.pdf
 storage/letters/private/*
 !storage/letters/private/.gitkeep
 storage/private/*

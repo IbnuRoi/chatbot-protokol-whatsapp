@@ -40,17 +40,16 @@ export const ENV = {
 
   ADMIN_CONTACT: process.env.ADMIN_CONTACT || '0812-3456-7890 (Admin Tim IT Protokol)',
   TEMP_STORAGE_PATH: path.resolve(process.cwd(), process.env.TEMP_STORAGE_PATH || './storage/temp'),
-  PRIVATE_STORAGE_PATH: path.resolve(process.cwd(), process.env.PRIVATE_STORAGE_PATH || './storage/private'),
+  UPLOAD_STORAGE_PATH: path.resolve(
+    process.cwd(),
+    process.env.UPLOAD_STORAGE_PATH || process.env.PRIVATE_STORAGE_PATH || './storage/letters'
+  ),
+  PRIVATE_STORAGE_PATH: path.resolve(
+    process.cwd(),
+    process.env.UPLOAD_STORAGE_PATH || process.env.PRIVATE_STORAGE_PATH || './storage/letters'
+  ),
   SESSION_TIMEOUT_MINUTES: 30,
   FILE_URL: process.env.FILE_URL || 'https://pwa-protokol.gatsu51.com/files/letter/',
-
-  // 3. Konfigurasi Cloudinary Storage
-  STORAGE_DRIVER: process.env.STORAGE_DRIVER || 'cloudinary', // 'cloudinary' | 'local'
-  CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME || '',
-  CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY || '',
-  CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET || '',
-  CLOUDINARY_URL: process.env.CLOUDINARY_URL || '',
-  CLOUDINARY_FOLDER: process.env.CLOUDINARY_FOLDER || 'letters',
 };
 
 // Pastikan direktori storage tersedia
@@ -58,6 +57,6 @@ import fs from 'fs';
 if (!fs.existsSync(ENV.TEMP_STORAGE_PATH)) {
   fs.mkdirSync(ENV.TEMP_STORAGE_PATH, { recursive: true });
 }
-if (!fs.existsSync(ENV.PRIVATE_STORAGE_PATH)) {
-  fs.mkdirSync(ENV.PRIVATE_STORAGE_PATH, { recursive: true });
+if (!fs.existsSync(ENV.UPLOAD_STORAGE_PATH)) {
+  fs.mkdirSync(ENV.UPLOAD_STORAGE_PATH, { recursive: true });
 }

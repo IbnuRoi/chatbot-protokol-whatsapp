@@ -1,6 +1,6 @@
 import { prisma } from '../database/prisma';
+import { Prisma } from '@prisma/client';
 import { pdfService } from './pdfService';
-import { cloudinaryService } from './cloudinaryService';
 import { SuratDraftData } from './sessionService';
 import { cleanHtml, generateLetterFileName } from '../utils/textHelper';
 import { ENV } from '../config/env';
@@ -83,6 +83,14 @@ export interface NormalizedSurat {
 }
 
 import { expandSearchTermsWithAcronyms, calculateRelevanceScore } from '../utils/acronymHelper';
+
+export interface SuratSearchOptions {
+  limit?: number;
+  dateStart?: Date;
+  dateEnd?: Date;
+  sender?: string;
+  category?: string;
+}
 
 export class SuratService {
   /**
@@ -238,22 +246,8 @@ export class SuratService {
       // Tentukan nama berkas final (dari draft.finalFileName atau generate baru)
       const finalFileName = draft.finalFileName || generateLetterFileName(draft.tempPdfName);
 
-      // 1. Pindahkan berkas dari temp ke private storage permanen lokal
-      const permanentFilePath = pdfService.moveToPrivateStorage(draft.tempPdfPath, finalFileName);
-
-      // 2. Jika Cloudinary aktif dan terkonfigurasi, unggah juga ke Cloudinary untuk pengujian
-      if (cloudinaryService.isConfigured() && ENV.STORAGE_DRIVER !== 'local') {
-        try {
-          const cloudUpload = await cloudinaryService.uploadPdf(permanentFilePath, finalFileName);
-          if (cloudUpload.success && cloudUpload.secureUrl) {
-            console.log(`[Cloudinary Testing] Berkas berhasil diunggah ke Cloudinary: ${cloudUpload.secureUrl}`);
-          } else {
-            console.warn('[Cloudinary Testing] Gagal mengunggah ke Cloudinary:', cloudUpload.errorMessage);
-          }
-        } catch (cloudErr) {
-          console.warn('[Cloudinary Testing] Error Cloudinary upload:', cloudErr);
-        }
-      }
+      // 1. Pindahkan berkas dari temp ke folder upload storage (siap disymlink di server)
+      const permanentFilePath = pdfService.moveToUploadStorage(draft.tempPdfPath, finalFileName);
 
       const categoryId = LETTER_CATEGORY_MAP[draft.jenisSurat] || BigInt(2);
       const typeId = LETTER_TYPE_MAP[draft.tipeSurat] || BigInt(1);
@@ -274,19 +268,21 @@ export class SuratService {
       });
       const nextId = lastLetter ? BigInt(lastLetter.id) + BigInt(1) : BigInt(1);
 
-      // Simpan surat ke tabel letters
-      const surat = await prisma.letters.create({
-        data: {
-          id: nextId,
-          letter_category_id: categoryId,
-          agenda_number: draft.nomorAgenda,
-          number_or_date: draft.extractedData.nomorSurat || '-',
-          date_letter: parsedDate,
-          from: draft.extractedData.asalSurat || '-',
-          subject: draft.finalPerihal || draft.extractedData.perihal || '-',
-          place_event: draft.extractedData.event || '-',
-          type_letter: typeId,
-          file: finalFileName,
+          const finalPerihalDanAcara = draft.finalPerihal || draft.extractedData.perihal || draft.extractedData.event || '-';
+
+          // Simpan surat ke tabel letters
+          const surat = await prisma.letters.create({
+            data: {
+              id: nextId,
+              letter_category_id: categoryId,
+              agenda_number: draft.nomorAgenda,
+              number_or_date: draft.extractedData.nomorSurat || '-',
+              date_letter: parsedDate,
+              from: draft.extractedData.asalSurat || '-',
+              subject: finalPerihalDanAcara,
+              place_event: finalPerihalDanAcara,
+              type_letter: typeId,
+              file: finalFileName,
           pic_name: draft.extractedData.picPengirim || '-',
           institution_origin: draft.asalInstansi || 'Lainnya',
           created_by: 'Chatbot WhatsApp',
@@ -444,10 +440,29 @@ export class SuratService {
 
   /**
    * Mencari surat masuk secara cerdas dan relevan di tabel letters dengan memprioritaskan surat terbaru
+   * Mendukung pencarian multi-dimensi: perihal, pengirim, instansi, catatan surat, instruksi disposisi, dan nomor
    */
-  public async searchSuratByPerihal(keyword: string, limit: number = 10): Promise<NormalizedSurat[]> {
+  public async searchSuratByPerihal(
+    keyword: string,
+    limitOrOptions: number | SuratSearchOptions = 10
+  ): Promise<NormalizedSurat[]> {
     const clean = keyword.trim().toLowerCase();
     if (!clean) return [];
+
+    const options: SuratSearchOptions =
+      typeof limitOrOptions === 'number' ? { limit: limitOrOptions } : limitOrOptions;
+    const limit = options.limit || 10;
+
+    // Filter tanggal jika ditentukan di options
+    const dateFilter =
+      options.dateStart || options.dateEnd
+        ? {
+            date_letter: {
+              ...(options.dateStart ? { gte: options.dateStart } : {}),
+              ...(options.dateEnd ? { lte: options.dateEnd } : {}),
+            },
+          }
+        : {};
 
     // Jika kata kunci pencarian adalah 'terbaru' atau 'terakhir', ambil langsung surat-surat paling baru
     if (
@@ -459,7 +474,10 @@ export class SuratService {
       clean === 'surat baru'
     ) {
       const recentLetters = await prisma.letters.findMany({
-        where: { deleted_at: null },
+        where: {
+          deleted_at: null,
+          ...dateFilter,
+        },
         take: limit,
         orderBy: [
           { date_letter: 'desc' },
@@ -491,7 +509,29 @@ export class SuratService {
     const expansion = expandSearchTermsWithAcronyms(clean);
     const searchTermsArray = expansion.expandedTerms;
 
-    // 2. Ambil kandidat surat dari database PostgreSQL server (mengutamakan tanggal surat terbaru)
+    // 1b. Cari ID surat yang cocok dari isi catatan & tujuan disposisi
+    const qMode: Prisma.QueryMode = 'insensitive';
+    let dispLetterIds: bigint[] = [];
+    try {
+      const matchingDisps = await prisma.dispositions.findMany({
+        where: {
+          deleted_at: null,
+          OR: searchTermsArray.flatMap((term) => [
+            { note: { contains: term, mode: qMode } },
+            { send_by: { contains: term, mode: qMode } },
+          ]),
+        },
+        select: { letter_id: true },
+        take: 40,
+      });
+      dispLetterIds = matchingDisps
+        .map((d) => d.letter_id)
+        .filter((id): id is bigint => Boolean(id));
+    } catch {
+      // Abaikan error relasi disposisi jika skema belum sepenuhnya terisi
+    }
+
+    // 2. Ambil kandidat surat dari database (mencakup subject, from, note, place_event, number, institution, pic, & disposisi)
     let candidates: any[] = [];
 
     // Jika query terdiri dari 2 kata atau lebih, coba cari dengan klausa AND terlebih dahulu
@@ -499,13 +539,18 @@ export class SuratService {
       candidates = await prisma.letters.findMany({
         where: {
           deleted_at: null,
+          ...dateFilter,
           AND: expansion.meaningfulTokens.map((tok) => ({
             OR: [
-              { subject: { contains: tok, mode: 'insensitive' } },
-              { from: { contains: tok, mode: 'insensitive' } },
-              { place_event: { contains: tok, mode: 'insensitive' } },
-              { number_or_date: { contains: tok, mode: 'insensitive' } },
-              { agenda_number: { contains: tok, mode: 'insensitive' } },
+              { subject: { contains: tok, mode: qMode } },
+              { from: { contains: tok, mode: qMode } },
+              { note: { contains: tok, mode: qMode } },
+              { place_event: { contains: tok, mode: qMode } },
+              { number_or_date: { contains: tok, mode: qMode } },
+              { agenda_number: { contains: tok, mode: qMode } },
+              { institution_origin: { contains: tok, mode: qMode } },
+              { pic_name: { contains: tok, mode: qMode } },
+              ...(dispLetterIds.length > 0 ? [{ id: { in: dispLetterIds } }] : []),
             ],
           })),
         },
@@ -522,13 +567,20 @@ export class SuratService {
       candidates = await prisma.letters.findMany({
         where: {
           deleted_at: null,
-          OR: searchTermsArray.flatMap((term) => [
-            { subject: { contains: term, mode: 'insensitive' } },
-            { from: { contains: term, mode: 'insensitive' } },
-            { number_or_date: { contains: term, mode: 'insensitive' } },
-            { agenda_number: { contains: term, mode: 'insensitive' } },
-            { place_event: { contains: term, mode: 'insensitive' } },
-          ]),
+          ...dateFilter,
+          OR: [
+            ...searchTermsArray.flatMap((term) => [
+              { subject: { contains: term, mode: qMode } },
+              { from: { contains: term, mode: qMode } },
+              { note: { contains: term, mode: qMode } },
+              { number_or_date: { contains: term, mode: qMode } },
+              { agenda_number: { contains: term, mode: qMode } },
+              { place_event: { contains: term, mode: qMode } },
+              { institution_origin: { contains: term, mode: qMode } },
+              { pic_name: { contains: term, mode: qMode } },
+            ]),
+            ...(dispLetterIds.length > 0 ? [{ id: { in: dispLetterIds } }] : []),
+          ],
         },
         take: 60,
         orderBy: [
@@ -563,11 +615,17 @@ export class SuratService {
     // 3. Hitung Relevansi Skor Presisi Tinggi (Kecocokan Teks + Kebaruan Tanggal Surat)
     const scored = candidates.map((letter) => {
       const perihal = letter.subject || '';
+      const dispInfo = dispMap.get(String(letter.id));
       const metadata = [
         letter.place_event || '',
         letter.from || '',
+        letter.institution_origin || '',
         letter.number_or_date || '',
         letter.agenda_number || '',
+        letter.note || '',
+        letter.pic_name || '',
+        dispInfo?.note || '',
+        dispInfo?.send_by || '',
       ];
 
       const relevance = calculateRelevanceScore(expansion, perihal, metadata);

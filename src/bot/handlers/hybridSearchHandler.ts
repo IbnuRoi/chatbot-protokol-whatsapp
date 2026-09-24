@@ -9,11 +9,24 @@ import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink } from '.
 import { NormalizedSurat } from '../../services/suratService';
 import { NormalizedJadwal } from '../../services/jadwalService';
 
+export interface HybridSearchContext {
+  startDate?: Date;
+  endDate?: Date;
+  location?: string;
+  sender?: string;
+  dateLabel?: string;
+}
+
 export class HybridSearchHandler {
   /**
    * Menjalankan pencarian terpadu di arsip Surat Masuk dan Agenda Jadwal Kegiatan secara paralel
+   * dengan memperhitungkan konteks topik, pengirim, lokasi, dan rentang waktu.
    */
-  public async handleSearch(session: UserSession, input: string): Promise<BotResponse> {
+  public async handleSearch(
+    session: UserSession,
+    input: string,
+    context?: HybridSearchContext
+  ): Promise<BotResponse> {
     let clean = input.trim();
 
     if (clean.toLowerCase() === 'batal' || clean.toLowerCase() === 'menu') {
@@ -32,11 +45,33 @@ export class HybridSearchHandler {
       };
     }
 
-    // Eksekusi pencarian paralel di kedua layanan
-    const [letters, schedules] = await Promise.all([
-      suratService.searchSuratByPerihal(clean),
-      jadwalService.searchJadwal(clean),
+    // 1. Eksekusi pencarian dengan filter konteks (waktu, pengirim, lokasi) jika tersedia
+    let [letters, schedules] = await Promise.all([
+      suratService.searchSuratByPerihal(clean, {
+        dateStart: context?.startDate,
+        dateEnd: context?.endDate,
+        sender: context?.sender,
+      }),
+      jadwalService.searchJadwal(clean, {
+        startDate: context?.startDate,
+        endDate: context?.endDate,
+        location: context?.location,
+      }),
     ]);
+
+    // 2. Fallback cerdas: Jika filter waktu membuat hasil kosong, cari secara luas tanpa batas waktu
+    let timeFilterRelaxed = false;
+    if (letters.length === 0 && schedules.length === 0 && (context?.startDate || context?.endDate)) {
+      const [broadLetters, broadSchedules] = await Promise.all([
+        suratService.searchSuratByPerihal(clean),
+        jadwalService.searchJadwal(clean),
+      ]);
+      if (broadLetters.length > 0 || broadSchedules.length > 0) {
+        letters = broadLetters;
+        schedules = broadSchedules;
+        timeFilterRelaxed = true;
+      }
+    }
 
     // Simpan ke sesi
     session.searchKeyword = clean;
@@ -44,16 +79,33 @@ export class HybridSearchHandler {
     session.jadwalSearchKeyword = clean;
     session.jadwalSearchResults = schedules;
 
+    const timeNotice =
+      timeFilterRelaxed && context?.dateLabel
+        ? `_ℹ️ Catatan: Belum ditemukan agenda/surat khusus pada ${context.dateLabel}. Berikut arsip terdekat terkait "${clean}":_\n\n`
+        : '';
+
     // Skenario 1: Keduanya memiliki hasil yang cocok -> Tampilkan dalam SATU bubble chat bersamaan
     if (letters.length > 0 && schedules.length > 0) {
       sessionService.setState(session.whatsappNumber, BotState.SEARCH_HYBRID_HASIL);
-      return this.renderHybridResults(session);
+      const res = this.renderHybridResults(session);
+      if (timeNotice) {
+        return typeof res === 'string'
+          ? `${timeNotice}${res}`
+          : { ...res, text: `${timeNotice}${res.text}` };
+      }
+      return res;
     }
 
     // Skenario 2: Hanya Surat Masuk yang ditemukan
     if (letters.length > 0 && schedules.length === 0) {
       sessionService.setState(session.whatsappNumber, BotState.CARI_SURAT_HASIL_LIST);
-      return cariSuratHandler.renderSearchResults(session);
+      const res = cariSuratHandler.renderSearchResults(session);
+      if (timeNotice) {
+        return typeof res === 'string'
+          ? `${timeNotice}${res}`
+          : { ...res, text: `${timeNotice}${res.text}` };
+      }
+      return res;
     }
 
     // Skenario 3: Hanya Jadwal Kegiatan yang ditemukan
@@ -78,6 +130,7 @@ export class HybridSearchHandler {
 
       return {
         text:
+          `${timeNotice}` +
           `🔍 *HASIL PENCARIAN JADWAL KEGIATAN*\n` +
           `Ditemukan *${schedules.length} agenda kegiatan* untuk pencarian *"${clean}"*:\n\n` +
           `${listText}\n\n` +

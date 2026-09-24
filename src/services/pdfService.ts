@@ -128,13 +128,24 @@ export class PdfService {
   }
 
   /**
-   * Memindahkan file dari temp ke storage permanen privat
+   * Memindahkan file dari temp ke storage upload (folder lokal / symlink server)
    */
-  public moveToPrivateStorage(tempFilePath: string, finalFileName: string): string {
-    const targetPath = path.join(ENV.PRIVATE_STORAGE_PATH, finalFileName);
+  public moveToUploadStorage(tempFilePath: string, finalFileName: string): string {
+    const uploadDir = ENV.UPLOAD_STORAGE_PATH;
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    const targetPath = path.join(uploadDir, finalFileName);
     fs.copyFileSync(tempFilePath, targetPath);
     this.deleteTempPdf(tempFilePath);
     return targetPath;
+  }
+
+  /**
+   * Alias backward-compatible untuk memindahkan file ke storage upload
+   */
+  public moveToPrivateStorage(tempFilePath: string, finalFileName: string): string {
+    return this.moveToUploadStorage(tempFilePath, finalFileName);
   }
 }
 
