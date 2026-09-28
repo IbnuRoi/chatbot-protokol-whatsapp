@@ -15,6 +15,7 @@ export interface HybridSearchContext {
   location?: string;
   sender?: string;
   dateLabel?: string;
+  onlyDiagendakan?: boolean;
 }
 
 export class HybridSearchHandler {
@@ -56,6 +57,7 @@ export class HybridSearchHandler {
         startDate: context?.startDate,
         endDate: context?.endDate,
         location: context?.location,
+        onlyDiagendakan: context?.onlyDiagendakan,
       }),
     ]);
 
@@ -64,7 +66,9 @@ export class HybridSearchHandler {
     if (letters.length === 0 && schedules.length === 0 && (context?.startDate || context?.endDate)) {
       const [broadLetters, broadSchedules] = await Promise.all([
         suratService.searchSuratByPerihal(clean),
-        jadwalService.searchJadwal(clean),
+        jadwalService.searchJadwal(clean, {
+          onlyDiagendakan: context?.onlyDiagendakan,
+        }),
       ]);
       if (broadLetters.length > 0 || broadSchedules.length > 0) {
         letters = broadLetters;
@@ -121,7 +125,7 @@ export class HybridSearchHandler {
             `   📅 *Tanggal Pelaksanaan* : ${formattedDate}\n` +
             `   🕒 *Waktu*   : ${waktu} WIB\n` +
             `   📍 *Lokasi*  : ${j.lokasi}\n` +
-            `   📋 *Status Disposisi* : ${j.statusDisposisi || 'Terjadwal (On Schedule)'}\n` +
+            `   📋 *Status Disposisi* : ${j.statusDisposisi || 'Diagendakan'}\n` +
             `   👥 *Hadir*   : ${j.pejabatHadir || '-'}\n` +
             `   📞 *PIC*     : ${j.pic || '-'}`
           );
@@ -171,7 +175,7 @@ export class HybridSearchHandler {
           `   📅 *Tanggal Pelaksanaan* : ${formattedDate}\n` +
           `   🕒 *Waktu*   : ${waktu} WIB\n` +
           `   📍 *Lokasi*  : ${j.lokasi}\n` +
-          `   📋 *Status Disposisi* : ${j.statusDisposisi || 'Terjadwal (On Schedule)'}`
+          `   📋 *Status Disposisi* : ${j.statusDisposisi || 'Diagendakan'}`
         );
       })
       .join('\n\n');
@@ -225,7 +229,7 @@ export class HybridSearchHandler {
         `• *Tanggal Pelaksanaan* : ${formattedDate}\n` +
         `• *Waktu*               : ${waktu} WIB\n` +
         `• *Lokasi*              : ${item.lokasi}\n` +
-        `• *Status Disposisi*    : ${item.statusDisposisi || 'Terjadwal (On Schedule)'}\n` +
+        `• *Status Disposisi*    : ${item.statusDisposisi || 'Diagendakan'}\n` +
         `• *Pejabat Hadir*       : ${item.pejabatHadir || '-'}\n` +
         `• *PIC*                 : ${item.pic || '-'}` +
         suratNote +

@@ -12,6 +12,8 @@ export interface SuratRegistrationResult {
   nomorAgenda?: string;
   suratId?: number;
   fileName?: string;
+  createdBy?: string;
+  createdAt?: Date;
 }
 
 export const LETTER_CATEGORY_MAP: Record<string, bigint> = {
@@ -234,7 +236,11 @@ export class SuratService {
   /**
    * Menyimpan Surat Masuk secara transaksional di tabel letters (PostgreSQL DB)
    */
-  public async saveSuratDraft(draft: SuratDraftData, userId: number): Promise<SuratRegistrationResult> {
+  public async saveSuratDraft(
+    draft: SuratDraftData,
+    userId: number,
+    userName?: string
+  ): Promise<SuratRegistrationResult> {
     if (!draft.nomorAgenda || !draft.jenisSurat || !draft.tipeSurat || !draft.extractedData || !draft.tempPdfPath) {
       return {
         success: false,
@@ -268,24 +274,27 @@ export class SuratService {
       });
       const nextId = lastLetter ? BigInt(lastLetter.id) + BigInt(1) : BigInt(1);
 
-          const finalPerihalDanAcara = draft.finalPerihal || draft.extractedData.perihal || draft.extractedData.event || '-';
+      const finalPerihal = draft.finalPerihal || draft.extractedData.perihal || '-';
+      const finalSubject = (draft.finalSubject || draft.extractedData.subject || finalPerihal).slice(0, 200);
 
-          // Simpan surat ke tabel letters
-          const surat = await prisma.letters.create({
-            data: {
-              id: nextId,
-              letter_category_id: categoryId,
-              agenda_number: draft.nomorAgenda,
-              number_or_date: draft.extractedData.nomorSurat || '-',
-              date_letter: parsedDate,
-              from: draft.extractedData.asalSurat || '-',
-              subject: finalPerihalDanAcara,
-              place_event: finalPerihalDanAcara,
-              type_letter: typeId,
-              file: finalFileName,
+      const creatorName = (userName || '').trim() || 'Petugas Protokol';
+
+      // Simpan surat ke tabel letters
+      const surat = await prisma.letters.create({
+        data: {
+          id: nextId,
+          letter_category_id: categoryId,
+          agenda_number: draft.nomorAgenda,
+          number_or_date: draft.extractedData.nomorSurat || '-',
+          date_letter: parsedDate,
+          from: draft.extractedData.asalSurat || '-',
+          subject: finalSubject,
+          place_event: finalPerihal,
+          type_letter: typeId,
+          file: finalFileName,
           pic_name: draft.extractedData.picPengirim || '-',
           institution_origin: draft.asalInstansi || 'Lainnya',
-          created_by: 'Chatbot WhatsApp',
+          created_by: creatorName,
           created_at: new Date(),
           updated_at: new Date(),
         },
@@ -296,7 +305,7 @@ export class SuratService {
         await prisma.activity_log.create({
           data: {
             log_name: 'default',
-            description: 'Menambah Surat (Chatbot WhatsApp)',
+            description: `Menambah Surat oleh ${creatorName}`,
             subject_id: Number(surat.id),
             subject_type: 'App\\Models\\Letters',
             causer_id: Number(userId),
@@ -305,6 +314,7 @@ export class SuratService {
               nomorAgenda: surat.agenda_number,
               nomorSurat: surat.number_or_date,
               asalSurat: surat.from,
+              createdBy: creatorName,
             }),
             created_at: new Date(),
             updated_at: new Date(),
@@ -320,6 +330,8 @@ export class SuratService {
           nomorAgenda: surat.agenda_number,
           suratId: Number(surat.id),
           fileName: finalFileName,
+          createdBy: creatorName,
+          createdAt: surat.created_at || new Date(),
         };
     } catch (err: any) {
       console.error('Database error saving surat:', err);

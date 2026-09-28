@@ -76,6 +76,7 @@ export interface SuratDraftData {
   asalInstansi?: string;
   aiRecommendedPerihal?: string;
   finalPerihal?: string;
+  finalSubject?: string;
 }
 
 export interface UserSession {

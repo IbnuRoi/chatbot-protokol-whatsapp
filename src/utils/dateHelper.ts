@@ -114,6 +114,34 @@ export function formatWaktuDisplay(waktuMulai: string, waktuSelesai?: string | n
 }
 
 /**
+ * Memformat tanggal dan waktu input surat ke format bahasa Indonesia (WIB)
+ * Contoh output: "Senin, 28 September 2026 pukul 08:30 WIB"
+ */
+export function formatWaktuInputIndo(dateInput: Date | string | null | undefined, withDay: boolean = true): string {
+  if (!dateInput) return '-';
+  const d = new Date(dateInput);
+  if (isNaN(d.getTime())) return String(dateInput);
+
+  const wibMs = d.getTime() + 7 * 3600000;
+  const w = new Date(wibMs);
+
+  const y = w.getUTCFullYear();
+  const m = w.getUTCMonth();
+  const dateNum = w.getUTCDate();
+  const dayIndex = w.getUTCDay();
+  const hh = String(w.getUTCHours()).padStart(2, '0');
+  const mm = String(w.getUTCMinutes()).padStart(2, '0');
+
+  const dayName = INDO_DAY_NAMES[dayIndex];
+  const monthName = INDO_MONTH_NAMES[m] || '';
+
+  if (withDay) {
+    return `${dayName}, ${dateNum} ${monthName} ${y} pukul ${hh}:${mm} WIB`;
+  }
+  return `${dateNum} ${monthName} ${y} pukul ${hh}:${mm} WIB`;
+}
+
+/**
  * Mengekstrak tanggal dari teks percakapan bahasa Indonesia
  * Contoh input:
  * - "kirim jadwal tanggal 18 september dong"

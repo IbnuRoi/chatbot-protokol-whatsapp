@@ -4,6 +4,7 @@ import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
 
 import { formatNomorAgendaLink } from '../../utils/textHelper';
+import { formatWaktuInputIndo } from '../../utils/dateHelper';
 
 export class DisposisiHandler {
   /**
@@ -67,11 +68,15 @@ export class DisposisiHandler {
         `Surat saat ini masih dalam proses penelaahan atau antrean disposisi Pimpinan.`;
     }
 
+    const waktuInputStr = formatWaktuInputIndo(surat.createdAt);
+
     const text =
       `📬 *DETAIL DISPOSISI SURAT*\n\n` +
       `• *Nomor Agenda* : ${formatNomorAgendaLink(surat.nomorAgenda, surat.fileName)}\n` +
       `• *Pengirim*     : ${surat.asalSurat}\n` +
-      `• *Perihal*      : ${surat.perihal}\n\n` +
+      `• *Perihal*      : ${surat.perihal}\n` +
+      `• *Diinput Oleh* : ${surat.userInput?.nama || 'Petugas Protokol'}\n` +
+      `• *Waktu Input*  : ${waktuInputStr}\n\n` +
       `${statusText}\n\n` +
       `Silakan beri tahu saya jika Anda ingin memeriksa status surat lainnya ya.`;
 

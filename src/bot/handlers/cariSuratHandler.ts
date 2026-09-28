@@ -5,6 +5,7 @@ import { menuHandler } from './menuHandler';
 import { riwayatHandler } from './riwayatHandler';
 import { BotResponse } from '../types';
 import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink } from '../../utils/textHelper';
+import { formatWaktuInputIndo } from '../../utils/dateHelper';
 
 export class CariSuratHandler {
   /**
@@ -255,13 +256,7 @@ export class CariSuratHandler {
 
     const disposisi = surat.disposisi;
     const statusDisp = disposisi?.status === 'SUDAH_DISPOSISI' ? '🟢 SUDAH DISPOSISI' : '🟡 BELUM DISPOSISI';
-    const tglInput = surat.createdAt.toLocaleDateString('id-ID', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    const waktuInputStr = formatWaktuInputIndo(surat.createdAt);
 
     const text =
       `📋 *DETAIL SURAT MASUK (PENCARIAN)*\n\n` +
@@ -274,7 +269,8 @@ export class CariSuratHandler {
       `• *PIC & Kontak*    : ${surat.picPengirim || '-'}\n` +
       `• *Perihal*         : ${surat.perihal}\n` +
       `• *Status Disposisi*: ${statusDisp}\n` +
-      `• *Perekaman*       : Diinput oleh ${surat.userInput?.nama || 'Petugas'} (${tglInput} WIB)\n\n` +
+      `• *Diinput Oleh*    : ${surat.userInput?.nama || 'Petugas Protokol'}\n` +
+      `• *Waktu Input*     : ${waktuInputStr}\n\n` +
       `Bila Anda ingin melihat rincian disposisi surat ini atau kembali ke daftar pencarian, silakan beri tahu saya ya.`;
 
     return { text };

@@ -598,11 +598,10 @@ export class NluService {
       let field: 'tanggalSurat' | 'nomorSurat' | 'subject' | 'asalSurat' | 'event' | 'picPengirim' | 'perihal' | undefined;
       if (lower === '1' || lower.includes('tanggal')) field = 'tanggalSurat';
       else if (lower === '2' || lower.includes('nomor')) field = 'nomorSurat';
-      else if (lower === '3' || lower.includes('subject') || lower.includes('hal')) field = 'subject';
-      else if (lower === '4' || lower.includes('asal') || lower.includes('instansi')) field = 'asalSurat';
-      else if (lower === '5' || lower.includes('event') || lower.includes('acara')) field = 'event';
+      else if (lower === '3' || lower.includes('subject') || lower.includes('subjek') || lower.includes('judul')) field = 'subject';
+      else if (lower === '4' || lower.includes('perihal') || lower.includes('hal')) field = 'perihal';
+      else if (lower === '5' || lower.includes('asal') || lower.includes('pengirim') || lower.includes('penandatangan') || lower.includes('ttd') || lower.includes('instansi')) field = 'asalSurat';
       else if (lower === '6' || lower.includes('pic') || lower.includes('kontak')) field = 'picPengirim';
-      else if (lower === '7' || lower.includes('perihal')) field = 'perihal';
 
       if (field) {
         return {

@@ -17,12 +17,12 @@ export class JadwalHandler {
     const todayStr = jadwalService.getTodayString();
     const todayFormatted = formatTanggalIndo(todayStr);
 
-    // Ambil jadwal hari ini (urut waktu terdekat)
-    const jadwalsHariIni = await jadwalService.getJadwalHariIni(false);
+    // Ambil jadwal hari ini (hanya yang status disposisinya diagendakan)
+    const jadwalsHariIni = await jadwalService.getJadwalHariIni(false, true);
 
     let listText = '';
     if (jadwalsHariIni.length === 0) {
-      listText = `_Tidak ada agenda kegiatan terdaftar untuk hari ini (${todayFormatted})._\n`;
+      listText = `_Tidak ada agenda kegiatan dengan status diagendakan untuk hari ini (${todayFormatted})._\n`;
     } else {
       session.jadwalSearchResults = jadwalsHariIni;
       session.jadwalSearchKeyword = 'Agenda Hari Ini';
@@ -31,7 +31,7 @@ export class JadwalHandler {
       listText = jadwalsHariIni
         .map((j, idx) => {
           const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
-          const statusDisp = j.statusDisposisi || 'Terjadwal (On Schedule)';
+          const statusDisp = j.statusDisposisi || 'Diagendakan';
           return (
             `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
             `   📅 *Tanggal Pelaksanaan* : ${todayFormatted}\n` +
@@ -78,7 +78,7 @@ export class JadwalHandler {
       listText = jadwalsBesok
         .map((j, idx) => {
           const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
-          const statusDisp = j.statusDisposisi || 'Terjadwal (On Schedule)';
+          const statusDisp = j.statusDisposisi || 'Diagendakan';
           return (
             `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
             `   📅 *Tanggal Pelaksanaan* : ${tomorrowFormatted}\n` +
@@ -128,7 +128,7 @@ export class JadwalHandler {
     const listText = items
       .map((j, idx) => {
         const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
-        const statusDisp = j.statusDisposisi || 'Terjadwal (On Schedule)';
+        const statusDisp = j.statusDisposisi || 'Diagendakan';
         return (
           `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
           `   📅 *Tanggal Pelaksanaan* : ${formattedDate}\n` +
@@ -180,7 +180,7 @@ export class JadwalHandler {
       .map((j, idx) => {
         const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
         const tglIndo = formatTanggalIndo(j.tanggalKegiatan);
-        const statusDisp = j.statusDisposisi || 'Terjadwal (On Schedule)';
+        const statusDisp = j.statusDisposisi || 'Diagendakan';
         return (
           `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
           `   📅 *Tanggal Pelaksanaan* : ${tglIndo}\n` +
@@ -333,7 +333,7 @@ export class JadwalHandler {
       .map((j, idx) => {
         const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
         const formattedDate = formatTanggalIndo(j.tanggalKegiatan);
-        const statusDisp = j.statusDisposisi || 'Terjadwal (On Schedule)';
+        const statusDisp = j.statusDisposisi || 'Diagendakan';
         return (
           `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
           `   📅 Tanggal Pelaksanaan : ${formattedDate}\n` +
@@ -367,7 +367,7 @@ export class JadwalHandler {
       suratNote = `\n• *Surat Terkait*        : ${item.surat.nomorAgenda} (${formatNomorSuratLink(item.surat.nomorSurat, item.surat.fileName)})`;
     }
 
-    const statusDisp = item.statusDisposisi || 'Terjadwal (On Schedule)';
+    const statusDisp = item.statusDisposisi || 'Diagendakan';
 
     return {
       text:
@@ -518,7 +518,7 @@ export class JadwalHandler {
       const formattedDate = formatTanggalIndo(item.tanggalKegiatan);
       const statusLabel = nextResult.isToday ? `Hari Ini (${formattedDate})` : formattedDate;
       const waktu = formatWaktuDisplay(item.waktuMulai, item.waktuSelesai);
-      const statusDisp = item.statusDisposisi || 'Terjadwal (On Schedule)';
+      const statusDisp = item.statusDisposisi || 'Diagendakan';
 
       session.jadwalSearchResults = [item];
       session.jadwalSearchKeyword = item.namaKegiatan;
@@ -559,7 +559,7 @@ export class JadwalHandler {
         .map((j, idx) => {
           const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
           const formattedDate = formatTanggalIndo(j.tanggalKegiatan);
-          const statusDisp = j.statusDisposisi || 'Terjadwal (On Schedule)';
+          const statusDisp = j.statusDisposisi || 'Diagendakan';
           return (
             `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
             `   📅 *Tanggal Pelaksanaan* : ${formattedDate}\n` +

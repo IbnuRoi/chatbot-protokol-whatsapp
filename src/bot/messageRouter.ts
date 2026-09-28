@@ -546,6 +546,7 @@ export class MessageRouter {
             endDate: range.endOfDay,
             dateLabel: 'hari ini',
             location: nlu.entities?.location,
+            onlyDiagendakan: true,
           });
           return prependIntro(res, nlu.conversationalReply);
         }

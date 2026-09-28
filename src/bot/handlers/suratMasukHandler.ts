@@ -1,11 +1,12 @@
 import { sessionService, BotState, UserSession, ExtractedSuratData } from '../../services/sessionService';
 import { suratService } from '../../services/suratService';
 import { pdfService } from '../../services/pdfService';
-import { aiService, formatPerihalByTemplate } from '../../services/aiService';
+import { aiService, formatPerihalByTemplate, generateSubjectSummary, formatAsalSurat } from '../../services/aiService';
 import { NluResult } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
 import { formatNomorAgendaLink, generateLetterFileName } from '../../utils/textHelper';
+import { formatWaktuInputIndo } from '../../utils/dateHelper';
 
 export const KATEGORI_LABEL_MAP: Record<string, string> = {
   UND: 'UND (Undangan Acara / Rapat)',
@@ -254,6 +255,9 @@ export class SuratMasukHandler {
     const generatedAgenda = await suratService.generateNomorAgenda(detectedJenis);
     const finalFileName = generateLetterFileName(originalFileName);
 
+    const finalPerihal = extractedData.perihal || '-';
+    const finalSubject = (extractedData.subject || generateSubjectSummary(finalPerihal, extractedData)).slice(0, 200);
+
     sessionService.updateDraft(session.whatsappNumber, {
       jenisSurat: detectedJenis,
       tipeSurat: defaultTipe,
@@ -264,7 +268,8 @@ export class SuratMasukHandler {
       finalFileName,
       fileSize: scanResult.fileSize,
       extractedData,
-      finalPerihal: extractedData.perihal || extractedData.subject || '-',
+      finalPerihal,
+      finalSubject,
     });
 
     sessionService.setState(session.whatsappNumber, BotState.SURAT_MASUK_REVIEW_DATA);
@@ -293,7 +298,8 @@ export class SuratMasukHandler {
     const agendaLink = formatNomorAgendaLink(draft?.nomorAgenda, finalName);
     const jenisCode = (draft?.jenisSurat || 'UND').toUpperCase();
     const jenisLabel = KATEGORI_LABEL_MAP[jenisCode] || jenisCode;
-    const finalPerihalDanAcara = draft?.finalPerihal || data?.perihal || data?.subject || '-';
+    const finalPerihal = draft?.finalPerihal || data?.perihal || '-';
+    const finalSubject = (draft?.finalSubject || data?.subject || generateSubjectSummary(finalPerihal, data)).slice(0, 200);
 
     const title = isUpdated ? `📄 *DATA SURAT BERHASIL DIPERBARUI*` : `📄 *HASIL ANALISIS & EKSTRAKSI DOKUMEN*`;
 
@@ -305,10 +311,11 @@ export class SuratMasukHandler {
       `• 🏷️ *Tipe Klasifikasi*: ${draft?.tipeSurat || 'Biasa'}\n` +
       `• 🔢 *Nomor Surat*   : ${data?.nomorSurat || '-'}\n` +
       `• 📅 *Tanggal Surat* : ${data?.tanggalSurat || '-'}\n` +
-      `• 🏛️ *Asal Surat*    : ${data?.asalSurat || '-'}\n` +
-      `• 📝 *Perihal Resmi* : ${finalPerihalDanAcara}\n` +
-      `• 📍 *Kegiatan/Acara*: ${finalPerihalDanAcara}\n` +
-      `• 👤 *PIC & Kontak*  : ${data?.picPengirim || '-'}\n\n` +
+      `• ✍️ *Asal Surat*    : ${data?.asalSurat || '-'}\n` +
+      `• 📋 *Subject*       : ${finalSubject}\n` +
+      `• 📝 *Perihal Resmi* : ${finalPerihal}\n` +
+      `• 👤 *PIC & Kontak*  : ${data?.picPengirim || '-'}\n` +
+      `• 👤 *Petugas Input* : ${session.userName || 'Petugas Protokol'}\n\n` +
       `Apakah data di atas sudah benar?\n` +
       `👉 Ketik *Ya* / *Benar* untuk langsung menyimpan ke database.\n` +
       `👉 Ketik *Salah* / *Koreksi* jika ada data atau kategori yang ingin diperbaiki.`;
@@ -352,15 +359,18 @@ export class SuratMasukHandler {
       session.draftSurat.jenisSurat = session.draftSurat.jenisSurat || 'UND';
       session.draftSurat.tipeSurat = session.draftSurat.tipeSurat || 'Biasa';
 
-      const result = await suratService.saveSuratDraft(session.draftSurat, session.userId);
+      const result = await suratService.saveSuratDraft(session.draftSurat, session.userId, session.userName);
 
       if (result.success) {
         const savedFileName = result.fileName || session.draftSurat.finalFileName || session.draftSurat.tempPdfName;
         const savedData = session.draftSurat.extractedData;
         const finalPerihal = session.draftSurat.finalPerihal || savedData?.perihal || '-';
+        const finalSubject = (session.draftSurat.finalSubject || savedData?.subject || generateSubjectSummary(finalPerihal, savedData)).slice(0, 200);
         const agendaLink = formatNomorAgendaLink(result.nomorAgenda, savedFileName);
         const jenisCode = (session.draftSurat?.jenisSurat || 'UND').toUpperCase();
         const jenisLabel = KATEGORI_LABEL_MAP[jenisCode] || jenisCode;
+        const userPenginput = result.createdBy || session.userName || 'Petugas Protokol';
+        const waktuInputStr = formatWaktuInputIndo(result.createdAt || new Date());
 
         sessionService.resetSession(session.whatsappNumber);
 
@@ -372,9 +382,12 @@ export class SuratMasukHandler {
             `• 📑 *Kategori Surat*: *${jenisLabel}*\n` +
             `• 🏷️ *Tipe Klasifikasi*: ${session.draftSurat?.tipeSurat || 'Biasa'}\n` +
             `• 🔢 *Nomor Surat*  : ${savedData?.nomorSurat || '-'}\n` +
-            `• 🏛️ *Pengirim*     : ${savedData?.asalSurat || '-'}\n` +
+            `• ✍️ *Asal Surat*   : ${savedData?.asalSurat || '-'}\n` +
+            `• 📋 *Subject*      : ${finalSubject}\n` +
             `• 📝 *Perihal Resmi*: ${finalPerihal}\n` +
-            `• 📂 *Status Disposisi*: 🟡 BELUM DISPOSISI\n\n` +
+            `• 📂 *Status Disposisi*: 🟡 BELUM DISPOSISI\n` +
+            `• 👤 *Diinput Oleh*  : ${userPenginput}\n` +
+            `• ⏰ *Waktu Input*   : ${waktuInputStr}\n\n` +
             `_Catatan: Berkas telah tersimpan di database dan siap ditindaklanjuti lebih lanjut melalui sistem protokol._\n\n` +
             `Bila ada hal lain yang ingin Anda kelola atau cari, silakan beri tahu saya ya. 😊`,
         };
@@ -429,7 +442,8 @@ export class SuratMasukHandler {
   public renderEditTemplatePrompt(session: UserSession): BotResponse {
     const draft = session.draftSurat;
     const data = draft?.extractedData;
-    const perihal = draft?.finalPerihal || data?.perihal || data?.subject || '-';
+    const perihal = draft?.finalPerihal || data?.perihal || '-';
+    const subject = (draft?.finalSubject || data?.subject || generateSubjectSummary(perihal, data)).slice(0, 200);
     const kategori = (draft?.jenisSurat || 'UND').toUpperCase();
 
     const text =
@@ -439,9 +453,10 @@ export class SuratMasukHandler {
       `Nomor Surat: ${data?.nomorSurat || '-'}\n` +
       `Tanggal Surat: ${data?.tanggalSurat || '-'}\n` +
       `Asal Surat: ${data?.asalSurat || '-'}\n` +
+      `Subject: ${subject}\n` +
       `Perihal: ${perihal}\n` +
-      `Event: ${perihal}\n` +
       `PIC: ${data?.picPengirim || '-'}\n\n` +
+      `_Format Asal Surat: Nama Pengirim - Jabatan (nama individu/pejabat penandatangan di paling bawah surat, bukan instansi)_\n` +
       `_Pilihan Kategori: UND (Undangan Acara), PH (Permohonan Hadir/Sambutan), UNR (Pernikahan), AU (Audiensi), WR (Wawancara), TAP (Video Ucapan)_\n\n` +
       `_(Cukup salin teks di atas, sesuaikan isinya, lalu kirimkan kembali ke sini ya. Ketik *batal* jika ingin membatalkan)_`;
 
@@ -496,6 +511,12 @@ export class SuratMasukHandler {
         const autoPerihal = formatPerihalByTemplate(session.draftSurat.extractedData);
         session.draftSurat.finalPerihal = autoPerihal;
         session.draftSurat.extractedData.perihal = autoPerihal;
+        session.draftSurat.extractedData.event = autoPerihal;
+        if (!parsed.subject) {
+          const autoSubj = generateSubjectSummary(autoPerihal, session.draftSurat.extractedData);
+          session.draftSurat.finalSubject = autoSubj;
+          session.draftSurat.extractedData.subject = autoSubj;
+        }
       }
     }
 
@@ -508,21 +529,35 @@ export class SuratMasukHandler {
       updatedKeys.push('Tanggal Surat');
     }
     if (parsed.asalSurat) {
-      session.draftSurat.extractedData.asalSurat = parsed.asalSurat;
+      session.draftSurat.extractedData.asalSurat = formatAsalSurat(parsed.asalSurat);
       updatedKeys.push('Asal Surat');
+    }
+    if (parsed.subject) {
+      const cleanSubj = parsed.subject.slice(0, 200);
+      session.draftSurat.finalSubject = cleanSubj;
+      session.draftSurat.extractedData.subject = cleanSubj;
+      updatedKeys.push('Subject');
     }
     if (parsed.perihal) {
       session.draftSurat.extractedData.perihal = parsed.perihal;
-      session.draftSurat.extractedData.subject = parsed.perihal;
       session.draftSurat.extractedData.event = parsed.perihal;
       session.draftSurat.finalPerihal = parsed.perihal;
-      updatedKeys.push('Perihal & Acara');
+      if (!parsed.subject) {
+        const autoSubj = generateSubjectSummary(parsed.perihal, session.draftSurat.extractedData);
+        session.draftSurat.finalSubject = autoSubj;
+        session.draftSurat.extractedData.subject = autoSubj;
+      }
+      updatedKeys.push('Perihal');
     } else if (parsed.event) {
       session.draftSurat.extractedData.event = parsed.event;
       session.draftSurat.extractedData.perihal = parsed.event;
-      session.draftSurat.extractedData.subject = parsed.event;
       session.draftSurat.finalPerihal = parsed.event;
-      updatedKeys.push('Perihal & Acara');
+      if (!parsed.subject) {
+        const autoSubj = generateSubjectSummary(parsed.event, session.draftSurat.extractedData);
+        session.draftSurat.finalSubject = autoSubj;
+        session.draftSurat.extractedData.subject = autoSubj;
+      }
+      updatedKeys.push('Perihal');
     }
     if (parsed.picPengirim) {
       session.draftSurat.extractedData.picPengirim = parsed.picPengirim;
@@ -535,6 +570,9 @@ export class SuratMasukHandler {
         return this.handleReviewData(session, clean);
       }
 
+      const curPerihal = session.draftSurat.finalPerihal || session.draftSurat.extractedData.perihal || '-';
+      const curSubject = (session.draftSurat.finalSubject || session.draftSurat.extractedData.subject || generateSubjectSummary(curPerihal, session.draftSurat.extractedData)).slice(0, 200);
+
       return {
         text:
           `⚠️ Format perubahan belum dikenali.\n\n` +
@@ -543,8 +581,8 @@ export class SuratMasukHandler {
           `Nomor Surat: ${session.draftSurat.extractedData.nomorSurat || '-'}\n` +
           `Tanggal Surat: ${session.draftSurat.extractedData.tanggalSurat || '-'}\n` +
           `Asal Surat: ${session.draftSurat.extractedData.asalSurat || '-'}\n` +
-          `Perihal: ${session.draftSurat.finalPerihal || session.draftSurat.extractedData.perihal || '-'}\n` +
-          `Event: ${session.draftSurat.extractedData.event || '-'}\n` +
+          `Subject: ${curSubject}\n` +
+          `Perihal: ${curPerihal}\n` +
           `PIC: ${session.draftSurat.extractedData.picPengirim || '-'}\n\n` +
           `_(Atau ketik *batal* untuk membatalkan)_`,
       };
@@ -567,6 +605,10 @@ export class SuratMasukHandler {
       lower.includes('tanggal surat') ||
       lower.includes('asal surat') ||
       lower.includes('pengirim') ||
+      lower.includes('penandatangan') ||
+      lower.includes('ttd') ||
+      lower.includes('subject') ||
+      lower.includes('subjek') ||
       lower.includes('perihal') ||
       lower.includes('event') ||
       lower.includes('pic')
@@ -581,6 +623,7 @@ export class SuratMasukHandler {
     nomorSurat?: string;
     tanggalSurat?: string;
     asalSurat?: string;
+    subject?: string;
     perihal?: string;
     event?: string;
     picPengirim?: string;
@@ -590,6 +633,7 @@ export class SuratMasukHandler {
       nomorSurat?: string;
       tanggalSurat?: string;
       asalSurat?: string;
+      subject?: string;
       perihal?: string;
       event?: string;
       picPengirim?: string;
@@ -627,9 +671,11 @@ export class SuratMasukHandler {
         result.nomorSurat = rawVal;
       } else if (rawKey.includes('tanggal') || rawKey.includes('tgl')) {
         result.tanggalSurat = rawVal;
-      } else if (rawKey.includes('asal') || rawKey.includes('pengirim') || rawKey.includes('instansi')) {
-        result.asalSurat = rawVal;
-      } else if (rawKey.includes('perihal') || rawKey.includes('hal') || rawKey.includes('subject')) {
+      } else if (rawKey.includes('asal') || rawKey.includes('pengirim') || rawKey.includes('penandatangan') || rawKey.includes('ttd') || rawKey.includes('instansi')) {
+        result.asalSurat = formatAsalSurat(rawVal);
+      } else if (rawKey === 'subject' || rawKey === 'subjek' || rawKey === 'judul') {
+        result.subject = rawVal.slice(0, 200);
+      } else if (rawKey.includes('perihal') || rawKey.includes('hal')) {
         result.perihal = rawVal;
       } else if (rawKey.includes('event') || rawKey.includes('acara') || rawKey.includes('kegiatan')) {
         result.event = rawVal;
@@ -662,13 +708,12 @@ export class SuratMasukHandler {
     const fieldMap: Record<string, { key: string; label: string }> = {
       '1': { key: 'tanggalSurat', label: 'Tanggal Surat' },
       '2': { key: 'nomorSurat', label: 'Nomor Surat' },
-      '3': { key: 'subject', label: 'Subject/Hal' },
-      '4': { key: 'asalSurat', label: 'Asal Surat' },
-      '5': { key: 'event', label: 'Event/Acara' },
+      '3': { key: 'subject', label: 'Subject (Ringkasan)' },
+      '4': { key: 'perihal', label: 'Perihal Resmi' },
+      '5': { key: 'asalSurat', label: 'Asal Surat (Nama Pengirim - Jabatan)' },
       '6': { key: 'picPengirim', label: 'PIC & Kontak' },
-      '7': { key: 'perihal', label: 'Perihal' },
-      '8': { key: 'jenisSurat', label: 'Jenis Surat' },
-      '9': { key: 'tipeSurat', label: 'Tipe / Klasifikasi' },
+      '7': { key: 'jenisSurat', label: 'Kategori / Jenis Surat' },
+      '8': { key: 'tipeSurat', label: 'Tipe / Klasifikasi' },
     };
 
     let target: { key: string; label: string } | undefined = fieldMap[clean];
@@ -676,18 +721,17 @@ export class SuratMasukHandler {
     if (!target) {
       if (lower.includes('tanggal')) target = fieldMap['1'];
       else if (lower.includes('nomor')) target = fieldMap['2'];
-      else if (lower.includes('subject') || lower.includes('hal')) target = fieldMap['3'];
-      else if (lower.includes('asal') || lower.includes('pengirim') || lower.includes('instansi')) target = fieldMap['4'];
-      else if (lower.includes('event') || lower.includes('acara') || lower.includes('kegiatan')) target = fieldMap['5'];
+      else if (lower.includes('subject') || lower.includes('subjek') || lower.includes('judul')) target = fieldMap['3'];
+      else if (lower.includes('perihal') || lower.includes('hal')) target = fieldMap['4'];
+      else if (lower.includes('asal') || lower.includes('pengirim') || lower.includes('penandatangan') || lower.includes('ttd') || lower.includes('instansi')) target = fieldMap['5'];
       else if (lower.includes('pic') || lower.includes('kontak') || lower.includes('telepon')) target = fieldMap['6'];
-      else if (lower.includes('perihal')) target = fieldMap['7'];
-      else if (lower.includes('jenis')) target = fieldMap['8'];
-      else if (lower.includes('tipe') || lower.includes('klasifikasi')) target = fieldMap['9'];
+      else if (lower.includes('kategori') || lower.includes('jenis')) target = fieldMap['7'];
+      else if (lower.includes('tipe') || lower.includes('klasifikasi')) target = fieldMap['8'];
     }
 
     if (!target) {
       return {
-        text: `⚠️ Data yang ingin diubah belum dikenali.\n\nSilakan ketik nomor (1-9) atau nama data yang ingin diubah (contoh: *Tanggal*, *Nomor Surat*, *Perihal*, *Jenis*):`,
+        text: `⚠️ Data yang ingin diubah belum dikenali.\n\nSilakan ketik nomor (1-8) atau nama data yang ingin diubah (contoh: *Subject*, *Perihal*, *Asal Surat*, *Nomor Surat*, *Kategori*):`,
       };
     }
 
@@ -699,14 +743,23 @@ export class SuratMasukHandler {
       currentValue = session.draftSurat?.jenisSurat || 'UND';
     } else if (target.key === 'tipeSurat') {
       currentValue = session.draftSurat?.tipeSurat || 'Biasa';
+    } else if (target.key === 'subject') {
+      currentValue = session.draftSurat?.finalSubject || session.draftSurat?.extractedData?.subject || '-';
+    } else if (target.key === 'perihal') {
+      currentValue = session.draftSurat?.finalPerihal || session.draftSurat?.extractedData?.perihal || '-';
     } else if (session.draftSurat?.extractedData) {
       currentValue = (session.draftSurat.extractedData as any)[target.key] || '-';
+    }
+
+    let hint = '';
+    if (target.key === 'asalSurat') {
+      hint = `\n_(Gunakan format: Nama Pengirim - Jabatan, nama penandatangan di paling bawah surat, bukan instansi)_\n`;
     }
 
     return {
       text:
         `📝 *Koreksi ${target.label}*\n` +
-        `Nilai saat ini: _${currentValue}_\n\n` +
+        `Nilai saat ini: _${currentValue}_\n${hint}\n` +
         `Silakan ketikkan nilai baru yang benar:`,
     };
   }
@@ -748,15 +801,28 @@ export class SuratMasukHandler {
         session.draftSurat.finalPerihal = autoPerihal;
         session.draftSurat.extractedData.perihal = autoPerihal;
         session.draftSurat.extractedData.event = autoPerihal;
+        const autoSubject = generateSubjectSummary(autoPerihal, session.draftSurat.extractedData);
+        session.draftSurat.finalSubject = autoSubject;
+        session.draftSurat.extractedData.subject = autoSubject;
       }
     } else if (field === 'tipeSurat') {
       session.draftSurat.tipeSurat = val;
     } else if (session.draftSurat.extractedData) {
-      (session.draftSurat.extractedData as any)[field] = val;
-      if (field === 'perihal' || field === 'event') {
+      if (field === 'subject') {
+        const cleanSubj = val.slice(0, 200);
+        session.draftSurat.finalSubject = cleanSubj;
+        session.draftSurat.extractedData.subject = cleanSubj;
+      } else if (field === 'perihal' || field === 'event') {
         session.draftSurat.finalPerihal = val;
         session.draftSurat.extractedData.perihal = val;
         session.draftSurat.extractedData.event = val;
+        const autoSubject = generateSubjectSummary(val, session.draftSurat.extractedData);
+        session.draftSurat.finalSubject = autoSubject;
+        session.draftSurat.extractedData.subject = autoSubject;
+      } else if (field === 'asalSurat') {
+        session.draftSurat.extractedData.asalSurat = formatAsalSurat(val);
+      } else {
+        (session.draftSurat.extractedData as any)[field] = val;
       }
     }
 
@@ -934,17 +1000,21 @@ export class SuratMasukHandler {
       clean.includes('oke') ||
       clean.includes('selesai')
     ) {
-      const result = await suratService.saveSuratDraft(session.draftSurat!, session.userId);
+      const result = await suratService.saveSuratDraft(session.draftSurat!, session.userId, session.userName);
 
       if (result.success) {
         sessionService.resetSession(session.whatsappNumber);
         const agendaLink = formatNomorAgendaLink(result.nomorAgenda, result.fileName);
+        const userPenginput = result.createdBy || session.userName || 'Petugas Protokol';
+        const waktuInputStr = formatWaktuInputIndo(result.createdAt || new Date());
         return {
           text:
             `✅ *REGISTRASI SURAT BERHASIL!*\n\n` +
             `Surat telah resmi tercatat di sistem:\n` +
-            `📌 *Nomor Agenda :* ${agendaLink}\n` +
-            `📂 *Status Disposisi:* BELUM DISPOSISI\n\n` +
+            `• 📌 *Nomor Agenda*   : ${agendaLink}\n` +
+            `• 📂 *Status Disposisi*: 🟡 BELUM DISPOSISI\n` +
+            `• 👤 *Diinput Oleh*    : ${userPenginput}\n` +
+            `• ⏰ *Waktu Input*     : ${waktuInputStr}\n\n` +
             `Berkas PDF telah dipindahkan ke penyimpanan yang aman. Silakan beri tahu saya jika ada hal lain yang bisa dibantu.`,
         };
       } else {

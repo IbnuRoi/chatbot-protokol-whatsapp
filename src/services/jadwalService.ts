@@ -41,7 +41,7 @@ export function formatStatusDisposisi(status: number | bigint | null | undefined
   const code = Number(status);
   switch (code) {
     case 1:
-      return 'Terjadwal (On Schedule)';
+      return 'Diagendakan';
     case 2:
       return 'Dijadwalkan Ulang (Reschedule)';
     case 3:
@@ -63,6 +63,7 @@ export interface JadwalSearchOptions {
   startDate?: Date;
   endDate?: Date;
   location?: string;
+  onlyDiagendakan?: boolean;
 }
 
 export class JadwalService {
@@ -370,21 +371,32 @@ export class JadwalService {
 
   /**
    * Mengambil jadwal kegiatan hari ini dari tabel events
+   * @param onlyUpcoming jika true, hanya ambil kegiatan yang waktu mulainya belum lewat hari ini
+   * @param onlyDiagendakan jika true, hanya ambil kegiatan dengan status disposisi 'Diagendakan' (status = 1)
    */
-  public async getJadwalHariIni(onlyUpcoming: boolean = false): Promise<NormalizedJadwal[]> {
+  public async getJadwalHariIni(
+    onlyUpcoming: boolean = false,
+    onlyDiagendakan: boolean = true
+  ): Promise<NormalizedJadwal[]> {
     const { startOfDay, endOfDay } = this.getWibDayRange(0);
     const now = new Date();
     // Nilai timestamp di DB adalah (WIB + 7 jam), sehingga posisi sekarang dalam skala DB:
     const dbNow = new Date(now.getTime() + 7 * 3600000);
 
-    const events = await prisma.events.findMany({
-      where: {
-        deleted_at: null,
-        event_time_start: {
-          gte: onlyUpcoming ? dbNow : startOfDay,
-          lte: endOfDay,
-        },
+    const whereClause: Prisma.eventsWhereInput = {
+      deleted_at: null,
+      event_time_start: {
+        gte: onlyUpcoming ? dbNow : startOfDay,
+        lte: endOfDay,
       },
+    };
+
+    if (onlyDiagendakan) {
+      whereClause.status = 1n; // 1: onschedule (Diagendakan)
+    }
+
+    const events = await prisma.events.findMany({
+      where: whereClause,
       orderBy: {
         event_time_start: 'asc',
       },
@@ -560,6 +572,8 @@ export class JadwalService {
           }
         : {};
 
+    const statusFilter: Prisma.eventsWhereInput = options.onlyDiagendakan ? { status: 1n } : {};
+
     // 1. Ekspansi cerdas kata kunci dengan akronim & kepanjangannya
     const expansion = expandSearchTermsWithAcronyms(clean);
     const searchTermsArray = expansion.expandedTerms;
@@ -607,6 +621,7 @@ export class JadwalService {
         where: {
           deleted_at: null,
           ...dateFilter,
+          ...statusFilter,
           AND: expansion.meaningfulTokens.map((tok) => ({
             OR: [
               { title: { contains: tok, mode: qMode } },
@@ -630,6 +645,7 @@ export class JadwalService {
         where: {
           deleted_at: null,
           ...dateFilter,
+          ...statusFilter,
           OR: [
             ...searchTermsArray.flatMap((term) => [
               { title: { contains: term, mode: qMode } },
