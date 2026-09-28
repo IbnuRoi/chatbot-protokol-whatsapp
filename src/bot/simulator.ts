@@ -39,8 +39,20 @@ export async function runInteractiveSimulator() {
   });
 
   const printBotReply = (reply: BotResponse) => {
-    const text = typeof reply === 'string' ? reply : reply.text;
-    console.log(`\n🤖 [BOT]:\n${text}\n`);
+    let msgs: string[] = [];
+    if (typeof reply === 'string') {
+      msgs = [reply];
+    } else if (Array.isArray(reply)) {
+      msgs = reply;
+    } else if (reply.messages && reply.messages.length > 0) {
+      msgs = reply.messages;
+    } else if (reply.text) {
+      msgs = [reply.text];
+    }
+
+    for (const text of msgs) {
+      console.log(`\n🤖 [BOT]:\n${text}\n`);
+    }
   };
 
   // Kirim salam pembuka otomatis

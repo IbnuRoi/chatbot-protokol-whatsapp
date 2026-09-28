@@ -105,6 +105,63 @@ export class MessageRouter {
       );
     }
 
+    // 4.5. Fast-path: Input Template Koreksi Data Surat (Bypass NLU LLM agar respon instan <10ms)
+    const isTemplateInput =
+      session.state === BotState.SURAT_MASUK_EDIT_TEMPLATE ||
+      ((session.state === BotState.SURAT_MASUK_REVIEW_DATA || session.state === BotState.SURAT_MASUK_INPUT_NILAI_KOREKSI) &&
+        textInput.includes(':') &&
+        suratMasukHandler.hasTemplateFields(textInput));
+
+    if (isTemplateInput) {
+      if (lower === 'batal' || lower === 'cancel') {
+        if (session.draftSurat) {
+          await suratMasukHandler.handleFinalConfirm(session, '2');
+        }
+        sessionService.resetSession(session.whatsappNumber);
+        return {
+          text: `🚫 *REGISTRASI DIBATALKAN*\n\nDraft registrasi surat telah dibatalkan.`,
+        };
+      }
+      return suratMasukHandler.handleEditTemplateInput(session, textInput);
+    }
+
+    // Fast-path: Respon cepat konfirmasi atau permintaan koreksi di tahap REVIEW_DATA (Bypass NLU LLM)
+    if (session.state === BotState.SURAT_MASUK_REVIEW_DATA) {
+      const isReviewKoreksi =
+        textInput === '2' ||
+        lower === 'salah' ||
+        lower === 'tidak' ||
+        lower === 't' ||
+        lower === 'koreksi' ||
+        lower === 'ubah' ||
+        lower === 'edit' ||
+        lower.includes('ada yang salah') ||
+        lower === 'ganti';
+
+      if (isReviewKoreksi) {
+        sessionService.setState(session.whatsappNumber, BotState.SURAT_MASUK_EDIT_TEMPLATE);
+        return suratMasukHandler.renderEditTemplatePrompt(session);
+      }
+
+      const isReviewSimpan =
+        textInput === '1' ||
+        lower === 'ya' ||
+        lower === 'y' ||
+        lower === 'benar' ||
+        lower === 'betul' ||
+        lower === 'simpan' ||
+        lower === 'oke' ||
+        lower === 'ok' ||
+        lower === 'sudah benar' ||
+        lower === 'sudah sesuai' ||
+        lower === 'sesuai' ||
+        lower === 'pas';
+
+      if (isReviewSimpan) {
+        return suratMasukHandler.handleReviewData(session, textInput);
+      }
+    }
+
     // 5. Analisis NLU (OpenRouter AI) untuk setiap pesan teks percakapan
     const nlu = await nluService.processNaturalLanguage(textInput, session.userName, session.state);
 
@@ -545,6 +602,13 @@ export class MessageRouter {
       }
       if (typeof response === 'string') {
         return `${cleanIntro}\n\n${response}`;
+      }
+      if (response.messages && response.messages.length > 0) {
+        return {
+          ...response,
+          text: `${cleanIntro}\n\n${response.text}`,
+          messages: [`${cleanIntro}\n\n${response.messages[0]}`, ...response.messages.slice(1)],
+        };
       }
       return {
         ...response,

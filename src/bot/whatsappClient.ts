@@ -320,47 +320,67 @@ export class WhatsAppClient {
 
   /**
    * Mengirimkan balasan ke WhatsApp menggunakan pengiriman pesan resmi yang terjamin 100% masuk
+   * Mendukung pengiriman multiple bubble chat secara berurutan jika respons memiliki beberapa pesan
    */
   public async sendReply(jid: string, response: BotResponse): Promise<void> {
     if (!this.sock) return;
 
-    const textToSend = typeof response === 'string' ? response : response.text;
+    let messageList: string[] = [];
+    if (typeof response === 'string') {
+      messageList = [response];
+    } else if (Array.isArray(response)) {
+      messageList = response;
+    } else if (response.messages && response.messages.length > 0) {
+      messageList = response.messages;
+    } else if (response.text) {
+      messageList = [response.text];
+    }
 
-    try {
-      const sent = await this.sock.sendMessage(jid, { text: textToSend });
-      if (sent?.key?.id) {
-        this.sentMessageIds.add(sent.key.id);
-        if (this.sentMessageIds.size > 2000) {
-          this.sentMessageIds.clear();
+    for (let i = 0; i < messageList.length; i++) {
+      const textToSend = messageList[i];
+      if (!textToSend || !textToSend.trim()) continue;
+
+      try {
+        const sent = await this.sock.sendMessage(jid, { text: textToSend });
+        if (sent?.key?.id) {
+          this.sentMessageIds.add(sent.key.id);
+          if (this.sentMessageIds.size > 2000) {
+            this.sentMessageIds.clear();
+          }
+        }
+        console.log(`📤 [WhatsApp Outbound] Berhasil mengirimkan balasan (${i + 1}/${messageList.length}) ke: ${jid}`);
+      } catch (err) {
+        console.error(`❌ [WhatsApp Outbound] Gagal mengirim pesan ke ${jid}:`, err);
+        // Fallback jika pengiriman ke @lid gagal, coba kirim ke nomor WhatsApp aslinya
+        if (jid.endsWith('@lid')) {
+          try {
+            const lidClean = jid.split('@')[0].split(':')[0];
+            const user = await prisma.users.findFirst({
+              where: {
+                deleted_at: null,
+                device_id: lidClean,
+              },
+            });
+            if (user && user.phone_number && user.phone_number !== '-' && !user.phone_number.startsWith('LID_')) {
+              const cleanPhone = user.phone_number.replace(/\D/g, '');
+              const normalizedPhone = cleanPhone.startsWith('0') ? '62' + cleanPhone.slice(1) : cleanPhone;
+              const phoneJid = `${normalizedPhone}@s.whatsapp.net`;
+              console.log(`🔄 [WhatsApp Outbound Fallback] Mencoba mengirim ke nomor telepon pengguna: ${phoneJid}`);
+              const fallbackSent = await this.sock.sendMessage(phoneJid, { text: textToSend });
+              if (fallbackSent?.key?.id) {
+                this.sentMessageIds.add(fallbackSent.key.id);
+              }
+              console.log(`📤 [WhatsApp Outbound Fallback] Berhasil terkirim ke: ${phoneJid}`);
+            }
+          } catch (fallbackErr) {
+            console.error(`❌ [WhatsApp Outbound Fallback] Gagal kirim ke nomor telepon:`, fallbackErr);
+          }
         }
       }
-      console.log(`📤 [WhatsApp Outbound] Berhasil mengirimkan balasan ke: ${jid}`);
-    } catch (err) {
-      console.error(`❌ [WhatsApp Outbound] Gagal mengirim pesan ke ${jid}:`, err);
-      // Fallback jika pengiriman ke @lid gagal, coba kirim ke nomor WhatsApp aslinya
-      if (jid.endsWith('@lid')) {
-        try {
-          const lidClean = jid.split('@')[0].split(':')[0];
-          const user = await prisma.users.findFirst({
-            where: {
-              deleted_at: null,
-              device_id: lidClean,
-            },
-          });
-          if (user && user.phone_number && user.phone_number !== '-' && !user.phone_number.startsWith('LID_')) {
-            const cleanPhone = user.phone_number.replace(/\D/g, '');
-            const normalizedPhone = cleanPhone.startsWith('0') ? '62' + cleanPhone.slice(1) : cleanPhone;
-            const phoneJid = `${normalizedPhone}@s.whatsapp.net`;
-            console.log(`🔄 [WhatsApp Outbound Fallback] Mencoba mengirim ke nomor telepon pengguna: ${phoneJid}`);
-            const fallbackSent = await this.sock.sendMessage(phoneJid, { text: textToSend });
-            if (fallbackSent?.key?.id) {
-              this.sentMessageIds.add(fallbackSent.key.id);
-            }
-            console.log(`📤 [WhatsApp Outbound Fallback] Berhasil terkirim ke: ${phoneJid}`);
-          }
-        } catch (fallbackErr) {
-          console.error(`❌ [WhatsApp Outbound Fallback] Gagal kirim ke nomor telepon:`, fallbackErr);
-        }
+
+      // Beri jeda kecil (250ms) antar bubble agar terkirim teratur ke WhatsApp
+      if (i < messageList.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
       }
     }
   }

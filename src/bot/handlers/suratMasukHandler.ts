@@ -464,9 +464,11 @@ export class SuratMasukHandler {
   }
 
   /**
-   * Menampilkan template teks koreksi yang bisa disalin langsung oleh pengguna tanpa menu pilihan
+   * Menampilkan template teks koreksi yang bisa disalin langsung oleh pengguna tanpa menu pilihan.
+   * Arahan dipisahkan ke bubble chat tersendiri (Bubble 1) dan template murni bersih di bubble chat tersendiri (Bubble 2),
+   * sehingga pengguna di WhatsApp tinggal menyalin Bubble 2 tanpa perlu menghapus arahan/catatan manual.
    */
-  public renderEditTemplatePrompt(session: UserSession): BotResponse {
+  public renderEditTemplatePrompt(session: UserSession, customGuidePrefix?: string): BotResponse {
     const draft = session.draftSurat;
     const data = draft?.extractedData;
     const perihal = draft?.finalPerihal || data?.perihal || '-';
@@ -483,9 +485,19 @@ export class SuratMasukHandler {
     if (!picName) picName = '-';
     if (!picPhone) picPhone = '-';
 
-    const text =
-      `✏️ *TEMPLATE KOREKSI DATA SURAT*\n\n` +
-      `Silakan **salin (copy)** template teks di bawah ini, ubah data pada bagian yang salah, lalu **kirimkan kembali** ke chat ini tanpa perlu memilih menu:\n\n` +
+    // Bubble 1: Petunjuk dan Catatan Pengisian
+    const guideText =
+      (customGuidePrefix ? `${customGuidePrefix}\n\n` : `✏️ *PANDUAN KOREKSI DATA SURAT*\n\n`) +
+      `Silakan *salin (copy)* pesan template di bawah ini, ubah data pada bagian yang salah, lalu *langsung kirimkan kembali* ke chat ini tanpa perlu memilih menu:\n\n` +
+      `📌 *Catatan Pengisian:*\n` +
+      `• *Asal Surat*: Format _Nama Pengirim - Jabatan_ (nama pejabat penandatangan di bagian bawah surat, bukan instansi)\n` +
+      `• *Tanggal Acara*: Tanggal kegiatan (isi *-* jika tidak ada acara)\n` +
+      `• *Jam Acara*: Waktu kegiatan (contoh: 09.00 WIB atau *-* jika tidak ada)\n` +
+      `• *Pilihan Kategori*: UND, PH, UNR, AU, WR, TAP, LP\n\n` +
+      `_(Ketik *batal* jika ingin membatalkan)_`;
+
+    // Bubble 2: Template Bersih (Murni Key-Value, Tanpa Arahan/Catatan agar 100% siap disalin dan diedit)
+    const cleanTemplateText =
       `Kategori: ${kategori}\n` +
       `Nomor Surat: ${data?.nomorSurat || '-'}\n` +
       `Tanggal Surat: ${data?.tanggalSurat || '-'}\n` +
@@ -495,15 +507,12 @@ export class SuratMasukHandler {
       `Tanggal Acara: ${data?.dateEvent || '-'}\n` +
       `Jam Acara: ${data?.timeEvent || '-'}\n` +
       `Nama PIC: ${picName}\n` +
-      `Nomor PIC: ${picPhone}\n\n` +
-      `📌 *Catatan Pengisian:*\n` +
-      `• *Asal Surat*: Format _Nama Pengirim - Jabatan_ (nama pejabat penandatangan di bagian bawah surat, bukan instansi)\n` +
-      `• *Tanggal Acara*: Tanggal kegiatan, atau isi *-* jika tidak ada acara\n` +
-      `• *Jam Acara*: Waktu/jam kegiatan (contoh: 09.00 WIB atau 09.00 - 12.00 WIB), atau isi *-* jika tidak ada\n` +
-      `• *Pilihan Kategori*: UND, PH, UNR, AU, WR, TAP, LP\n\n` +
-      `_(Ketik *batal* jika ingin membatalkan)_`;
+      `Nomor PIC: ${picPhone}`;
 
-    return { text };
+    return {
+      text: `${guideText}\n\n${cleanTemplateText}`,
+      messages: [guideText, cleanTemplateText],
+    };
   }
 
   /**
@@ -644,37 +653,7 @@ export class SuratMasukHandler {
         return this.handleReviewData(session, clean);
       }
 
-      const curPerihal = session.draftSurat.finalPerihal || session.draftSurat.extractedData.perihal || '-';
-      const curSubject = (session.draftSurat.finalSubject || session.draftSurat.extractedData.subject || generateSubjectSummary(curPerihal, session.draftSurat.extractedData)).slice(0, 200);
-
-      let curPicName = session.draftSurat.extractedData.picName || '';
-      let curPicPhone = session.draftSurat.extractedData.picPhoneNumber || '';
-      if ((!curPicName || curPicName === '-' || !curPicPhone || curPicPhone === '-') && session.draftSurat.extractedData.picPengirim && session.draftSurat.extractedData.picPengirim !== '-') {
-        const splitted = splitPicNameAndPhone(session.draftSurat.extractedData.picPengirim);
-        if (!curPicName || curPicName === '-') curPicName = splitted.name;
-        if (!curPicPhone || curPicPhone === '-') curPicPhone = splitted.phone;
-      }
-      if (!curPicName) curPicName = '-';
-      if (!curPicPhone) curPicPhone = '-';
-      const curDateEvent = session.draftSurat.extractedData.dateEvent || '-';
-      const curTimeEvent = session.draftSurat.extractedData.timeEvent || '-';
-
-      return {
-        text:
-          `⚠️ Format perubahan belum dikenali.\n\n` +
-          `Silakan salin template berikut dan kirimkan kembali dengan perubahan Anda:\n\n` +
-          `Kategori: ${session.draftSurat.jenisSurat || 'UND'}\n` +
-          `Nomor Surat: ${session.draftSurat.extractedData.nomorSurat || '-'}\n` +
-          `Tanggal Surat: ${session.draftSurat.extractedData.tanggalSurat || '-'}\n` +
-          `Asal Surat: ${session.draftSurat.extractedData.asalSurat || '-'}\n` +
-          `Subject: ${curSubject}\n` +
-          `Perihal: ${curPerihal}\n` +
-          `Tanggal Acara: ${curDateEvent}\n` +
-          `Jam Acara: ${curTimeEvent}\n` +
-          `Nama PIC: ${curPicName}\n` +
-          `Nomor PIC: ${curPicPhone}\n\n` +
-          `_(Atau ketik *batal* untuk membatalkan)_`,
-      };
+      return this.renderEditTemplatePrompt(session, `⚠️ *Format perubahan belum dikenali.*`);
     }
 
     // Kembali ke state REVIEW_DATA dengan tampilan hasil pembaruan
