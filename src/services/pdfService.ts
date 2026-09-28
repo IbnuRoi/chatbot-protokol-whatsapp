@@ -136,8 +136,19 @@ export class PdfService {
       fs.mkdirSync(uploadDir, { recursive: true });
     }
     const targetPath = path.join(uploadDir, finalFileName);
-    fs.copyFileSync(tempFilePath, targetPath);
-    this.deleteTempPdf(tempFilePath);
+    if (tempFilePath === targetPath && fs.existsSync(targetPath)) {
+      return targetPath;
+    }
+    if (fs.existsSync(targetPath)) {
+      if (fs.existsSync(tempFilePath)) {
+        this.deleteTempPdf(tempFilePath);
+      }
+      return targetPath;
+    }
+    if (fs.existsSync(tempFilePath)) {
+      fs.copyFileSync(tempFilePath, targetPath);
+      this.deleteTempPdf(tempFilePath);
+    }
     return targetPath;
   }
 

@@ -5,7 +5,7 @@ import { nluService, NluResult } from '../../services/nluService';
 import { cariSuratHandler } from './cariSuratHandler';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
-import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink } from '../../utils/textHelper';
+import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink, isPureGreeting } from '../../utils/textHelper';
 import { NormalizedSurat } from '../../services/suratService';
 import { NormalizedJadwal } from '../../services/jadwalService';
 
@@ -249,7 +249,7 @@ export class HybridSearchHandler {
     const lower = clean.toLowerCase();
 
     // 1. Pembatalan atau kembali ke menu
-    if (lower === '0' || lower === 'menu' || lower === 'batal' || nlu?.intent === 'BATAL') {
+    if (isPureGreeting(clean) || lower === '0' || lower === 'menu' || lower === 'batal' || nlu?.intent === 'BATAL') {
       sessionService.resetSession(session.whatsappNumber);
       return menuHandler.getMainGreeting(session);
     }

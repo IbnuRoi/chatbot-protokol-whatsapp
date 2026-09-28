@@ -2,7 +2,8 @@ import { prisma } from '../database/prisma';
 import { Prisma } from '@prisma/client';
 import { pdfService } from './pdfService';
 import { SuratDraftData } from './sessionService';
-import { cleanHtml, generateLetterFileName } from '../utils/textHelper';
+import { cleanHtml, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone } from '../utils/textHelper';
+import { parseIndonesianDateToDate, formatTanggalIndo } from '../utils/dateHelper';
 import { ENV } from '../config/env';
 import path from 'path';
 
@@ -62,7 +63,10 @@ export interface NormalizedSurat {
   asalSurat: string;
   asalInstansi: string;
   event?: string | null;
+  dateEvent?: string | null;
   picPengirim?: string | null;
+  picName?: string | null;
+  picPhoneNumber?: string | null;
   perihal: string;
   filePath: string;
   fileName: string;
@@ -109,7 +113,8 @@ export class SuratService {
       ? new Date(letter.date_letter).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
       : '-';
 
-    const cleanSubject = cleanHtml(letter.subject) || cleanHtml(letter.note) || '-';
+    const cleanPerihal = cleanHtml(letter.note) || cleanHtml(letter.subject) || cleanHtml(letter.place_event) || '-';
+    const cleanSubject = cleanHtml(letter.subject) || cleanPerihal || '-';
 
     let disposisiObj: NormalizedSurat['disposisi'] = {
       id: 0,
@@ -139,8 +144,13 @@ export class SuratService {
       asalSurat: letter.from || '-',
       asalInstansi: letter.institution_origin || 'Lainnya',
       event: letter.place_event || '-',
-      picPengirim: letter.pic_name || '-',
-      perihal: cleanSubject,
+      dateEvent: letter.date_event ? formatTanggalIndo(letter.date_event, true) : null,
+      picPengirim: letter.pic_phone_number && letter.pic_phone_number !== '-'
+        ? (letter.pic_name && letter.pic_name !== '-' ? `${letter.pic_name} (${letter.pic_phone_number})` : letter.pic_phone_number)
+        : (letter.pic_name || '-'),
+      picName: letter.pic_name || '-',
+      picPhoneNumber: letter.pic_phone_number || '-',
+      perihal: cleanPerihal,
       filePath: letter.file || '',
       fileName: letter.file || '',
       fileSize: 0,
@@ -254,16 +264,26 @@ export class SuratService {
 
       // 1. Pindahkan berkas dari temp ke folder upload storage (siap disymlink di server)
       const permanentFilePath = pdfService.moveToUploadStorage(draft.tempPdfPath, finalFileName);
+      draft.tempPdfPath = permanentFilePath;
 
       const categoryId = LETTER_CATEGORY_MAP[draft.jenisSurat] || BigInt(2);
       const typeId = LETTER_TYPE_MAP[draft.tipeSurat] || BigInt(1);
 
       // Parse tanggal surat jika ada
-      let parsedDate: Date | null = null;
-      if (draft.extractedData.tanggalSurat) {
+      let parsedDate: Date | null = parseIndonesianDateToDate(draft.extractedData.tanggalSurat);
+      if (!parsedDate && draft.extractedData.tanggalSurat) {
         const parsed = new Date(draft.extractedData.tanggalSurat);
         if (!isNaN(parsed.getTime())) {
           parsedDate = parsed;
+        }
+      }
+
+      // Parse tanggal acara/event jika ada
+      let parsedDateEvent: Date | null = parseIndonesianDateToDate(draft.extractedData.dateEvent);
+      if (!parsedDateEvent && draft.extractedData.dateEvent) {
+        const parsed = new Date(draft.extractedData.dateEvent);
+        if (!isNaN(parsed.getTime())) {
+          parsedDateEvent = parsed;
         }
       }
 
@@ -277,28 +297,99 @@ export class SuratService {
       const finalPerihal = draft.finalPerihal || draft.extractedData.perihal || '-';
       const finalSubject = (draft.finalSubject || draft.extractedData.subject || finalPerihal).slice(0, 200);
 
+      // Format perihal ke format HTML (<p>...</p>) sesuai format kolom note di tabel letters
+      const formattedNote = formatNoteHtml(finalPerihal);
+
       const creatorName = (userName || '').trim() || 'Petugas Protokol';
 
-      // Simpan surat ke tabel letters
-      const surat = await prisma.letters.create({
-        data: {
-          id: nextId,
-          letter_category_id: categoryId,
-          agenda_number: draft.nomorAgenda,
-          number_or_date: draft.extractedData.nomorSurat || '-',
-          date_letter: parsedDate,
-          from: draft.extractedData.asalSurat || '-',
-          subject: finalSubject,
-          place_event: finalPerihal,
-          type_letter: typeId,
-          file: finalFileName,
-          pic_name: draft.extractedData.picPengirim || '-',
-          institution_origin: draft.asalInstansi || 'Lainnya',
-          created_by: creatorName,
-          created_at: new Date(),
-          updated_at: new Date(),
-        },
-      });
+      // Pisahkan antara nama PIC dan nomor teleponnya
+      let rawPicName = (draft.extractedData.picName || '').trim();
+      let rawPicPhone = (draft.extractedData.picPhoneNumber || '').trim();
+
+      if ((!rawPicName || rawPicName === '-' || !rawPicPhone || rawPicPhone === '-') && draft.extractedData.picPengirim) {
+        const splitted = splitPicNameAndPhone(draft.extractedData.picPengirim);
+        if ((!rawPicName || rawPicName === '-') && splitted.name !== '-') {
+          rawPicName = splitted.name;
+        }
+        if ((!rawPicPhone || rawPicPhone === '-') && splitted.phone !== '-') {
+          rawPicPhone = splitted.phone;
+        }
+      }
+
+      const safePicName = (rawPicName && rawPicName !== '-' ? rawPicName : '-').slice(0, 100);
+      const safePicPhone = (rawPicPhone && rawPicPhone !== '-' ? rawPicPhone : '-').slice(0, 50);
+
+      // Sanitisasi dan batasi panjang setiap kolom secara ketat sesuai skema database PostgreSQL
+      // agar tidak pernah terjadi error 22001 (value too long for type character varying)
+      const safeAgendaNumber = (draft.nomorAgenda || '').trim().slice(0, 100);
+      const safeNomorSurat = (draft.extractedData.nomorSurat || '-').trim().slice(0, 100);
+      const safeAsalSurat = (draft.extractedData.asalSurat || '-').trim().slice(0, 225);
+      const safeSubject = finalSubject.trim().slice(0, 200);
+      const safePlaceEvent = finalPerihal.trim().slice(0, 225);
+      const safeFileName = finalFileName.trim().slice(0, 225);
+      const safeInstansi = (draft.asalInstansi || 'Lainnya').trim().slice(0, 50);
+      const safeCreatorName = creatorName.trim().slice(0, 191);
+
+      // Simpan surat ke tabel letters dengan fallback protektif
+      let surat: any;
+      try {
+        surat = await prisma.letters.create({
+          data: {
+            id: nextId,
+            letter_category_id: categoryId,
+            agenda_number: safeAgendaNumber,
+            number_or_date: safeNomorSurat,
+            date_letter: parsedDate,
+            date_event: parsedDateEvent,
+            from: safeAsalSurat,
+            subject: safeSubject,
+            place_event: safePlaceEvent,
+            type_letter: typeId,
+            note: formattedNote,
+            file: safeFileName,
+            pic_name: safePicName,
+            pic_phone_number: safePicPhone,
+            institution_origin: safeInstansi,
+            created_by: safeCreatorName,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+        });
+      } catch (insertErr: any) {
+        // Fallback protektif: Jika database di server memiliki batasan panjang pada kolom `note` (misal VARCHAR(255))
+        if (
+          insertErr.message?.includes('too long') ||
+          insertErr.code === 'P2000' ||
+          insertErr.code === '22001'
+        ) {
+          console.warn('[SuratService] Insert pertama gagal karena nilai terlalu panjang, mencoba fallback note dipotong:', insertErr.message);
+          const truncatedNote = formattedNote ? `<p>${finalPerihal.trim().slice(0, 210)}</p>` : null;
+          surat = await prisma.letters.create({
+            data: {
+              id: nextId,
+              letter_category_id: categoryId,
+              agenda_number: safeAgendaNumber,
+              number_or_date: safeNomorSurat,
+              date_letter: parsedDate,
+              date_event: parsedDateEvent,
+              from: safeAsalSurat,
+              subject: safeSubject,
+              place_event: safePlaceEvent,
+              type_letter: typeId,
+              note: truncatedNote,
+              file: safeFileName,
+              pic_name: safePicName,
+              pic_phone_number: safePicPhone,
+              institution_origin: safeInstansi,
+              created_by: safeCreatorName,
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          });
+        } else {
+          throw insertErr;
+        }
+      }
 
       // Catat activity log
       try {
@@ -314,6 +405,8 @@ export class SuratService {
               nomorAgenda: surat.agenda_number,
               nomorSurat: surat.number_or_date,
               asalSurat: surat.from,
+              subject: surat.subject,
+              note: surat.note,
               createdBy: creatorName,
             }),
             created_at: new Date(),
@@ -324,20 +417,17 @@ export class SuratService {
         console.warn('Failed to write activity_log:', logErr);
       }
 
-        return {
-          success: true,
-          message: 'Surat berhasil disimpan ke sistem.',
-          nomorAgenda: surat.agenda_number,
-          suratId: Number(surat.id),
-          fileName: finalFileName,
-          createdBy: creatorName,
-          createdAt: surat.created_at || new Date(),
-        };
+      return {
+        success: true,
+        message: 'Surat berhasil disimpan ke sistem.',
+        nomorAgenda: surat.agenda_number,
+        suratId: Number(surat.id),
+        fileName: safeFileName,
+        createdBy: creatorName,
+        createdAt: surat.created_at || new Date(),
+      };
     } catch (err: any) {
       console.error('Database error saving surat:', err);
-      if (draft.tempPdfPath) {
-        pdfService.deleteTempPdf(draft.tempPdfPath);
-      }
       return {
         success: false,
         message: `Terjadi kesalahan saat menyimpan ke database: ${err.message}`,
@@ -469,11 +559,11 @@ export class SuratService {
     const dateFilter =
       options.dateStart || options.dateEnd
         ? {
-            date_letter: {
-              ...(options.dateStart ? { gte: options.dateStart } : {}),
-              ...(options.dateEnd ? { lte: options.dateEnd } : {}),
-            },
-          }
+          date_letter: {
+            ...(options.dateStart ? { gte: options.dateStart } : {}),
+            ...(options.dateEnd ? { lte: options.dateEnd } : {}),
+          },
+        }
         : {};
 
     // Jika kata kunci pencarian adalah 'terbaru' atau 'terakhir', ambil langsung surat-surat paling baru
@@ -626,7 +716,7 @@ export class SuratService {
 
     // 3. Hitung Relevansi Skor Presisi Tinggi (Kecocokan Teks + Kebaruan Tanggal Surat)
     const scored = candidates.map((letter) => {
-      const perihal = letter.subject || '';
+      const perihal = cleanHtml(letter.note) || letter.subject || '';
       const dispInfo = dispMap.get(String(letter.id));
       const metadata = [
         letter.place_event || '',

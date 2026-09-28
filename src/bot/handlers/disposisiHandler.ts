@@ -3,7 +3,7 @@ import { disposisiService } from '../../services/disposisiService';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
 
-import { formatNomorAgendaLink } from '../../utils/textHelper';
+import { formatNomorAgendaLink, isPureGreeting } from '../../utils/textHelper';
 import { formatWaktuInputIndo } from '../../utils/dateHelper';
 
 export class DisposisiHandler {
@@ -25,7 +25,7 @@ export class DisposisiHandler {
    */
   public async handleSearch(session: UserSession, input: string): Promise<BotResponse> {
     const clean = input.trim();
-    if (clean.toLowerCase() === 'batal' || clean.toLowerCase() === 'menu') {
+    if (isPureGreeting(clean) || clean.toLowerCase() === 'batal' || clean.toLowerCase() === 'menu') {
       sessionService.resetSession(session.whatsappNumber);
       return menuHandler.getMainGreeting(session);
     }

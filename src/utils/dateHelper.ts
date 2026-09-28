@@ -175,7 +175,7 @@ export function extractDateFromText(text: string, referenceDate: Date = new Date
   // 2. Format: "18 September 2026", "18 september", "tgl 18 sep", "tanggal 18 sept"
   const monthWords = Object.keys(MONTH_MAP).join('|');
   const textDateRegex = new RegExp(
-    `(?:tanggal|tgl)?\\s*\\b([0-2]?[1-9]|3[01])\\s*(?:-|/|\\s)\\s*(${monthWords})(?:\\s*(?:-|/|\\s)\\s*(\\d{4}))?\\b`,
+    `(?:(?:senin|selasa|rabu|kamis|jumat|sabtu|minggu)[,\\s]+)?(?:tanggal|tgl)?\\s*\\b(3[01]|[12][0-9]|0?[1-9])\\s*(?:-|/|\\s)\\s*(${monthWords})(?:\\s*(?:-|/|\\s)\\s*(\\d{4}))?\\b`,
     'i'
   );
   const textMatch = clean.match(textDateRegex);
@@ -200,7 +200,7 @@ export function extractDateFromText(text: string, referenceDate: Date = new Date
   }
 
   // 4. Format Numerik: "18/09/2026", "18-09-2026", "18/09", "18-09"
-  const numMatch = clean.match(/(?:tanggal|tgl)?\s*\b([0-2]?[1-9]|3[01])[/.-](\d{1,2})(?:[/.-](\d{4}))?\b/i);
+  const numMatch = clean.match(/(?:(?:senin|selasa|rabu|kamis|jumat|sabtu|minggu)[,\\s]+)?(?:tanggal|tgl)?\\s*\\b(3[01]|[12][0-9]|0?[1-9])[/.-](\d{1,2})(?:[/.-](\d{4}))?\\b/i);
   if (numMatch) {
     const day = parseInt(numMatch[1], 10);
     const month = parseInt(numMatch[2], 10);
@@ -208,6 +208,61 @@ export function extractDateFromText(text: string, referenceDate: Date = new Date
     if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
       return toResult(year, month, day);
     }
+  }
+
+  return null;
+}
+
+/**
+ * Mengonversi string tanggal bahasa Indonesia ke objek Date standar JavaScript
+ * Mendukung format:
+ * - "Senin, 20 Oktober 2026" / "20 Oktober 2026"
+ * - "2026-10-20"
+ * - "20/10/2026" / "20-10-2026"
+ * - "20 Okt 2026"
+ */
+export function parseIndonesianDateToDate(input: string | null | undefined): Date | null {
+  if (!input || input.trim() === '-' || input.trim() === '') return null;
+  const clean = input.trim();
+
+  // 1. Format ISO YYYY-MM-DD
+  const isoMatch = clean.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
+  if (isoMatch) {
+    const y = parseInt(isoMatch[1], 10);
+    const m = parseInt(isoMatch[2], 10);
+    const d = parseInt(isoMatch[3], 10);
+    return new Date(Date.UTC(y, m - 1, d));
+  }
+
+  // 2. Format DD/MM/YYYY atau DD-MM-YYYY
+  const numMatch = clean.match(/\b(3[01]|[12][0-9]|0?[1-9])[/.-](\d{1,2})[/.-](\d{4})\b/);
+  if (numMatch) {
+    const d = parseInt(numMatch[1], 10);
+    const m = parseInt(numMatch[2], 10);
+    const y = parseInt(numMatch[3], 10);
+    return new Date(Date.UTC(y, m - 1, d));
+  }
+
+  // 3. Format dengan nama bulan bahasa Indonesia
+  const monthWords = Object.keys(MONTH_MAP).join('|');
+  const textRegex = new RegExp(
+    `\\b(3[01]|[12][0-9]|0?[1-9])\\s*(?:-|/|\\s)\\s*(${monthWords})(?:\\s*(?:-|/|\\s)?\\s*(\\d{4}))?\\b`,
+    'i'
+  );
+  const m = clean.match(textRegex);
+  if (m) {
+    const d = parseInt(m[1], 10);
+    const mon = MONTH_MAP[m[2].toLowerCase()];
+    const y = m[3] ? parseInt(m[3], 10) : new Date().getFullYear();
+    if (mon) {
+      return new Date(Date.UTC(y, mon - 1, d));
+    }
+  }
+
+  // 4. Fallback ke standard Date parse
+  const fallback = new Date(clean);
+  if (!isNaN(fallback.getTime())) {
+    return fallback;
   }
 
   return null;

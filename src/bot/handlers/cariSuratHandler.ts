@@ -4,7 +4,7 @@ import { nluService } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { riwayatHandler } from './riwayatHandler';
 import { BotResponse } from '../types';
-import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink } from '../../utils/textHelper';
+import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink, isPureGreeting } from '../../utils/textHelper';
 import { formatWaktuInputIndo } from '../../utils/dateHelper';
 
 export class CariSuratHandler {
@@ -32,7 +32,7 @@ export class CariSuratHandler {
     const raw = input.trim();
     let clean = raw;
 
-    if (clean === '0' || clean.toLowerCase() === 'batal' || clean.toLowerCase() === 'menu') {
+    if (isPureGreeting(clean) || clean === '0' || clean.toLowerCase() === 'batal' || clean.toLowerCase() === 'menu') {
       sessionService.resetSession(session.whatsappNumber);
       return menuHandler.getMainGreeting(session);
     }
@@ -150,7 +150,7 @@ export class CariSuratHandler {
     const clean = input.trim();
     const lower = clean.toLowerCase();
 
-    if (clean === '0' || lower === 'menu' || lower === 'batal' || nlu?.intent === 'BATAL') {
+    if (isPureGreeting(clean) || clean === '0' || lower === 'menu' || lower === 'batal' || nlu?.intent === 'BATAL') {
       sessionService.resetSession(session.whatsappNumber);
       return menuHandler.getMainGreeting(session);
     }

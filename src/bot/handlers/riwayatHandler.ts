@@ -2,7 +2,7 @@ import { sessionService, BotState, UserSession } from '../../services/sessionSer
 import { suratService } from '../../services/suratService';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
-import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink } from '../../utils/textHelper';
+import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink, isPureGreeting } from '../../utils/textHelper';
 import { formatWaktuInputIndo } from '../../utils/dateHelper';
 
 export class RiwayatHandler {
@@ -64,7 +64,7 @@ export class RiwayatHandler {
     const clean = raw.toUpperCase();
     const currentPage = session.riwayatPage || 0;
 
-    if (clean === '0' || clean === 'KEMBALI' || clean === 'MENU' || clean === 'BATAL') {
+    if (isPureGreeting(raw) || clean === '0' || clean === 'KEMBALI' || clean === 'MENU' || clean === 'BATAL') {
       sessionService.resetSession(session.whatsappNumber);
       return menuHandler.getMainGreeting(session);
     }

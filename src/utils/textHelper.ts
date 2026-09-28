@@ -30,6 +30,29 @@ export function cleanHtml(text: string | null | undefined): string {
 }
 
 /**
+ * Memformat teks perihal ke format HTML paragraf (<p>...</p>)
+ * sesuai standar penyimpanan kolom `note` pada tabel `letters` dan `dispositions` di database.
+ */
+export function formatNoteHtml(text: string | null | undefined): string {
+  if (!text || !text.trim() || text.trim() === '-') return '';
+  const trimmed = text.trim();
+
+  // Jika teks sudah diawali dan diakhiri tag <p>...</p>, pertahankan
+  if (trimmed.startsWith('<p>') && trimmed.endsWith('</p>')) {
+    return trimmed;
+  }
+
+  // Pisahkan berdasarkan baris baru jika teks memiliki beberapa paragraf
+  const paragraphs = trimmed
+    .split(/\r?\n+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  if (paragraphs.length === 0) return '';
+  return paragraphs.map((p) => `<p>${p}</p>`).join('');
+}
+
+/**
  * Menghitung skor relevansi pencocokan antara query pengguna dengan teks target
  * (Digunakan untuk pencarian fluid pada daftar perihal surat dan nama kegiatan)
  */
@@ -159,4 +182,123 @@ export function generateLetterFileName(originalOrExtName?: string | null): strin
   const cleanExt = ext.toLowerCase();
   return `${sec}_${uniqid}${cleanExt}`;
 }
+
+/**
+ * Memeriksa apakah teks input pengguna murni berupa sapaan/greeting santai atau pembuka percakapan
+ * (contoh: "halo", "hai", "pagi", "selamat pagi", "assalamualaikum", "ping", "menu", dsb.)
+ * tanpa memuat permintaan atau kata kunci pencarian fitur lainnya.
+ */
+export function isPureGreeting(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const clean = text
+    .toLowerCase()
+    .replace(/^[^\w]+|[^\w]+$/g, '')
+    .trim();
+  if (!clean) return false;
+
+  const greetingTokens = new Set([
+    'halo', 'halo min', 'halo bot', 'halo admin', 'halo pak', 'halo bu', 'halo kak',
+    'hai', 'hai min', 'hai bot', 'hai admin', 'hai kak',
+    'hi', 'hi min', 'hi bot', 'helo', 'hello',
+    'pagi', 'selamat pagi', 'pagi min', 'selamat pagi min', 'selamat pagi pak', 'selamat pagi bu',
+    'siang', 'selamat siang', 'siang min', 'selamat siang min', 'selamat siang pak', 'selamat siang bu',
+    'sore', 'selamat sore', 'sore min', 'selamat sore min', 'selamat sore pak', 'selamat sore bu',
+    'malam', 'selamat malam', 'malam min', 'selamat malam min', 'selamat malam pak', 'selamat malam bu',
+    'assalamualaikum', "assalamu'alaikum", 'assalamu alaikum', 'assalamualaikum wr wb', "assalamu'alaikum wr wb",
+    'salam', 'sampurasun', 'kulonuwun',
+    'ping', 'p', 'tes', 'test',
+    'menu', 'start', '/start', 'buka menu', 'tampilkan menu'
+  ]);
+
+  if (greetingTokens.has(clean)) return true;
+
+  const greetingPattern = /^(?:halo|hai|hi|helo|hello|p|ping|tes|test|assalamu\s*['’]?alaikum(?:\s*wr\s*wb)?|selamat\s+(?:pagi|siang|sore|malam)|salam)(?:\s+(?:min|admin|bot|kak|pak|bu|bapak|ibu|protokol|asisten))?[.!?~]*$/i;
+
+  return greetingPattern.test(clean);
+}
+
+/**
+ * Memeriksa apakah teks input pengguna merupakan kata konfirmasi affirmative/koreksi langkah formulir
+ * (contoh: "ya", "iya", "benar", "simpan", "oke", "1", "salah", "tidak", "koreksi", "2", dsb.)
+ */
+export function isFormConfirmationInput(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const clean = text.toLowerCase().trim();
+  const confirmationWords = new Set([
+    '1', '2', '3', '4', '5', '6', '7',
+    'ya', 'iya', 'y', 'yes', 'benar', 'betul', 'simpan', 'oke', 'ok',
+    'sesuai', 'sudah benar', 'lanjut', 'pas', 'siap', 'sudah sesuai',
+    'salah', 'tidak', 'bukan', 't', 'koreksi', 'ubah', 'edit', 'ganti', 'ada yang salah',
+    'manual', 'batal', 'cancel', 'gajadi'
+  ]);
+  return confirmationWords.has(clean);
+}
+
+/**
+ * Memisahkan string gabungan PIC menjadi Nama PIC dan Nomor Telepon PIC
+ * Contoh:
+ * - "Budi Santoso (081234567890)" -> { name: "Budi Santoso", phone: "081234567890" }
+ * - "Ahmad Fauzi - 0812-3456-7890" -> { name: "Ahmad Fauzi", phone: "0812-3456-7890" }
+ * - "081234567890" -> { name: "-", phone: "081234567890" }
+ * - "Budi Santoso" -> { name: "Budi Santoso", phone: "-" }
+ */
+export function splitPicNameAndPhone(raw: string | null | undefined): { name: string; phone: string } {
+  if (!raw || !raw.trim() || raw.trim() === '-') {
+    return { name: '-', phone: '-' };
+  }
+
+  let clean = raw.trim();
+
+  // Bersihkan awalan seperti "PIC:", "Narahubung:", "Contact Person:", "Kontak:"
+  clean = clean.replace(/^(?:pic|narahubung|contact\s+person|cp|kontak|telp|hp)\s*[:.-]?\s*/i, '').trim();
+
+  // Regex untuk mendeteksi nomor telepon (Indonesia: 08xx, +62xx, 62xx, (021)xx, dll.)
+  // Minimal 8 digit angka
+  const phoneRegex = /(?:\+?62|08|02[1-9]|03[1-9]|04[1-9]|05[1-9]|06[1-9]|07[1-9]|09[1-9])[0-9\-\s/.()]{7,25}/;
+
+  const phoneMatch = clean.match(phoneRegex);
+
+  let phone = '-';
+  let name = '-';
+
+  if (phoneMatch) {
+    const rawPhone = phoneMatch[0].trim();
+    // Bersihkan karakter selain angka, tanda plus (+), dan strip (-)
+    phone = rawPhone.replace(/[^\d+]/g, '').trim();
+
+    // Hapus bagian phone dari teks untuk menyisakan nama
+    let remainingName = clean.replace(rawPhone, '').trim();
+    // Bersihkan tanda kurung yang tersisa, strip, slash, atau kata 'WA', 'HP', 'Telp'
+    remainingName = remainingName
+      .replace(/[\(\)\[\]\{\}]/g, ' ')
+      .replace(/^(?:wa|whatsapp|hp|telp|telepon|phone)\s*[:.-]?\s*/i, '')
+      .replace(/[\s\-_/]+$/, '')
+      .replace(/^[\s\-_/]+/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (remainingName && remainingName !== '-' && remainingName.length >= 2) {
+      name = remainingName;
+    }
+  } else {
+    // Tidak ditemukan nomor telepon, seluruh string dianggap nama
+    name = clean;
+  }
+
+  // Jika nama hanya berisi angka atau simbol, kosongkan jadi '-'
+  if (name !== '-' && (/^[\d\s+\-_/().]+$/.test(name) || name.length < 2)) {
+    name = '-';
+  }
+
+  // Jika phone hanya simbol atau terlalu pendek (< 7 digit angka), kosongkan jadi '-'
+  if (phone !== '-' && phone.replace(/\D/g, '').length < 7) {
+    phone = '-';
+  }
+
+  return {
+    name: name.slice(0, 100),
+    phone: phone.slice(0, 50),
+  };
+}
+
 

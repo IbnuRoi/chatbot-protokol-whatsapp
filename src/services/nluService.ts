@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { ENV } from '../config/env';
 import { extractDateFromText, extractDateRangeFromText } from '../utils/dateHelper';
+import { isPureGreeting, isFormConfirmationInput } from '../utils/textHelper';
 
 export type NluIntent =
   | 'GREETING'
@@ -80,8 +81,19 @@ export class NluService {
     currentState: string = 'MAIN_MENU'
   ): Promise<NluResult> {
     const cleanText = message.trim();
+    const lowerText = cleanText.toLowerCase();
 
-    // 0. Shortcut cepat angka menu 1-6 di MAIN_MENU (agar tidak salah diklasifikasi LLM)
+    // 0a. Penanganan Sapaan Murni / Greeting Cepat (Deterministik & 100% Akurat Tanpa Memanggil LLM Eksternal)
+    if (isPureGreeting(cleanText)) {
+      return {
+        intent: 'GREETING',
+        confidence: 1.0,
+        conversationalReply: `Halo ${userName}! Ada yang bisa saya bantu hari ini terkait persuratan atau agenda kegiatan protokol? 😊`,
+        entities: {},
+      };
+    }
+
+    // 0b. Shortcut cepat angka menu 1-6 di MAIN_MENU (agar tidak salah diklasifikasi LLM)
     if (currentState === 'MAIN_MENU') {
       if (cleanText === '1') {
         return {
@@ -129,6 +141,144 @@ export class NluService {
           confidence: 1.0,
           conversationalReply: `Baik ${userName}, berikut panduan penggunaan sistem.`,
           entities: {},
+        };
+      }
+    }
+
+    // 0c. Penanganan Deterministik untuk Langkah Formulir Surat Masuk (Mencegah Salah Klasifikasi ke BANTUAN/JADWAL)
+    if (currentState === 'SURAT_MASUK_REVIEW_DATA') {
+      const isConfirm =
+        lowerText === '1' ||
+        lowerText === 'ya' ||
+        lowerText === 'iya' ||
+        lowerText === 'y' ||
+        lowerText === 'yes' ||
+        lowerText === 'betul' ||
+        lowerText === 'simpan' ||
+        lowerText === 'oke' ||
+        lowerText === 'ok' ||
+        lowerText.includes('benar') ||
+        lowerText.includes('sesuai') ||
+        lowerText.includes('sudah benar') ||
+        lowerText.includes('simpan');
+
+      const isKoreksi =
+        lowerText === '2' ||
+        lowerText === 'salah' ||
+        lowerText === 'tidak' ||
+        lowerText === 'bukan' ||
+        lowerText === 't' ||
+        lowerText.includes('koreksi') ||
+        lowerText.includes('ubah') ||
+        lowerText.includes('edit') ||
+        lowerText.includes('ada yang salah') ||
+        lowerText.includes('ganti');
+
+      if (isConfirm) {
+        return {
+          intent: 'SUBMIT_STEP',
+          confidence: 1.0,
+          conversationalReply: `Baik ${userName}, data surat telah dikonfirmasi untuk disimpan.`,
+          entities: { reviewAction: 'CONFIRM', finalAction: 'SAVE' },
+        };
+      }
+      if (isKoreksi) {
+        return {
+          intent: 'SUBMIT_STEP',
+          confidence: 1.0,
+          conversationalReply: `Silakan perbaiki data pada template berikut.`,
+          entities: { reviewAction: 'KOREKSI' },
+        };
+      }
+    }
+
+    if (currentState === 'SURAT_MASUK_KONFIRMASI_AGENDA') {
+      if (
+        lowerText === '1' ||
+        lowerText === 'ya' ||
+        lowerText === 'y' ||
+        lowerText.includes('sesuai') ||
+        lowerText.includes('benar') ||
+        lowerText.includes('oke') ||
+        lowerText.includes('lanjut') ||
+        lowerText.includes('gunakan')
+      ) {
+        return {
+          intent: 'SUBMIT_STEP',
+          confidence: 1.0,
+          conversationalReply: `Baik ${userName}, nomor agenda dikonfirmasi sesuai.`,
+          entities: { agendaAction: 'CONFIRM' },
+        };
+      }
+      if (
+        lowerText === '2' ||
+        lowerText === 'tidak' ||
+        lowerText === 't' ||
+        lowerText.includes('manual') ||
+        lowerText.includes('ubah') ||
+        lowerText.includes('ganti')
+      ) {
+        return {
+          intent: 'SUBMIT_STEP',
+          confidence: 1.0,
+          conversationalReply: `Silakan masukkan nomor agenda yang diinginkan:`,
+          entities: { agendaAction: 'MANUAL' },
+        };
+      }
+    }
+
+    if (currentState === 'SURAT_MASUK_PILIH_TIPE') {
+      let tipe: 'Biasa' | 'Rahasia' | 'Penting' | 'Tembusan' | undefined;
+      if (lowerText === '1' || lowerText.includes('biasa')) tipe = 'Biasa';
+      else if (lowerText === '2' || lowerText.includes('rahasia')) tipe = 'Rahasia';
+      else if (lowerText === '3' || lowerText.includes('penting')) tipe = 'Penting';
+      else if (lowerText === '4' || lowerText.includes('tembusan')) tipe = 'Tembusan';
+
+      if (tipe) {
+        return {
+          intent: 'SUBMIT_STEP',
+          confidence: 1.0,
+          conversationalReply: `Baik ${userName}, klasifikasi surat diatur sebagai ${tipe}.`,
+          entities: { tipeSurat: tipe },
+        };
+      }
+    }
+
+    if (currentState === 'SURAT_MASUK_PILIH_JENIS') {
+      let jenis: 'UND' | 'UNR' | 'PH' | 'AU' | 'WR' | 'LP' | 'TAP' | undefined;
+      if (lowerText === '1' || lowerText === 'und' || (lowerText.includes('undangan') && !lowerText.includes('rapat'))) jenis = 'UND';
+      else if (lowerText === '2' || lowerText === 'unr' || lowerText.includes('rapat')) jenis = 'UNR';
+      else if (lowerText === '3' || lowerText === 'ph' || lowerText.includes('permohonan')) jenis = 'PH';
+      else if (lowerText === '4' || lowerText === 'au' || lowerText.includes('audiensi')) jenis = 'AU';
+      else if (lowerText === '5' || lowerText === 'wr' || lowerText.includes('wawancara')) jenis = 'WR';
+      else if (lowerText === '6' || lowerText === 'lp' || lowerText.includes('laporan')) jenis = 'LP';
+      else if (lowerText === '7' || lowerText === 'tap' || lowerText.includes('upacara')) jenis = 'TAP';
+
+      if (jenis) {
+        return {
+          intent: 'SUBMIT_STEP',
+          confidence: 1.0,
+          conversationalReply: `Baik ${userName}, jenis surat dicatat: ${jenis}.`,
+          entities: { jenisSurat: jenis },
+        };
+      }
+    }
+
+    if (currentState === 'SURAT_MASUK_FINAL_CONFIRM') {
+      if (lowerText === '1' || lowerText === 'ya' || lowerText.includes('simpan') || lowerText.includes('terbit') || lowerText.includes('oke')) {
+        return {
+          intent: 'SUBMIT_STEP',
+          confidence: 1.0,
+          conversationalReply: `Memproses penyimpanan dan penerbitan agenda surat...`,
+          entities: { finalAction: 'SAVE' },
+        };
+      }
+      if (lowerText === '2' || lowerText.includes('batal') || lowerText.includes('gajadi')) {
+        return {
+          intent: 'BATAL',
+          confidence: 1.0,
+          conversationalReply: `Baik ${userName}, registrasi surat telah dibatalkan.`,
+          entities: { finalAction: 'CANCEL' },
         };
       }
     }

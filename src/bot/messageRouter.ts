@@ -11,6 +11,7 @@ import { sessionService, BotState, UserSession } from '../services/sessionServic
 import { nluService, NluResult } from '../services/nluService';
 import { jadwalService } from '../services/jadwalService';
 import { extractDateRangeFromText } from '../utils/dateHelper';
+import { isPureGreeting, isFormConfirmationInput } from '../utils/textHelper';
 import { BotResponse } from './types';
 
 export interface IncomingMessagePayload {
@@ -69,8 +70,10 @@ export class MessageRouter {
       );
     }
 
-    // 3. Perintah Cepat Khusus (/cancel, /reset, /start)
+    // 3. Perintah Cepat Khusus (/cancel, /reset, /start, menu, sapaan murni)
     const lower = textInput.toLowerCase();
+    const isSuratMasukActive = session.state.startsWith('SURAT_MASUK_');
+
     if (lower === '/cancel' || lower === '/reset') {
       if (session.draftSurat) {
         await suratMasukHandler.handleFinalConfirm(session, '2');
@@ -82,12 +85,11 @@ export class MessageRouter {
       );
     }
 
-    if (lower === '/start' || lower === 'menu') {
-      if (session.draftSurat) {
-        await suratMasukHandler.handleFinalConfirm(session, '2');
+    if (lower === '/start' || lower === 'menu' || isPureGreeting(textInput)) {
+      if (!isSuratMasukActive || session.state === BotState.MAIN_MENU) {
+        sessionService.resetSession(session.whatsappNumber);
+        return menuHandler.getMainGreeting(session);
       }
-      sessionService.resetSession(session.whatsappNumber);
-      return menuHandler.getMainGreeting(session);
     }
 
     if (lower === 'help' || lower === 'bantuan') {
@@ -158,14 +160,16 @@ export class MessageRouter {
         nlu.intent === 'RIWAYAT' ||
         nlu.intent === 'DISPOSISI' ||
         nlu.intent === 'CARI_UMUM' ||
-        nlu.intent === 'BANTUAN';
+        nlu.intent === 'BANTUAN' ||
+        nlu.intent === 'GREETING';
     } else if (isCariSuratState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
         nlu.intent.startsWith('JADWAL_') ||
         nlu.intent === 'DISPOSISI' ||
         nlu.intent === 'CARI_UMUM' ||
-        nlu.intent === 'BANTUAN';
+        nlu.intent === 'BANTUAN' ||
+        nlu.intent === 'GREETING';
     } else if (isDisposisiState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
@@ -173,7 +177,8 @@ export class MessageRouter {
         nlu.intent === 'CARI_SURAT' ||
         nlu.intent === 'RIWAYAT' ||
         nlu.intent === 'CARI_UMUM' ||
-        nlu.intent === 'BANTUAN';
+        nlu.intent === 'BANTUAN' ||
+        nlu.intent === 'GREETING';
     } else if (isRiwayatState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
@@ -181,15 +186,21 @@ export class MessageRouter {
         nlu.intent === 'DISPOSISI' ||
         nlu.intent === 'CARI_SURAT' ||
         nlu.intent === 'CARI_UMUM' ||
-        nlu.intent === 'BANTUAN';
+        nlu.intent === 'BANTUAN' ||
+        nlu.intent === 'GREETING';
     } else if (isSuratMasukState) {
+      const isConfirmationOrFormInput =
+        isFormConfirmationInput(textInput) ||
+        nlu.intent === 'SUBMIT_STEP';
+
       isDifferentFeature =
-        nlu.intent.startsWith('JADWAL_') ||
-        nlu.intent === 'DISPOSISI' ||
-        nlu.intent === 'CARI_SURAT' ||
-        nlu.intent === 'RIWAYAT' ||
-        nlu.intent === 'CARI_UMUM' ||
-        nlu.intent === 'BANTUAN';
+        !isConfirmationOrFormInput &&
+        (nlu.intent.startsWith('JADWAL_') ||
+          nlu.intent === 'DISPOSISI' ||
+          nlu.intent === 'CARI_SURAT' ||
+          nlu.intent === 'RIWAYAT' ||
+          nlu.intent === 'CARI_UMUM' ||
+          nlu.intent === 'BANTUAN');
     } else if (isBantuanState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
@@ -197,7 +208,8 @@ export class MessageRouter {
         nlu.intent === 'CARI_SURAT' ||
         nlu.intent === 'RIWAYAT' ||
         nlu.intent === 'CARI_UMUM' ||
-        nlu.intent === 'DISPOSISI';
+        nlu.intent === 'DISPOSISI' ||
+        nlu.intent === 'GREETING';
     } else if (isHybridState) {
       const isSelectionInput =
         /^(?:surat|jadwal|agenda|kegiatan)\s*(?:ke\s*)?\d+$/i.test(textInput.trim()) ||
@@ -211,7 +223,8 @@ export class MessageRouter {
           nlu.intent === 'JADWAL_RENTANG' ||
           nlu.intent === 'DISPOSISI' ||
           nlu.intent === 'RIWAYAT' ||
-          nlu.intent === 'BANTUAN');
+          nlu.intent === 'BANTUAN' ||
+          nlu.intent === 'GREETING');
     }
 
     if (session.state !== BotState.MAIN_MENU && isDifferentFeature) {
@@ -415,14 +428,16 @@ export class MessageRouter {
         nlu.intent === 'RIWAYAT' ||
         nlu.intent === 'DISPOSISI' ||
         nlu.intent === 'CARI_UMUM' ||
-        nlu.intent === 'BANTUAN';
+        nlu.intent === 'BANTUAN' ||
+        nlu.intent === 'GREETING';
     } else if (isCariSuratState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
         nlu.intent.startsWith('JADWAL_') ||
         nlu.intent === 'DISPOSISI' ||
         nlu.intent === 'CARI_UMUM' ||
-        nlu.intent === 'BANTUAN';
+        nlu.intent === 'BANTUAN' ||
+        nlu.intent === 'GREETING';
     } else if (isDisposisiState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
@@ -430,7 +445,8 @@ export class MessageRouter {
         nlu.intent === 'CARI_SURAT' ||
         nlu.intent === 'RIWAYAT' ||
         nlu.intent === 'CARI_UMUM' ||
-        nlu.intent === 'BANTUAN';
+        nlu.intent === 'BANTUAN' ||
+        nlu.intent === 'GREETING';
     } else if (isRiwayatState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
@@ -438,15 +454,21 @@ export class MessageRouter {
         nlu.intent === 'DISPOSISI' ||
         nlu.intent === 'CARI_SURAT' ||
         nlu.intent === 'CARI_UMUM' ||
-        nlu.intent === 'BANTUAN';
+        nlu.intent === 'BANTUAN' ||
+        nlu.intent === 'GREETING';
     } else if (isSuratMasukState) {
+      const isConfirmationOrFormInput =
+        isFormConfirmationInput(textInput) ||
+        nlu.intent === 'SUBMIT_STEP';
+
       isDifferentFeature =
-        nlu.intent.startsWith('JADWAL_') ||
-        nlu.intent === 'DISPOSISI' ||
-        nlu.intent === 'CARI_SURAT' ||
-        nlu.intent === 'RIWAYAT' ||
-        nlu.intent === 'CARI_UMUM' ||
-        nlu.intent === 'BANTUAN';
+        !isConfirmationOrFormInput &&
+        (nlu.intent.startsWith('JADWAL_') ||
+          nlu.intent === 'DISPOSISI' ||
+          nlu.intent === 'CARI_SURAT' ||
+          nlu.intent === 'RIWAYAT' ||
+          nlu.intent === 'CARI_UMUM' ||
+          nlu.intent === 'BANTUAN');
     } else if (isBantuanState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
@@ -454,7 +476,8 @@ export class MessageRouter {
         nlu.intent === 'CARI_SURAT' ||
         nlu.intent === 'RIWAYAT' ||
         nlu.intent === 'CARI_UMUM' ||
-        nlu.intent === 'DISPOSISI';
+        nlu.intent === 'DISPOSISI' ||
+        nlu.intent === 'GREETING';
     } else if (isHybridState) {
       const isSelectionInput =
         /^(?:surat|jadwal|agenda|kegiatan)\s*(?:ke\s*)?\d+$/i.test(textInput.trim()) ||
@@ -468,7 +491,8 @@ export class MessageRouter {
           nlu.intent === 'JADWAL_RENTANG' ||
           nlu.intent === 'DISPOSISI' ||
           nlu.intent === 'RIWAYAT' ||
-          nlu.intent === 'BANTUAN');
+          nlu.intent === 'BANTUAN' ||
+          nlu.intent === 'GREETING');
     }
 
     if (isDifferentFeature) {

@@ -60,6 +60,9 @@ export interface ExtractedSuratData {
   mempelai2?: string; // misal: "Dimas Pratama, S.T. (Putra Bapak Ir. Bambang dan Ibu Sri)"
   pokokBahasan?: string; // untuk WR / AU
   rangkaUcapan?: string; // untuk TAP (misal: "Hari Ulang Tahun ke-75 PT Aneka Tambang Tbk")
+  picName?: string;
+  picPhoneNumber?: string;
+  dateEvent?: string;
 }
 
 export interface SuratDraftData {

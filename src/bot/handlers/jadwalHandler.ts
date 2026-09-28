@@ -4,7 +4,7 @@ import { nluService, NluResult } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { cariSuratHandler } from './cariSuratHandler';
 import { BotResponse } from '../types';
-import { scoreTextMatch, cleanQueryForSelection, formatNomorSuratLink } from '../../utils/textHelper';
+import { scoreTextMatch, cleanQueryForSelection, formatNomorSuratLink, isPureGreeting } from '../../utils/textHelper';
 import { extractDateFromText, extractDateRangeFromText, formatWaktuDisplay } from '../../utils/dateHelper';
 
 export class JadwalHandler {
@@ -391,7 +391,15 @@ export class JadwalHandler {
     const clean = input.trim();
     const lower = clean.toLowerCase();
 
-    if (clean === '0' || lower === 'kembali' || lower === 'menu' || lower === 'batal' || nlu?.intent === 'BATAL') {
+    if (
+      isPureGreeting(clean) ||
+      nlu?.intent === 'GREETING' ||
+      clean === '0' ||
+      lower === 'kembali' ||
+      lower === 'menu' ||
+      lower === 'batal' ||
+      nlu?.intent === 'BATAL'
+    ) {
       sessionService.resetSession(session.whatsappNumber);
       return menuHandler.getMainGreeting(session);
     }
@@ -483,6 +491,18 @@ export class JadwalHandler {
   public async handleJadwalInput(session: UserSession, input: string, nlu?: NluResult): Promise<BotResponse> {
     const clean = input.trim();
     const lower = clean.toLowerCase();
+
+    if (
+      isPureGreeting(clean) ||
+      nlu?.intent === 'GREETING' ||
+      clean === '0' ||
+      lower === 'kembali' ||
+      lower === 'menu' ||
+      lower === 'batal'
+    ) {
+      sessionService.resetSession(session.whatsappNumber);
+      return menuHandler.getMainGreeting(session);
+    }
 
     // Cek jika pengguna mengetik rentang hari (contoh: "2 hari kedepan", "seminggu kedepan")
     const dateRangeInput = extractDateRangeFromText(clean);
