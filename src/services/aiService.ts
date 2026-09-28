@@ -586,7 +586,8 @@ TUGAS UTAMA:
    - "picName": "nama lengkap orang PIC / Narahubung / Contact Person jika tertera di surat (CONTOH: 'Sdr. Ahmad Fauzi' atau 'Budi Santoso'). BUKAN nomor telepon! Jika tidak ada, isi '-'"
    - "picPhoneNumber": "nomor HP / telepon / WhatsApp dari PIC (CONTOH: '081234567890' atau '+6281234567890'). HANYA digit nomor kontak tanpa nama! Jika tidak ada, isi '-'"
    - "picPengirim": "gabungan nama PIC dan nomor telepon (CONTOH: 'Ahmad Fauzi (081234567890)'). Jika tidak ada, isi '-'"
-   - "dateEvent": "hari/tanggal dan/atau waktu pelaksanaan acara/kegiatan/event yang disebutkan di dalam isi surat (CONTOH: 'Senin, 20 Oktober 2026' atau '20 Oktober 2026' atau '25 - 27 November 2026'). BUKAN tanggal pembuatan surat! Jika surat TIDAK memiliki tanggal event/acara (misalnya surat laporan biasa, pemberitahuan tanpa acara, dll), isi '-'"
+   - "dateEvent": "hari/tanggal pelaksanaan acara/kegiatan/event yang disebutkan di dalam isi surat (CONTOH: 'Senin, 20 Oktober 2026' atau '20 Oktober 2026' atau '25 - 27 November 2026'). BUKAN tanggal pembuatan surat! Jika surat TIDAK memiliki tanggal event/acara (misalnya surat laporan biasa, pemberitahuan tanpa acara, dll), isi '-'"
+   - "timeEvent": "jam/waktu mulai dan/atau selesai pelaksanaan acara/kegiatan yang tercantum di dalam surat (CONTOH: '09.00 WIB' atau '08.30 - 12.00 WIB' atau '13.00 WIB s.d. selesai' atau '10.00 WITA'). Jika surat TIDAK memuat jam acara, isi '-'"
 
 KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN TANPA PENJELASAN LAIN:
 
@@ -678,9 +679,23 @@ ${pdfText.slice(0, 6000)}
             : (finalPicName !== '-' ? finalPicName : finalPicPhone);
 
           const rawDateEvent = (parsed.dateEvent || '').trim();
-          const cleanDateEvent = (rawDateEvent && rawDateEvent !== '-' && !/^(?:tidak\s+ada|belum\s+ada|null|undefined|-)$/i.test(rawDateEvent))
+          let cleanDateEvent = (rawDateEvent && rawDateEvent !== '-' && !/^(?:tidak\s+ada|belum\s+ada|null|undefined|-)$/i.test(rawDateEvent))
             ? rawDateEvent.replace(/^[\*•\-\s]+/, '').slice(0, 100)
             : undefined;
+
+          const rawTimeEvent = (parsed.timeEvent || '').trim();
+          let cleanTimeEvent = (rawTimeEvent && rawTimeEvent !== '-' && !/^(?:tidak\s+ada|belum\s+ada|null|undefined|-)$/i.test(rawTimeEvent))
+            ? rawTimeEvent.replace(/^[\*•\-\s]+/, '').slice(0, 100)
+            : undefined;
+
+          // Jika cleanTimeEvent belum ada tetapi cleanDateEvent memuat pola jam (misal: "20 Oktober 2026, Pukul 09.00 WIB")
+          if (!cleanTimeEvent && cleanDateEvent) {
+            const timeInDateMatch = cleanDateEvent.match(/(?:pukul|jam)?\s*(\d{1,2}[:.]\d{2}(?:\s*(?:-|s\.?d\.?|sampai|\/)\s*(?:\d{1,2}[:.]\d{2}|selesai))?\s*(?:WIB|WITA|WIT)?)/i);
+            if (timeInDateMatch && timeInDateMatch[1]) {
+              cleanTimeEvent = timeInDateMatch[1].trim();
+              cleanDateEvent = cleanDateEvent.replace(/[,;]?\s*(?:pukul|jam)?\s*\d{1,2}[:.]\d{2}(?:\s*(?:-|s\.?d\.?|sampai|\/)\s*(?:\d{1,2}[:.]\d{2}|selesai))?\s*(?:WIB|WITA|WIT)?/i, '').trim();
+            }
+          }
 
           const extracted: ExtractedSuratData = {
             kategoriSurat: kategori,
@@ -691,6 +706,7 @@ ${pdfText.slice(0, 6000)}
             asalSurat: finalAsalSurat.slice(0, 220),
             event: cleanAcara,
             dateEvent: cleanDateEvent,
+            timeEvent: cleanTimeEvent,
             picPengirim: finalPicCombined.slice(0, 100),
             picName: finalPicName,
             picPhoneNumber: finalPicPhone,
@@ -958,13 +974,22 @@ ${pdfText.slice(0, 6000)}
     // 10. Cari tanggal kegiatan/acara di dalam isi surat jika ada
     let dateEvent: string | undefined = undefined;
     const dateEventMatch = text.match(
-      /(?:hari\s*(?:\/|\s*dan\s*)?\s*tanggal|pada\s+hari\s*[,/]?\s*tanggal|waktu\s*(?:dan\s*tempat)?|tanggal\s+pelaksanaan|diselenggarakan\s+pada)\s*[:.-]?\s*([A-Za-z0-9\s,/-]{5,60})/i
+      /(?:hari\s*(?:\/|\s*dan\s*)?\s*tanggal|pada\s+hari\s*[,/]?\s*tanggal|tanggal\s+pelaksanaan|diselenggarakan\s+pada)\s*[:.-]?\s*([A-Za-z0-9\s,/-]{5,60})/i
     );
     if (dateEventMatch && dateEventMatch[1]) {
       const candidate = dateEventMatch[1].trim().split('\n')[0].replace(/[\(\)]/g, '').trim();
       if (candidate.length >= 5 && candidate !== tanggalSurat) {
         dateEvent = candidate.slice(0, 100);
       }
+    }
+
+    // 11. Cari jam/waktu pelaksanaan kegiatan jika ada
+    let timeEvent: string | undefined = undefined;
+    const timeEventMatch = text.match(
+      /(?:pukul|jam|waktu)\s*[:.-]?\s*(\d{1,2}[:.]\d{2}(?:\s*(?:-|s\.?d\.?|sampai|\/)\s*(?:\d{1,2}[:.]\d{2}|selesai))?\s*(?:WIB|WITA|WIT)?)/i
+    );
+    if (timeEventMatch && timeEventMatch[1]) {
+      timeEvent = timeEventMatch[1].trim().slice(0, 100);
     }
 
     const data: ExtractedSuratData = {
@@ -975,6 +1000,7 @@ ${pdfText.slice(0, 6000)}
       asalSurat,
       event: cleanEventName,
       dateEvent,
+      timeEvent,
       picPengirim: picPengirim.slice(0, 100),
       picName: picName.slice(0, 100),
       picPhoneNumber: picPhone.slice(0, 50),

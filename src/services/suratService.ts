@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { pdfService } from './pdfService';
 import { SuratDraftData } from './sessionService';
 import { cleanHtml, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone } from '../utils/textHelper';
-import { parseIndonesianDateToDate, formatTanggalIndo } from '../utils/dateHelper';
+import { parseIndonesianDateToDate, formatTanggalIndo, parseIndonesianTimeToDates } from '../utils/dateHelper';
 import { ENV } from '../config/env';
 import path from 'path';
 
@@ -64,6 +64,7 @@ export interface NormalizedSurat {
   asalInstansi: string;
   event?: string | null;
   dateEvent?: string | null;
+  timeEvent?: string | null;
   picPengirim?: string | null;
   picName?: string | null;
   picPhoneNumber?: string | null;
@@ -145,6 +146,9 @@ export class SuratService {
       asalInstansi: letter.institution_origin || 'Lainnya',
       event: letter.place_event || '-',
       dateEvent: letter.date_event ? formatTanggalIndo(letter.date_event, true) : null,
+      timeEvent: letter.time_event
+        ? `${String(letter.time_event.getUTCHours()).padStart(2, '0')}:${String(letter.time_event.getUTCMinutes()).padStart(2, '0')} ${letter.time_zone || 'WIB'}`
+        : null,
       picPengirim: letter.pic_phone_number && letter.pic_phone_number !== '-'
         ? (letter.pic_name && letter.pic_name !== '-' ? `${letter.pic_name} (${letter.pic_phone_number})` : letter.pic_phone_number)
         : (letter.pic_name || '-'),
@@ -287,6 +291,14 @@ export class SuratService {
         }
       }
 
+      // Parse jam acara/event jika ada
+      const parsedTimeInfo = parseIndonesianTimeToDates(
+        draft.extractedData.timeEvent || draft.extractedData.dateEvent
+      );
+      const parsedTimeEvent: Date | null = parsedTimeInfo.startTime;
+      const parsedTimeFinish: Date | null = parsedTimeInfo.finishTime;
+      const parsedTimeZone: string = parsedTimeInfo.timeZone || 'WIB';
+
       // Get max ID to avoid sequence primary key conflict
       const lastLetter = await prisma.letters.findFirst({
         orderBy: { id: 'desc' },
@@ -341,6 +353,9 @@ export class SuratService {
             number_or_date: safeNomorSurat,
             date_letter: parsedDate,
             date_event: parsedDateEvent,
+            time_event: parsedTimeEvent,
+            time_event_finish: parsedTimeFinish,
+            time_zone: parsedTimeZone,
             from: safeAsalSurat,
             subject: safeSubject,
             place_event: safePlaceEvent,
@@ -372,6 +387,9 @@ export class SuratService {
               number_or_date: safeNomorSurat,
               date_letter: parsedDate,
               date_event: parsedDateEvent,
+              time_event: parsedTimeEvent,
+              time_event_finish: parsedTimeFinish,
+              time_zone: parsedTimeZone,
               from: safeAsalSurat,
               subject: safeSubject,
               place_event: safePlaceEvent,

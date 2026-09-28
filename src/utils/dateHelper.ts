@@ -268,6 +268,67 @@ export function parseIndonesianDateToDate(input: string | null | undefined): Dat
   return null;
 }
 
+/**
+ * Mem-parsing string jam/waktu pelaksanaan acara dalam bahasa Indonesia
+ * menjadi objek Date UTC untuk kolom time_event dan time_event_finish (@db.Time(6)) pada tabel letters.
+ * Contoh input:
+ * - "09.00 WIB" -> startTime: 09:00:00 UTC, finishTime: null, timeZone: "WIB"
+ * - "08.30 - 12.00 WIB" -> startTime: 08:30:00 UTC, finishTime: 12:00:00 UTC, timeZone: "WIB"
+ * - "13.00 s.d. selesai" -> startTime: 13:00:00 UTC, finishTime: null, timeZone: "WIB"
+ */
+export function parseIndonesianTimeToDates(timeStr?: string): {
+  startTime: Date | null;
+  finishTime: Date | null;
+  timeZone: string;
+} {
+  const result = {
+    startTime: null as Date | null,
+    finishTime: null as Date | null,
+    timeZone: 'WIB',
+  };
+
+  if (!timeStr || timeStr.trim() === '-' || /^(?:tidak\s+ada|belum\s+ada|null|undefined|-)$/i.test(timeStr.trim())) {
+    return result;
+  }
+
+  const clean = timeStr.trim();
+
+  // 1. Ekstrak zona waktu (WIB, WITA, WIT)
+  const tzMatch = clean.match(/\b(WIB|WITA|WIT)\b/i);
+  if (tzMatch) {
+    result.timeZone = tzMatch[1].toUpperCase();
+  }
+
+  // 2. Cari format jam HH:mm atau HH.mm
+  const timeMatches = Array.from(clean.matchAll(/\b(\d{1,2})[:.](\d{2})\b/g));
+  if (timeMatches.length > 0) {
+    const h1 = parseInt(timeMatches[0][1], 10);
+    const m1 = parseInt(timeMatches[0][2], 10);
+    if (h1 >= 0 && h1 < 24 && m1 >= 0 && m1 < 60) {
+      result.startTime = new Date(Date.UTC(1970, 0, 1, h1, m1, 0, 0));
+    }
+
+    if (timeMatches.length > 1) {
+      const h2 = parseInt(timeMatches[1][1], 10);
+      const m2 = parseInt(timeMatches[1][2], 10);
+      if (h2 >= 0 && h2 < 24 && m2 >= 0 && m2 < 60) {
+        result.finishTime = new Date(Date.UTC(1970, 0, 1, h2, m2, 0, 0));
+      }
+    }
+  } else {
+    // 3. Fallback jika format jam tunggal tanpa menit (misal: "pukul 9 WIB" atau "jam 14")
+    const singleHourMatch = clean.match(/(?:pukul|jam)\s*[:.]?\s*(\d{1,2})\b/i);
+    if (singleHourMatch) {
+      const h = parseInt(singleHourMatch[1], 10);
+      if (h >= 0 && h < 24) {
+        result.startTime = new Date(Date.UTC(1970, 0, 1, h, 0, 0, 0));
+      }
+    }
+  }
+
+  return result;
+}
+
 export interface ParsedDateRangeResult {
   daysCount: number; // Jumlah hari ke depan (misal: 2, 3, 5, 7, 14)
   startDateStr: string; // Format ISO: YYYY-MM-DD (hari ini)
