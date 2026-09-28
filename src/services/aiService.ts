@@ -12,80 +12,273 @@ import { splitPicNameAndPhone } from '../utils/textHelper';
  * - WR, AU - Permohonan Wawancara/Audiensi dari (Nama Instansi) terkait (Pokok Bahasan)
  * - TAP - Permohonan Memberikan Video Ucapan dalam rangka ….
  */
+function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Cek apakah nama instansi/organisasi sudah disebutkan di dalam teks acara
+ */
+export function isOrganizationMentioned(org: string, text: string): boolean {
+  if (!org || !text) return false;
+  const cleanOrg = org.trim().toLowerCase();
+  const cleanText = text.trim().toLowerCase();
+
+  if (cleanOrg === 'penyelenggara' || cleanOrg === 'instansi terkait' || cleanOrg === '-') return true;
+
+  // 1. Cek exact inclusion
+  if (cleanText.includes(cleanOrg)) return true;
+
+  // 2. Cek akronim di dalam tanda kurung, misal "FSPTI" dari "Federasi Serikat Pekerja Transport Indonesia (FSPTI - KSPSI)"
+  const parenMatch = org.match(/\(([^)]+)\)/);
+  if (parenMatch && parenMatch[1]) {
+    const acronyms = parenMatch[1].split(/[-–—/,\s]+/).map(s => s.trim()).filter(s => s.length >= 3);
+    for (const acr of acronyms) {
+      if (new RegExp(`\\b${escapeRegExp(acr)}\\b`, 'i').test(cleanText)) {
+        return true;
+      }
+    }
+  }
+
+  // 3. Cek nama pokok sebelum tanda kurung jika minimal 8 karakter
+  const mainName = cleanOrg.replace(/\s*\([^)]*\)/g, '').trim();
+  if (mainName.length >= 8 && cleanText.includes(mainName)) {
+    return true;
+  }
+
+  // 4. Cek token kapital/akronim mandiri pada nama instansi (misal: "KSPSI", "APINDO", "BPJS", "KADIN", "TELKOM")
+  const tokens = org.split(/[\s,./()\-–—]+/).filter(t => t.length >= 3 && t === t.toUpperCase() && !/^\d+$/.test(t));
+  for (const token of tokens) {
+    if (new RegExp(`\\b${escapeRegExp(token)}\\b`, 'i').test(cleanText)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Membersihkan sesi acara (khusus kategori PH) agar tidak mengulang nama acara atau frasa pengantar
+ */
+export function cleanSesiAcara(rawSesi: string | undefined, namaAcara?: string): string {
+  if (!rawSesi || rawSesi.trim() === '-' || rawSesi.trim() === '') {
+    return 'Sambutan dan Arahan';
+  }
+
+  let s = rawSesi.trim();
+
+  // Bersihkan prefix seperti "permohonan memberikan", "memberikan", "hadir untuk", dll.
+  s = s.replace(/^(?:permohonan|surat)\s+(?:memberikan|menjadi|hadir)?\s*/i, '')
+       .replace(/^(?:memberikan|menjadi|sebagai)\s+/i, '')
+       .trim();
+
+  const lowerSesi = s.toLowerCase();
+  const lowerAcara = (namaAcara || '').toLowerCase();
+
+  // Standarisasi sesi umum jika AI mengekstrak terlalu bertele-tele
+  if (lowerSesi.includes('keynote speech') || lowerSesi.includes('keynote')) {
+    return 'Keynote Speech';
+  }
+  if (lowerSesi.includes('narasumber') || lowerSesi.includes('pembicara')) {
+    return 'Narasumber';
+  }
+  if (lowerSesi.includes('membuka')) {
+    return 'Membuka Acara';
+  }
+  if (lowerSesi.includes('sambutan') && lowerSesi.includes('arahan')) {
+    return 'Sambutan dan Arahan';
+  }
+  if (lowerSesi.includes('sambutan')) {
+    if (lowerSesi.includes('pembukaan') && !lowerAcara.includes('pembukaan')) {
+      return 'Sambutan pada Pembukaan';
+    }
+    return 'Sambutan';
+  }
+  if (lowerSesi.includes('arahan')) {
+    return 'Arahan';
+  }
+
+  // Jika sesi masih mengandung nama acara yang sama, potong bagian pengulangan acara
+  if (lowerAcara) {
+    s = s.replace(/\s+(?:pada|dalam|terkait|dalam rangka)\s+(?:kegiatan|acara)?\s*.*$/i, '').trim();
+  }
+
+  return s || 'Sambutan dan Arahan';
+}
+
+/**
+ * Membersihkan nama acara agar bebas dari awalan permohonan/undangan dan imbuhan penyelenggara di akhir
+ */
+export function cleanNamaAcara(rawAcara: string, penyelenggara?: string): string {
+  if (!rawAcara || rawAcara === '-') return 'Kegiatan';
+
+  let clean = rawAcara.trim();
+
+  // 1. Bersihkan awalan permohonan / undangan / surat
+  clean = clean
+    .replace(/^(?:permohonan|undangan|surat)\s+(?:memberikan|menjadi|menghadiri|kehadiran|resmi)?\s*/i, '')
+    .replace(/^(?:keynote speech|sambutan|arahan|narasumber)?\s*(?:pada|dalam rangka)?\s*(?:kegiatan|acara|pembukaan)?\s*/i, '')
+    .replace(/^(?:kegiatan|acara)\s+/i, '')
+    .trim();
+
+  // 2. Jika nama acara mengulang "Pembukaan X pada X", sederhanakan
+  const repeatEventMatch = clean.match(/^pembukaan\s+(.+?)\s+pada\s+(?:kegiatan|acara)?\s*(.+)$/i);
+  if (repeatEventMatch) {
+    const part1 = repeatEventMatch[1].trim();
+    const part2 = repeatEventMatch[2].trim();
+    if (part2.toLowerCase().includes(part1.toLowerCase()) || part1.toLowerCase().includes(part2.toLowerCase())) {
+      clean = part2;
+    }
+  }
+
+  // 3. Bersihkan jika nama acara memiliki akhiran "yang diselenggarakan oleh ..."
+  clean = clean.replace(/\s+(?:yang\s+)?(?:diselenggarakan|diadakan|dilaksanakan)\s+oleh\s+.*$/i, '').trim();
+
+  // 4. Bersihkan jika nama acara memiliki akhiran "dengan tema ..."
+  clean = clean.replace(/\s+dengan tema\s+.*$/i, '').trim();
+
+  // 5. Jika nama acara diakhiri dengan " - [Penyelenggara]" yang sama dengan instansi penyelenggara
+  if (penyelenggara && penyelenggara !== '-' && penyelenggara !== 'Instansi Terkait') {
+    const cleanP = penyelenggara.replace(/\s*\([^)]*\)/g, '').trim();
+    const pRegex = new RegExp(`\\s*[-–—]\\s*(?:${escapeRegExp(penyelenggara)}|${escapeRegExp(cleanP)})\\s*$`, 'i');
+    clean = clean.replace(pRegex, '').trim();
+  }
+
+  return clean || rawAcara.trim();
+}
+
+/**
+ * Membersihkan frasa yang berulang secara redundant dalam sebuah kalimat
+ */
+export function cleanRedundantSentence(text: string): string {
+  if (!text) return '';
+  let clean = text.replace(/\s+/g, ' ').trim();
+
+  // Bersihkan double prefix dan benturan preposisi
+  clean = clean.replace(/\b(permohonan memberikan)\s+(?:permohonan\s+)?(?:memberikan\s+)?(sambutan|keynote speech|arahan|narasumber)\b/gi, '$1 $2')
+               .replace(/\b(undangan menghadiri)\s+(?:undangan\s+)?(?:menghadiri\s+)?/gi, '$1 ')
+               .replace(/\bpada\s+pembukaan\s+pada\s+kegiatan\b/gi, 'pada pembukaan')
+               .replace(/\bpada\s+pembukaan\s+kegiatan\b/gi, 'pada pembukaan')
+               .replace(/\bpada\s+kegiatan\s+pada\s+kegiatan\b/gi, 'pada kegiatan')
+               .replace(/\b(pada kegiatan)\s+(?:pada\s+)?(?:kegiatan\s+)?/gi, '$1 ')
+               .replace(/\b(yang diselenggarakan oleh)\s+(?:yang\s+)?(?:diselenggarakan\s+)?(?:oleh\s+)?/gi, '$1 ');
+
+  // Bersihkan kata berulang berturut-turut (misal "Rakornas Rakornas", "pada pada")
+  clean = clean.replace(/\b([a-zA-Z0-9]{3,})\s+\1\b/gi, '$1');
+
+  // Bersihkan jika ada klausul penyelenggara yang berulang persis dua kali berturut-turut
+  clean = clean.replace(/(yang diselenggarakan oleh\s+[^,.]+?)\s+yang diselenggarakan oleh\s+\1/gi, '$1');
+
+  return clean.replace(/\s+/g, ' ').trim();
+}
+
 export function formatPerihalByTemplate(data: Partial<ExtractedSuratData>): string {
   const kat = (data.kategoriSurat || 'UND').toUpperCase();
-  const namaAcara = (data.namaAcara || data.event || data.subject || 'Kegiatan').trim();
-  let penyelenggara = (data.penyelenggara || '').trim();
-  if (!penyelenggara || penyelenggara === '-') {
-    // Jika penyelenggara tidak diisi, periksa apakah asalSurat mengandung instansi atau hanya nama individu
+  const penyelenggaraRaw = (data.penyelenggara || '').trim();
+  let penyelenggara = penyelenggaraRaw;
+  if (!penyelenggara || penyelenggara === '-' || penyelenggara === 'Instansi Terkait') {
     if (data.asalSurat && !data.asalSurat.includes(' - ')) {
       penyelenggara = data.asalSurat.trim();
     } else {
       penyelenggara = 'Penyelenggara';
     }
   }
-  const rawTema = data.temaAcara && data.temaAcara !== '-' ? data.temaAcara.trim() : '';
 
-  // Bersihkan tema jika hanya mengulang nama acara
+  const rawAcara = (data.namaAcara || data.event || data.subject || 'Kegiatan').trim();
+  const namaAcara = cleanNamaAcara(rawAcara, penyelenggara);
+
+  const rawTema = data.temaAcara && data.temaAcara !== '-' ? data.temaAcara.trim() : '';
   const tema = rawTema && rawTema.toLowerCase() !== namaAcara.toLowerCase() ? rawTema : '';
+
+  // Periksa apakah penyelenggara sudah disebut di dalam namaAcara agar tidak redundant
+  const orgAlreadyMentioned = isOrganizationMentioned(penyelenggara, namaAcara);
+  const byPenyelenggaraClause = !orgAlreadyMentioned && penyelenggara !== 'Penyelenggara' && penyelenggara !== 'Instansi Terkait'
+    ? ` yang diselenggarakan oleh ${penyelenggara}`
+    : '';
+
+  let result = '';
 
   switch (kat) {
     case 'UND': {
-      // Template: Undangan Menghadiri (Nama Acara) dengan tema (Tema Acara) yang diselenggarakan oleh (Penyelenggara)
       if (tema) {
-        return `Undangan Menghadiri ${namaAcara} dengan tema "${tema}" yang diselenggarakan oleh ${penyelenggara}`;
+        result = `Undangan Menghadiri ${namaAcara} dengan tema "${tema}"${byPenyelenggaraClause}`;
+      } else {
+        result = `Undangan Menghadiri ${namaAcara}${byPenyelenggaraClause}`;
       }
-      return `Undangan Menghadiri ${namaAcara} yang diselenggarakan oleh ${penyelenggara}`;
+      break;
     }
 
     case 'PH': {
-      // Template: Permohonan Memberikan (Sesi Acara(Sambutan/Keynote Speech/Arahan dll) pada kegiatan (Nama Acara) dengan tema (Tema Acara) yang diselenggarakan oleh (Penyelenggara)
-      const sesi = data.sesiAcara && data.sesiAcara !== '-' ? data.sesiAcara.trim() : 'Sambutan dan Arahan';
-      if (tema) {
-        return `Permohonan Memberikan ${sesi} pada kegiatan ${namaAcara} dengan tema "${tema}" yang diselenggarakan oleh ${penyelenggara}`;
+      const sesi = cleanSesiAcara(data.sesiAcara, namaAcara);
+      let verbPrefix = 'Permohonan Memberikan';
+      let connector = ' pada kegiatan ';
+
+      if (sesi.toLowerCase() === 'narasumber' || sesi.toLowerCase() === 'pembicara') {
+        verbPrefix = 'Permohonan Menjadi';
+        connector = ' pada kegiatan ';
+      } else if (sesi.toLowerCase().startsWith('membuka')) {
+        verbPrefix = 'Permohonan';
+        connector = ' ';
+      } else if (sesi.toLowerCase().includes('pada pembukaan') || sesi.toLowerCase().includes('dalam pembukaan')) {
+        verbPrefix = 'Permohonan Memberikan';
+        connector = ' ';
+      } else if (sesi.toLowerCase().includes('pada ') || sesi.toLowerCase().includes('dalam ')) {
+        verbPrefix = 'Permohonan Memberikan';
+        connector = ' ';
       }
-      return `Permohonan Memberikan ${sesi} pada kegiatan ${namaAcara} yang diselenggarakan oleh ${penyelenggara}`;
+
+      if (tema) {
+        result = `${verbPrefix} ${sesi}${connector}${namaAcara} dengan tema "${tema}"${byPenyelenggaraClause}`;
+      } else {
+        result = `${verbPrefix} ${sesi}${connector}${namaAcara}${byPenyelenggaraClause}`;
+      }
+      break;
     }
 
     case 'UNR': {
-      // Template: Undangan Menghadiri Pernikahan (Nama Mempelai) (Putri Bapak … dan Ibu …) dengan (Nama Mempelai) (Putri Bapak … dan Ibu …)
       const m1 = data.mempelai1 && data.mempelai1 !== '-' ? data.mempelai1.trim() : '';
       const m2 = data.mempelai2 && data.mempelai2 !== '-' ? data.mempelai2.trim() : '';
       if (m1 && m2) {
-        return `Undangan Menghadiri Pernikahan ${m1} dengan ${m2}`;
+        result = `Undangan Menghadiri Pernikahan ${m1} dengan ${m2}`;
       } else if (m1 || m2) {
-        return `Undangan Menghadiri Pernikahan ${m1 || m2}`;
+        result = `Undangan Menghadiri Pernikahan ${m1 || m2}`;
+      } else {
+        result = `Undangan Menghadiri Pernikahan ${namaAcara}`;
       }
-      return `Undangan Menghadiri Pernikahan ${namaAcara}`;
+      break;
     }
 
     case 'WR': {
-      // Template: Permohonan Wawancara dari (Nama Instansi) terkait (Pokok Bahasan)
       const pokok = data.pokokBahasan && data.pokokBahasan !== '-' ? data.pokokBahasan.trim() : (data.subject || 'Isu Terkini Ketenagakerjaan');
-      return `Permohonan Wawancara dari ${penyelenggara} terkait ${pokok}`;
+      result = `Permohonan Wawancara dari ${penyelenggara} terkait ${pokok}`;
+      break;
     }
 
     case 'AU': {
-      // Template: Permohonan Audiensi dari (Nama Instansi) terkait (Pokok Bahasan)
       const pokok = data.pokokBahasan && data.pokokBahasan !== '-' ? data.pokokBahasan.trim() : (data.subject || 'Silaturahmi dan Pembahasan Isu Ketenagakerjaan');
-      return `Permohonan Audiensi dari ${penyelenggara} terkait ${pokok}`;
+      result = `Permohonan Audiensi dari ${penyelenggara} terkait ${pokok}`;
+      break;
     }
 
     case 'TAP': {
-      // Template: Permohonan Memberikan Video Ucapan dalam rangka ….
-      const rangka = data.rangkaUcapan && data.rangkaUcapan !== '-' ? data.rangkaUcapan.trim() : (namaAcara || 'Peringatan');
-      return `Permohonan Memberikan Video Ucapan dalam rangka ${rangka}`;
+      const rangka = data.rangkaUcapan && data.rangkaUcapan !== '-' ? data.rangkaUcapan.trim() : (namaAcara || 'Peringatan Hari Besar');
+      result = `Permohonan Memberikan Video Ucapan dalam rangka ${rangka}`;
+      break;
     }
 
     case 'LP': {
       const judul = namaAcara || data.subject || 'Pelaksanaan Kegiatan';
-      return `Laporan ${judul} dari ${penyelenggara}`;
+      result = `Laporan ${judul}${byPenyelenggaraClause}`;
+      break;
     }
 
     default: {
-      return `Surat dari ${penyelenggara} terkait ${namaAcara}`;
+      result = `Surat dari ${penyelenggara} terkait ${namaAcara}`;
+      break;
     }
   }
+
+  return cleanRedundantSentence(result);
 }
 
 /**
@@ -210,80 +403,84 @@ export function generateSubjectSummary(perihal: string, data?: Partial<Extracted
   if (!perihal || perihal === '-') return '-';
 
   const kat = (data?.kategoriSurat || '').toUpperCase();
-  const namaAcara = (data?.namaAcara || '').trim();
   const penyelenggara = (data?.penyelenggara || '').trim();
+  const rawAcara = (data?.namaAcara || data?.event || '').trim();
+  const cleanAcara = cleanNamaAcara(rawAcara, penyelenggara);
+
+  let shortAcara = cleanAcara;
+  if (shortAcara.length > 90 && shortAcara.includes(' - ')) {
+    shortAcara = shortAcara.split(' - ')[0].trim();
+  }
 
   let summary = '';
 
   switch (kat) {
-    case 'UND': {
-      if (namaAcara) {
-        summary = `Undangan Menghadiri ${namaAcara}`;
-        if (penyelenggara && (summary + ` - ${penyelenggara}`).length <= 190) {
-          summary += ` - ${penyelenggara}`;
-        }
-      }
+    case 'PH': {
+      const sesi = cleanSesiAcara(data?.sesiAcara, shortAcara);
+      const pokokSesi = sesi.replace(/\s+(?:pada|dalam)\s+.*$/i, '').trim();
+      summary = `Permohonan ${pokokSesi || sesi} - ${shortAcara}`;
       break;
     }
-    case 'PH': {
-      const sesi = data?.sesiAcara && data.sesiAcara !== '-' ? data.sesiAcara.trim() : 'Sambutan dan Arahan';
-      if (namaAcara) {
-        summary = `Permohonan ${sesi} pada ${namaAcara}`;
-        if (penyelenggara && (summary + ` - ${penyelenggara}`).length <= 190) {
-          summary += ` - ${penyelenggara}`;
-        }
-      }
+    case 'UND': {
+      summary = `Undangan - ${shortAcara}`;
       break;
     }
     case 'UNR': {
       const m1 = (data?.mempelai1 || '').replace(/\s*\(.*?\)/g, '').trim();
       const m2 = (data?.mempelai2 || '').replace(/\s*\(.*?\)/g, '').trim();
       if (m1 && m2) {
-        summary = `Undangan Pernikahan ${m1} dengan ${m2}`;
+        summary = `Undangan Pernikahan ${m1} & ${m2}`;
       } else {
-        summary = perihal.replace(/\s*\(Putr[ai][^\)]+\)/gi, '').trim();
+        summary = `Undangan Pernikahan ${shortAcara}`;
       }
       break;
     }
     case 'AU': {
       const pokok = data?.pokokBahasan && data.pokokBahasan !== '-' ? data.pokokBahasan.trim() : '';
-      if (penyelenggara && pokok) {
-        summary = `Audiensi ${penyelenggara} terkait ${pokok}`;
-      } else if (penyelenggara) {
-        summary = `Permohonan Audiensi dari ${penyelenggara}`;
+      if (penyelenggara && pokok && !isOrganizationMentioned(penyelenggara, pokok)) {
+        summary = `Permohonan Audiensi ${penyelenggara} - ${pokok}`;
+      } else if (penyelenggara && penyelenggara !== 'Instansi Terkait' && penyelenggara !== 'Penyelenggara') {
+        summary = `Permohonan Audiensi - ${penyelenggara}`;
+      } else {
+        summary = `Permohonan Audiensi - ${shortAcara}`;
       }
       break;
     }
     case 'WR': {
       const pokok = data?.pokokBahasan && data.pokokBahasan !== '-' ? data.pokokBahasan.trim() : '';
-      if (penyelenggara && pokok) {
-        summary = `Wawancara ${penyelenggara} terkait ${pokok}`;
-      } else if (penyelenggara) {
-        summary = `Permohonan Wawancara dari ${penyelenggara}`;
+      if (penyelenggara && pokok && !isOrganizationMentioned(penyelenggara, pokok)) {
+        summary = `Permohonan Wawancara ${penyelenggara} - ${pokok}`;
+      } else if (penyelenggara && penyelenggara !== 'Instansi Terkait' && penyelenggara !== 'Penyelenggara') {
+        summary = `Permohonan Wawancara - ${penyelenggara}`;
+      } else {
+        summary = `Permohonan Wawancara - ${shortAcara}`;
       }
       break;
     }
     case 'TAP': {
-      const rangka = data?.rangkaUcapan && data.rangkaUcapan !== '-' ? data.rangkaUcapan.trim() : '';
-      if (rangka) {
-        summary = `Video Ucapan dalam rangka ${rangka}`;
-      }
+      const rangka = data?.rangkaUcapan && data.rangkaUcapan !== '-' ? data.rangkaUcapan.trim() : shortAcara;
+      summary = `Permohonan Video Ucapan - ${rangka}`;
+      break;
+    }
+    case 'LP': {
+      summary = `Laporan Pelaksanaan - ${shortAcara}`;
       break;
     }
     default:
+      summary = perihal;
       break;
   }
 
-  // Jika formula kategori di atas belum menghasilkan summary, buat dari perihal dengan memotong frasa tema berlebih
-  if (!summary) {
+  // Jika formula belum menghasilkan ringkasan atau sama persis dengan perihal, pangkas klausul panjang dari perihal
+  if (!summary || summary === perihal) {
     summary = perihal
       .replace(/\s+dengan tema\s+"[^"]+"/i, '')
       .replace(/\s+dengan tema\s+[^\s,]+/i, '')
+      .replace(/\s+yang diselenggarakan oleh\s+.*$/i, '')
       .trim();
   }
 
-  // Bersihkan spasi ganda
-  summary = summary.replace(/\s+/g, ' ').trim();
+  summary = cleanRedundantSentence(summary);
 
   // Pastikan maksimal 200 karakter
   if (summary.length > 200) {
@@ -379,9 +576,9 @@ TUGAS UTAMA:
    - "jabatanPengirim": "jabatan resmi orang/pejabat yang menandatangani surat di bagian paling bawah surat yang SESUAI DENGAN namaPengirim yang dipilih (CONTOH: 'Deputi Bidang Koordinasi Ekonomi Digital' atau 'Direktur Utama' atau 'Ketua Umum'). BUKAN instansi!"
    - "asalSurat": "gabungan nama pengirim yang bertanda tangan di paling bawah dan jabatannya dengan format 'Nama Pengirim - Jabatan' (CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital' atau 'Budi Santoso - Direktur Utama'). ATURAN MUTLAK: Isi asal surat BUKAN instansi pengirim, melainkan NAMA PENGIRIM YANG BERTANDA TANGAN DI PALING BAWAH dengan format 'Nama Pengirim - Jabatan'! JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA BESERTA JABATANNYA YANG SESUAI (jangan gabungkan beberapa nama orang)!"
    - "penyelenggara": "nama lembaga/instansi/organisasi pengirim atau penyelenggara acara dari KOP SURAT teratas atau stempel resmi (CONTOH: 'Kementerian Koordinator Bidang Perekonomian' atau 'PT Telekomunikasi Indonesia Tbk' atau 'Institut Pertanian Bogor')"
-   - "namaAcara": "nama murni acara/kegiatan saja (CONTOH: 'Forum Koordinasi Ketenagakerjaan Nasional 2026' atau 'Seminar Nasional Vokasi'). HAPUS kata pembuka seperti 'Permohonan Keynote Speech pada Pembukaan' atau 'Undangan Menghadiri'!"
+   - "namaAcara": "nama murni acara/kegiatan saja (CONTOH: 'Rapat Kerja Nasional (Rakornas) VII Tahun 2026' atau 'Forum Koordinasi Ketenagakerjaan Nasional 2026'). HAPUS dan JANGAN masukkan kata pengantar permohonan seperti 'Permohonan Sambutan pada Pembukaan' atau 'Undangan Menghadiri' atau nama instansi penyelenggara di bagian akhir acara!"
    - "temaAcara": "tema spesifik acara jika ada tertulis (misal: 'Transformasi Tenaga Kerja Menuju Indonesia Emas 2045', atau '-' jika tidak ada tema)"
-   - "sesiAcara": "khusus kategori PH, peran/sesi yang dimohonkan kepada Menteri / Pimpinan Kemnaker (misal: 'Keynote Speech', 'Sambutan dan Arahan', 'Membuka Acara', 'Narasumber', atau '-')"
+   - "sesiAcara": "khusus kategori PH, peran/sesi yang dimohonkan kepada Menteri / Pimpinan Kemnaker (CONTOH: 'Sambutan', 'Keynote Speech', 'Sambutan dan Arahan', 'Membuka Acara', 'Narasumber'). HANYA sebutkan jenis perannya saja, JANGAN memasukkan nama acara atau nama penyelenggara ke dalam sesiAcara (misal: isi 'Sambutan', BUKAN 'Sambutan dalam Pembukaan Rakornas FSPTI')!"
    - "mempelai1": "jika UNR, nama mempelai 1 dan orang tua (misal: 'Anisa Rahmawati (Putri Bapak Ahmad dan Ibu Siti)', atau '-')"
    - "mempelai2": "jika UNR, nama mempelai 2 dan orang tua (misal: 'Dimas Pratama (Putra Bapak Bambang dan Ibu Sri)', atau '-')"
    - "pokokBahasan": "jika WR/AU, pokok bahasan audiensi atau wawancara (atau '-')"
@@ -429,12 +626,11 @@ ${pdfText.slice(0, 6000)}
               ? parsed.kategoriSurat
               : 'UND';
 
-          // Bersihkan nama acara dari kata pengantar seperti "Permohonan ... pada"
+          const extractedPenyelenggara = (parsed.penyelenggara || '').trim();
+          // Bersihkan nama acara dan peran sesi acara agar bebas dari pengulangan/redundansi
           const rawAcara = (parsed.namaAcara || parsed.event || '-').trim();
-          const cleanAcara = rawAcara
-            .replace(/^(?:permohonan|undangan|surat)\s+(?:memberikan|menghadiri|kehadiran|resmi)?\s*/i, '')
-            .replace(/^(?:keynote speech|sambutan|arahan)?\s*(?:pada|dalam rangka)?\s*(?:kegiatan|acara|pembukaan)?\s*/i, '')
-            .trim() || rawAcara;
+          const cleanAcara = cleanNamaAcara(rawAcara, extractedPenyelenggara);
+          const cleanSesi = cleanSesiAcara(parsed.sesiAcara, cleanAcara);
 
           // Format asalSurat: WAJIB nama pengirim yang bertanda tangan di paling bawah: "Nama Pengirim - Jabatan" (bukan instansi)
           let finalAsalSurat = (parsed.asalSurat || '').trim();
@@ -453,8 +649,6 @@ ${pdfText.slice(0, 6000)}
             }
           }
           finalAsalSurat = formatAsalSurat(finalAsalSurat, jabatanPengirim);
-
-          const extractedPenyelenggara = (parsed.penyelenggara || '').trim();
 
           const rawPicName = (parsed.picName || '').trim();
           const rawPicPhone = (parsed.picPhoneNumber || '').trim();
@@ -503,7 +697,7 @@ ${pdfText.slice(0, 6000)}
             namaAcara: cleanAcara,
             temaAcara: parsed.temaAcara && parsed.temaAcara !== '-' ? parsed.temaAcara : undefined,
             penyelenggara: extractedPenyelenggara && extractedPenyelenggara !== '-' ? extractedPenyelenggara : 'Instansi Terkait',
-            sesiAcara: parsed.sesiAcara && parsed.sesiAcara !== '-' ? parsed.sesiAcara : undefined,
+            sesiAcara: cleanSesi,
             mempelai1: parsed.mempelai1 && parsed.mempelai1 !== '-' ? parsed.mempelai1 : undefined,
             mempelai2: parsed.mempelai2 && parsed.mempelai2 !== '-' ? parsed.mempelai2 : undefined,
             pokokBahasan: parsed.pokokBahasan && parsed.pokokBahasan !== '-' ? parsed.pokokBahasan : undefined,
@@ -754,10 +948,8 @@ ${pdfText.slice(0, 6000)}
       /(?:Rapat|Audiensi|Seminar|Sosialisasi|Upacara|Lokakarya|Kunjungan|FGD|Bimtek|Kongres|Konferensi)\s+[A-Za-z0-9\s,.-]+/i
     );
     const rawEvent = eventMatch ? eventMatch[0].trim().split('\n')[0].slice(0, 60) : subject;
-    const cleanEventName = rawEvent
-      .replace(/^(?:permohonan|undangan|surat)\s+(?:memberikan|menghadiri|kehadiran|resmi)?\s*/i, '')
-      .replace(/^(?:keynote speech|sambutan|arahan)?\s*(?:pada|dalam rangka)?\s*(?:kegiatan|acara|pembukaan)?\s*/i, '')
-      .trim() || rawEvent;
+    const cleanEventName = cleanNamaAcara(rawEvent, penyelenggara);
+    const cleanSesi = cleanSesiAcara(sesiAcara, cleanEventName);
 
     // 9. Cari tema jika ada
     const temaMatch = text.match(/(?:tema|bertema)\s*[:"']\s*([^"'\n]+)/i);
@@ -789,7 +981,7 @@ ${pdfText.slice(0, 6000)}
       namaAcara: cleanEventName,
       temaAcara,
       penyelenggara,
-      sesiAcara,
+      sesiAcara: cleanSesi,
       perihal: '',
     };
 

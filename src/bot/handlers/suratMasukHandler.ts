@@ -493,10 +493,11 @@ export class SuratMasukHandler {
       `Tanggal Acara: ${data?.dateEvent || '-'}\n` +
       `Nama PIC: ${picName}\n` +
       `Nomor PIC: ${picPhone}\n\n` +
-      `_Format Asal Surat: Nama Pengirim - Jabatan (nama individu/pejabat penandatangan di paling bawah surat, bukan instansi. Jika ada beberapa orang penandatangan, pilih salah satu nama beserta jabatannya)_\n` +
-      `_Tanggal Acara: isi jika surat memuat kegiatan/acara, atau isi '-' jika tidak ada acara_\n` +
-      `_Pilihan Kategori: UND, PH, UNR, AU, WR, TAP, LP_\n\n` +
-      `_(Cukup salin teks di atas, sesuaikan isinya, lalu kirimkan kembali ke sini ya. Ketik *batal* jika ingin membatalkan)_`;
+      `📌 *Catatan Pengisian:*\n` +
+      `• *Asal Surat*: Format _Nama Pengirim - Jabatan_ (nama pejabat penandatangan di bagian bawah surat, bukan instansi)\n` +
+      `• *Tanggal Acara*: Tanggal/waktu kegiatan, atau isi *-* jika tidak ada acara\n` +
+      `• *Pilihan Kategori*: UND, PH, UNR, AU, WR, TAP, LP\n\n` +
+      `_(Ketik *batal* jika ingin membatalkan)_`;
 
     return { text };
   }
@@ -728,60 +729,178 @@ export class SuratMasukHandler {
     } = {};
 
     const lines = text.split('\n');
-    for (const line of lines) {
-      const trimmed = line.trim().replace(/^[\*•\-\s]+/, '');
-      const colonIdx = trimmed.indexOf(':');
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      // Abaikan baris pembungkus markdown atau instruksi dalam kurung
+      if (/^_\s*\(.*?\)\s*_$/.test(line) || /^\(.*?\)$/.test(line)) continue;
+
+      // Bersihkan dekorator awal baris seperti bullet, underscore, tanda bintang
+      const lowerClean = line.toLowerCase().replace(/[\*\_•\-]/g, '').trim();
+      if (
+        lowerClean.startsWith('format ') ||
+        lowerClean.startsWith('pilihan ') ||
+        lowerClean.startsWith('panduan ') ||
+        lowerClean.startsWith('catatan') ||
+        lowerClean.startsWith('petunjuk ') ||
+        lowerClean.startsWith('contoh ') ||
+        lowerClean.startsWith('keterangan ') ||
+        lowerClean.startsWith('silakan ') ||
+        lowerClean.startsWith('cukup salin') ||
+        lowerClean.startsWith('template ') ||
+        lowerClean.startsWith('ketik ') ||
+        lowerClean.startsWith('atau ketik ')
+      ) {
+        continue;
+      }
+
+      // Baris field harus memiliki tanda titik dua ':'
+      const colonIdx = line.indexOf(':');
       if (colonIdx === -1) continue;
 
-      const rawKey = trimmed.slice(0, colonIdx).replace(/[\*\_]/g, '').trim().toLowerCase();
-      const rawVal = trimmed.slice(colonIdx + 1).replace(/[\*\_]/g, '').trim();
+      const rawKey = line.slice(0, colonIdx).replace(/[\*\_•\-]/g, '').trim().toLowerCase();
+      const rawVal = line.slice(colonIdx + 1).replace(/^[\*\_]+|[\*\_]+$/g, '').trim();
 
-      if (!rawVal || rawVal === '-') continue;
+      if (!rawVal) continue;
 
-      if (rawKey.includes('kategori') || rawKey.includes('jenis')) {
+      // Abaikan jika key diawali kata panduan
+      if (
+        rawKey.startsWith('format ') ||
+        rawKey.startsWith('pilihan ') ||
+        rawKey.startsWith('panduan ') ||
+        rawKey.startsWith('catatan') ||
+        rawKey.startsWith('petunjuk ') ||
+        rawKey.startsWith('contoh ') ||
+        rawKey.startsWith('keterangan ') ||
+        rawKey.startsWith('nb')
+      ) {
+        continue;
+      }
+
+      // Abaikan jika value berisi teks petunjuk bawaan template
+      const lowerVal = rawVal.toLowerCase();
+      if (
+        lowerVal.includes('nama individu/pejabat') ||
+        lowerVal.includes('penandatangan di paling bawah') ||
+        lowerVal.includes('penandatangan di bagian bawah') ||
+        lowerVal.includes('isi jika surat memuat') ||
+        lowerVal.includes('cukup salin teks') ||
+        lowerVal.includes('ketik batal')
+      ) {
+        continue;
+      }
+
+      // 1. Kategori / Jenis Surat
+      if (
+        rawKey === 'kategori' ||
+        rawKey === 'kategori surat' ||
+        rawKey === 'jenis' ||
+        rawKey === 'jenis surat' ||
+        rawKey === 'kategori/jenis surat'
+      ) {
+        // Jika nilai berupa daftar opsi berkoma atau '-', abaikan
+        if (rawVal === '-' || rawVal.includes(',')) continue;
+
         const valUpper = rawVal.toUpperCase();
-        if (['UND', 'PH', 'UNR', 'AU', 'WR', 'TAP', 'LP'].includes(valUpper)) {
+        const validCodes = ['UND', 'PH', 'UNR', 'AU', 'WR', 'TAP', 'LP'];
+        if (validCodes.includes(valUpper)) {
           result.kategori = valUpper;
-        } else if (valUpper.includes('NIKAH') || valUpper.includes('PERNIKAHAN') || valUpper.includes('UNR')) {
+        } else if (valUpper === 'NIKAH' || valUpper.includes('PERNIKAHAN')) {
           result.kategori = 'UNR';
-        } else if (valUpper.includes('SAMBUTAN') || valUpper.includes('NARASUMBER') || valUpper.includes('PERMOHONAN HADIR') || valUpper.includes('PH')) {
+        } else if (
+          valUpper.includes('SAMBUTAN') ||
+          valUpper.includes('NARASUMBER') ||
+          valUpper.includes('PERMOHONAN HADIR')
+        ) {
           result.kategori = 'PH';
-        } else if (valUpper.includes('AUDIENSI') || valUpper.includes('AU')) {
+        } else if (valUpper.includes('AUDIENSI')) {
           result.kategori = 'AU';
-        } else if (valUpper.includes('WAWANCARA') || valUpper.includes('LIPUTAN') || valUpper.includes('WR')) {
+        } else if (valUpper.includes('WAWANCARA') || valUpper.includes('LIPUTAN')) {
           result.kategori = 'WR';
-        } else if (valUpper.includes('UCAPAN') || valUpper.includes('VIDEO') || valUpper.includes('TAP')) {
+        } else if (valUpper.includes('UCAPAN') || valUpper.includes('VIDEO')) {
           result.kategori = 'TAP';
-        } else if (valUpper.includes('UNDANGAN') || valUpper.includes('UND')) {
+        } else if (valUpper.includes('UNDANGAN') || valUpper.includes('RAPAT')) {
           result.kategori = 'UND';
+        } else if (valUpper.includes('LAPORAN')) {
+          result.kategori = 'LP';
         }
-      } else if (rawKey.includes('nomor surat') || rawKey === 'nomor' || rawKey === 'no surat') {
-        result.nomorSurat = rawVal;
-      } else if (rawKey.includes('tanggal surat') || rawKey.includes('tgl surat') || (rawKey.includes('tanggal') && !rawKey.includes('acara') && !rawKey.includes('kegiatan') && !rawKey.includes('event')) || rawKey === 'tgl') {
-        result.tanggalSurat = rawVal;
-      } else if (rawKey.includes('asal') || rawKey.includes('pengirim') || rawKey.includes('penandatangan') || rawKey.includes('ttd') || rawKey.includes('instansi')) {
-        result.asalSurat = formatAsalSurat(rawVal);
-      } else if (rawKey === 'subject' || rawKey === 'subjek' || rawKey === 'judul') {
-        result.subject = rawVal.slice(0, 200);
-      } else if (rawKey.includes('perihal') || rawKey.includes('hal')) {
-        result.perihal = rawVal;
-      } else if (
-        rawKey.includes('tanggal acara') ||
-        rawKey.includes('tgl acara') ||
-        rawKey.includes('waktu acara') ||
-        rawKey.includes('tanggal kegiatan') ||
-        rawKey.includes('tgl kegiatan') ||
-        rawKey.includes('waktu kegiatan') ||
-        rawKey.includes('date event') ||
-        rawKey.includes('tanggal event') ||
-        rawKey.includes('tgl event')
+      }
+      // 2. Nomor Surat
+      else if (
+        rawKey === 'nomor surat' ||
+        rawKey === 'no surat' ||
+        rawKey === 'nomor' ||
+        rawKey === 'no'
+      ) {
+        if (rawVal !== '-') result.nomorSurat = rawVal;
+      }
+      // 3. Tanggal Surat
+      else if (
+        rawKey === 'tanggal surat' ||
+        rawKey === 'tgl surat' ||
+        rawKey === 'tanggal' ||
+        rawKey === 'tgl'
+      ) {
+        if (rawVal !== '-') result.tanggalSurat = rawVal;
+      }
+      // 4. Asal Surat
+      else if (
+        rawKey === 'asal surat' ||
+        rawKey === 'asal' ||
+        rawKey === 'pengirim' ||
+        rawKey === 'penandatangan' ||
+        rawKey === 'asal instansi' ||
+        rawKey === 'instansi'
+      ) {
+        if (rawVal !== '-') result.asalSurat = formatAsalSurat(rawVal);
+      }
+      // 5. Subject
+      else if (rawKey === 'subject' || rawKey === 'subjek' || rawKey === 'judul') {
+        if (rawVal !== '-') result.subject = rawVal.slice(0, 200);
+      }
+      // 6. Perihal
+      else if (rawKey === 'perihal' || rawKey === 'hal') {
+        if (rawVal !== '-') result.perihal = rawVal;
+      }
+      // 7. Tanggal Acara (dateEvent)
+      else if (
+        rawKey === 'tanggal acara' ||
+        rawKey === 'tgl acara' ||
+        rawKey === 'waktu acara' ||
+        rawKey === 'tanggal kegiatan' ||
+        rawKey === 'tgl kegiatan' ||
+        rawKey === 'waktu kegiatan' ||
+        rawKey === 'date event' ||
+        rawKey === 'tanggal event' ||
+        rawKey === 'tgl event' ||
+        rawKey === 'waktu pelaksanaan' ||
+        rawKey === 'waktu / tgl acara' ||
+        rawKey === 'waktu/tgl acara'
       ) {
         result.dateEvent = rawVal;
-      } else if (rawKey.includes('event') || rawKey.includes('acara') || rawKey.includes('kegiatan')) {
-        result.event = rawVal;
-      } else if (rawKey === 'nama pic' || rawKey === 'pic name') {
+      }
+      // 8. Event / Nama Acara
+      else if (
+        rawKey === 'event' ||
+        rawKey === 'acara' ||
+        rawKey === 'kegiatan' ||
+        rawKey === 'nama acara' ||
+        rawKey === 'nama kegiatan'
+      ) {
+        if (rawVal !== '-') result.event = rawVal;
+      }
+      // 9. Nama PIC
+      else if (
+        rawKey === 'nama pic' ||
+        rawKey === 'pic name' ||
+        rawKey === 'nama kontak' ||
+        rawKey === 'nama narahubung'
+      ) {
         result.picName = rawVal;
-      } else if (
+      }
+      // 10. Nomor PIC
+      else if (
         rawKey === 'nomor pic' ||
         rawKey === 'no pic' ||
         rawKey === 'telepon pic' ||
@@ -791,10 +910,22 @@ export class SuratMasukHandler {
         rawKey === 'no hp pic' ||
         rawKey === 'nomor hp pic' ||
         rawKey === 'pic phone' ||
-        rawKey === 'pic phone number'
+        rawKey === 'pic phone number' ||
+        rawKey === 'nomor kontak' ||
+        rawKey === 'no kontak' ||
+        rawKey === 'nomor hp' ||
+        rawKey === 'no hp'
       ) {
         result.picPhoneNumber = rawVal;
-      } else if (rawKey.includes('pic') || rawKey.includes('kontak') || rawKey.includes('telepon')) {
+      }
+      // 11. PIC gabungan
+      else if (
+        rawKey === 'pic' ||
+        rawKey === 'kontak' ||
+        rawKey === 'narahubung' ||
+        rawKey === 'pic pengirim' ||
+        rawKey === 'pic & kontak'
+      ) {
         result.picPengirim = rawVal;
         const splitted = splitPicNameAndPhone(rawVal);
         if (splitted.name && !result.picName) result.picName = splitted.name;
