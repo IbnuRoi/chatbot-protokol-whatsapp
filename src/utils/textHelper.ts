@@ -143,26 +143,37 @@ import crypto from 'crypto';
 import path from 'path';
 
 /**
- * Format nomor agenda sebagai hyperlink markdown yang mengarah langsung ke berkas PDF
+ * Mengambil URL publik berkas surat yang dapat langsung diklik oleh pengguna di WhatsApp.
  * Menggunakan base URL dari ENV.FILE_URL + nama berkas dari kolom `file` tabel `letters`.
- * Jika berkas tidak ada / kosong, mengembalikan nomor agenda biasa.
+ * Mengembalikan null jika berkas tidak ada atau kosong.
  */
-export function formatNomorAgendaLink(nomorAgenda: string | null | undefined, fileName?: string | null): string {
-  const agenda = (nomorAgenda || '-').trim();
-  if (!fileName || fileName.trim() === '' || fileName === '-') {
-    return agenda;
+export function getLetterFileUrl(fileName?: string | null): string | null {
+  if (!fileName || fileName.trim() === '' || fileName.trim() === '-') {
+    return null;
   }
 
   const cleanFile = fileName.trim();
-  let fullUrl = '';
   if (cleanFile.startsWith('http://') || cleanFile.startsWith('https://')) {
-    fullUrl = cleanFile;
-  } else {
-    const baseUrl = ENV.FILE_URL.endsWith('/') ? ENV.FILE_URL : `${ENV.FILE_URL}/`;
-    fullUrl = `${baseUrl}${cleanFile}`;
+    return cleanFile;
   }
 
-  return `[${agenda}](${fullUrl})`;
+  const baseUrl = ENV.FILE_URL.endsWith('/') ? ENV.FILE_URL : `${ENV.FILE_URL}/`;
+  return `${baseUrl}${cleanFile}`;
+}
+
+/**
+ * Format nomor agenda untuk tampilan teks WhatsApp.
+ * WhatsApp tidak mendukung sintaks Markdown hyperlink [text](url), sehingga link harus
+ * ditampilkan sebagai URL langsung agar dapat diklik.
+ */
+export function formatNomorAgendaLink(nomorAgenda: string | null | undefined, fileName?: string | null): string {
+  const agenda = (nomorAgenda || '-').trim();
+  const fileUrl = getLetterFileUrl(fileName);
+  if (!fileUrl) {
+    return agenda;
+  }
+
+  return `${agenda} - ${fileUrl}`;
 }
 
 export const formatNomorSuratLink = formatNomorAgendaLink;

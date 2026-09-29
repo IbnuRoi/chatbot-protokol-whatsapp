@@ -5,7 +5,7 @@ import { aiService, formatPerihalByTemplate, generateSubjectSummary, formatAsalS
 import { NluResult } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
-import { formatNomorAgendaLink, generateLetterFileName, splitPicNameAndPhone } from '../../utils/textHelper';
+import { formatNomorAgendaLink, getLetterFileUrl, generateLetterFileName, splitPicNameAndPhone } from '../../utils/textHelper';
 import { formatWaktuInputIndo } from '../../utils/dateHelper';
 
 export const KATEGORI_LABEL_MAP: Record<string, string> = {
@@ -295,7 +295,7 @@ export class SuratMasukHandler {
     const draft = session.draftSurat;
     const data = draft?.extractedData;
     const finalName = draft?.finalFileName || generateLetterFileName(draft?.tempPdfName);
-    const agendaLink = formatNomorAgendaLink(draft?.nomorAgenda, finalName);
+    const agendaDisplay = draft?.nomorAgenda || '-';
     const jenisCode = (draft?.jenisSurat || 'UND').toUpperCase();
     const jenisLabel = KATEGORI_LABEL_MAP[jenisCode] || jenisCode;
     const finalPerihal = draft?.finalPerihal || data?.perihal || '-';
@@ -316,7 +316,7 @@ export class SuratMasukHandler {
     const text =
       `${title}\n\n` +
       `Sistem telah membaca isi surat dan menentukan kategori serta perihalnya:\n\n` +
-      `• 📌 *Nomor Agenda* : ${agendaLink}\n` +
+      `• 📌 *Nomor Agenda* : ${agendaDisplay}\n` +
       `• 📑 *Kategori Surat*: *${jenisCode}*\n` +
       `• 🏷️ *Tipe Klasifikasi*: ${draft?.tipeSurat || 'Biasa'}\n` +
       `• 🔢 *Nomor Surat*   : ${data?.nomorSurat || '-'}\n` +
@@ -379,7 +379,8 @@ export class SuratMasukHandler {
         const savedData = session.draftSurat.extractedData;
         const finalPerihal = session.draftSurat.finalPerihal || savedData?.perihal || '-';
         const finalSubject = (session.draftSurat.finalSubject || savedData?.subject || generateSubjectSummary(finalPerihal, savedData)).slice(0, 200);
-        const agendaLink = formatNomorAgendaLink(result.nomorAgenda, savedFileName);
+        const fileUrl = getLetterFileUrl(savedFileName);
+        const fileLine = fileUrl ? `• 📎 *Link Berkas*    : ${fileUrl}\n` : '';
         const jenisCode = (session.draftSurat?.jenisSurat || 'UND').toUpperCase();
         const jenisLabel = KATEGORI_LABEL_MAP[jenisCode] || jenisCode;
         const userPenginput = result.createdBy || session.userName || 'Petugas Protokol';
@@ -401,8 +402,9 @@ export class SuratMasukHandler {
           text:
             `✅ *SURAT BERHASIL DISIMPAN KE DATABASE!*\n\n` +
             `Data surat dan berkas fisik telah berhasil diregistrasi ke sistem:\n` +
-            `• 📌 *Nomor Agenda* : ${agendaLink}\n` +
-            `• 📑 *Kategori Surat*: *${jenisCode}*\n` +
+            `• 📌 *Nomor Agenda*   : ${result.nomorAgenda}\n` +
+            fileLine +
+            `• 📑 *Kategori Surat* : *${jenisCode}*\n` +
             `• 🏷️ *Tipe Klasifikasi*: ${session.draftSurat?.tipeSurat || 'Biasa'}\n` +
             `• 🔢 *Nomor Surat*  : ${savedData?.nomorSurat || '-'}\n` +
             `• ✍️ *Asal Surat*   : ${savedData?.asalSurat || '-'}\n` +
@@ -1335,14 +1337,16 @@ export class SuratMasukHandler {
 
       if (result.success) {
         sessionService.resetSession(session.whatsappNumber);
-        const agendaLink = formatNomorAgendaLink(result.nomorAgenda, result.fileName);
+        const fileUrl = getLetterFileUrl(result.fileName);
+        const fileLine = fileUrl ? `• 📎 *Link Berkas*     : ${fileUrl}\n` : '';
         const userPenginput = result.createdBy || session.userName || 'Petugas Protokol';
         const waktuInputStr = formatWaktuInputIndo(result.createdAt || new Date());
         return {
           text:
             `✅ *REGISTRASI SURAT BERHASIL!*\n\n` +
             `Surat telah resmi tercatat di sistem:\n` +
-            `• 📌 *Nomor Agenda*   : ${agendaLink}\n` +
+            `• 📌 *Nomor Agenda*   : ${result.nomorAgenda}\n` +
+            fileLine +
             `• 📂 *Status Disposisi*: 🟡 BELUM DISPOSISI\n` +
             `• 👤 *Diinput Oleh*    : ${userPenginput}\n` +
             `• ⏰ *Waktu Input*     : ${waktuInputStr}\n\n` +

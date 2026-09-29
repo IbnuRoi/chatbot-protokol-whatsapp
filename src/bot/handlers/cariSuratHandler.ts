@@ -4,7 +4,7 @@ import { nluService } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { riwayatHandler } from './riwayatHandler';
 import { BotResponse } from '../types';
-import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink, isPureGreeting } from '../../utils/textHelper';
+import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink, getLetterFileUrl, isPureGreeting } from '../../utils/textHelper';
 import { formatWaktuInputIndo } from '../../utils/dateHelper';
 
 export class CariSuratHandler {
@@ -124,12 +124,15 @@ export class CariSuratHandler {
       .map((s, idx) => {
         const itemNumber = idx + 1;
         const statusIcon = s.disposisi?.status === 'SUDAH_DISPOSISI' ? '🟢 Sudah Disposisi' : '🟡 Belum Disposisi';
+        const fileUrl = getLetterFileUrl(s.fileName);
+        const linkLine = fileUrl ? `\n   • Link File: ${fileUrl}` : '';
         return (
-          `*${itemNumber}.* 📑 *${formatNomorAgendaLink(s.nomorAgenda, s.fileName)}*\n` +
+          `*${itemNumber}.* 📑 *${s.nomorAgenda || '-'}*\n` +
           `   • Tanggal : ${s.tanggalSurat}\n` +
           `   • Pengirim: ${s.asalSurat}\n` +
           `   • Perihal : ${s.perihal}\n` +
-          `   • Status  : ${statusIcon}`
+          `   • Status  : ${statusIcon}` +
+          linkLine
         );
       })
       .join('\n\n');
@@ -257,10 +260,12 @@ export class CariSuratHandler {
     const disposisi = surat.disposisi;
     const statusDisp = disposisi?.status === 'SUDAH_DISPOSISI' ? '🟢 SUDAH DISPOSISI' : '🟡 BELUM DISPOSISI';
     const waktuInputStr = formatWaktuInputIndo(surat.createdAt);
+    const fileUrl = getLetterFileUrl(surat.fileName);
+    const fileLine = fileUrl ? `• *Link File Surat*: ${fileUrl}\n` : '';
 
     const text =
       `📋 *DETAIL SURAT MASUK (PENCARIAN)*\n\n` +
-      `• *Nomor Agenda*   : ${formatNomorAgendaLink(surat.nomorAgenda, surat.fileName)}\n` +
+      `• *Nomor Agenda*   : ${surat.nomorAgenda}\n` +
       `• *Jenis / Tipe*    : ${surat.jenisSurat} / ${surat.tipeSurat}\n` +
       `• *Tanggal Surat*   : ${surat.tanggalSurat}\n` +
       `• *Asal Instansi*   : ${surat.asalInstansi}\n` +
@@ -269,6 +274,7 @@ export class CariSuratHandler {
       `• *PIC & Kontak*    : ${surat.picPengirim || '-'}\n` +
       `• *Perihal*         : ${surat.perihal}\n` +
       `• *Status Disposisi*: ${statusDisp}\n` +
+      fileLine +
       `• *Diinput Oleh*    : ${surat.userInput?.nama || 'Petugas Protokol'}\n` +
       `• *Waktu Input*     : ${waktuInputStr}\n\n` +
       `Bila Anda ingin melihat rincian disposisi surat ini atau kembali ke daftar pencarian, silakan beri tahu saya ya.`;

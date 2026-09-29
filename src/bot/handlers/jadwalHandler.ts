@@ -4,7 +4,7 @@ import { nluService, NluResult } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { cariSuratHandler } from './cariSuratHandler';
 import { BotResponse } from '../types';
-import { scoreTextMatch, cleanQueryForSelection, formatNomorSuratLink, isPureGreeting } from '../../utils/textHelper';
+import { scoreTextMatch, cleanQueryForSelection, formatNomorSuratLink, getLetterFileUrl, isPureGreeting } from '../../utils/textHelper';
 import { extractDateFromText, extractDateRangeFromText, formatWaktuDisplay } from '../../utils/dateHelper';
 
 export class JadwalHandler {
@@ -364,7 +364,12 @@ export class JadwalHandler {
 
     let suratNote = '';
     if (item.surat?.nomorAgenda) {
-      suratNote = `\n• *Surat Terkait*        : ${item.surat.nomorAgenda} (${formatNomorSuratLink(item.surat.nomorSurat, item.surat.fileName)})`;
+      const fileUrl = getLetterFileUrl(item.surat.fileName);
+      const noSurat = item.surat.nomorSurat ? ` (No: ${item.surat.nomorSurat})` : '';
+      suratNote = `\n• *Surat Terkait*        : ${item.surat.nomorAgenda}${noSurat}`;
+      if (fileUrl) {
+        suratNote += `\n• *Link Berkas Surat*   : ${fileUrl}`;
+      }
     }
 
     const statusDisp = item.statusDisposisi || 'Diagendakan';

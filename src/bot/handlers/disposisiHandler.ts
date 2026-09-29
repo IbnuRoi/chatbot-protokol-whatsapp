@@ -3,7 +3,7 @@ import { disposisiService } from '../../services/disposisiService';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
 
-import { formatNomorAgendaLink, isPureGreeting } from '../../utils/textHelper';
+import { formatNomorAgendaLink, getLetterFileUrl, isPureGreeting } from '../../utils/textHelper';
 import { formatWaktuInputIndo } from '../../utils/dateHelper';
 
 export class DisposisiHandler {
@@ -70,9 +70,13 @@ export class DisposisiHandler {
 
     const waktuInputStr = formatWaktuInputIndo(surat.createdAt);
 
+    const fileUrl = getLetterFileUrl(surat.fileName);
+    const fileLine = fileUrl ? `• *Link Berkas Surat*: ${fileUrl}\n` : '';
+
     const text =
       `📬 *DETAIL DISPOSISI SURAT*\n\n` +
-      `• *Nomor Agenda* : ${formatNomorAgendaLink(surat.nomorAgenda, surat.fileName)}\n` +
+      `• *Nomor Agenda* : ${surat.nomorAgenda}\n` +
+      fileLine +
       `• *Pengirim*     : ${surat.asalSurat}\n` +
       `• *Perihal*      : ${surat.perihal}\n` +
       `• *Diinput Oleh* : ${surat.userInput?.nama || 'Petugas Protokol'}\n` +

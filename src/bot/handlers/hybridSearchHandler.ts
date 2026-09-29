@@ -5,7 +5,7 @@ import { nluService, NluResult } from '../../services/nluService';
 import { cariSuratHandler } from './cariSuratHandler';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
-import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink, isPureGreeting } from '../../utils/textHelper';
+import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink, getLetterFileUrl, isPureGreeting } from '../../utils/textHelper';
 import { NormalizedSurat } from '../../services/suratService';
 import { NormalizedJadwal } from '../../services/jadwalService';
 
@@ -184,12 +184,15 @@ export class HybridSearchHandler {
     const suratListText = displayedLetters
       .map((s, idx) => {
         const statusIcon = s.disposisi?.status === 'SUDAH_DISPOSISI' ? '🟢 Sudah Disposisi' : '🟡 Belum Disposisi';
+        const fileUrl = getLetterFileUrl(s.fileName);
+        const linkLine = fileUrl ? `\n   • Link File: ${fileUrl}` : '';
         return (
-          `*${idx + 1}.* 📑 *${formatNomorAgendaLink(s.nomorAgenda, s.fileName)}*\n` +
+          `*${idx + 1}.* 📑 *${s.nomorAgenda || '-'}*\n` +
           `   • Tanggal : ${s.tanggalSurat}\n` +
           `   • Pengirim: ${s.asalSurat}\n` +
           `   • Perihal : ${s.perihal}\n` +
-          `   • Status  : ${statusIcon}`
+          `   • Status  : ${statusIcon}` +
+          linkLine
         );
       })
       .join('\n\n');
@@ -219,7 +222,11 @@ export class HybridSearchHandler {
 
     let suratNote = '';
     if (item.surat?.nomorAgenda) {
-      suratNote = `\n• *Surat Terkait*        : ${formatNomorAgendaLink(item.surat.nomorAgenda, item.surat.fileName)}`;
+      const fileUrl = getLetterFileUrl(item.surat.fileName);
+      suratNote = `\n• *Surat Terkait*        : ${item.surat.nomorAgenda}`;
+      if (fileUrl) {
+        suratNote += `\n• *Link Berkas Surat*   : ${fileUrl}`;
+      }
     }
 
     return {
