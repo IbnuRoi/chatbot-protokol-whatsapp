@@ -6,6 +6,7 @@ import { ENV } from '../config/env';
 import { ExtractedSuratData } from './sessionService';
 import { splitPicNameAndPhone } from '../utils/textHelper';
 import { imageService } from './imageService';
+import { pdfService } from './pdfService';
 
 /**
  * Memformat rumusan Perihal resmi sesuai formula template resmi berdasarkan kategori surat:
@@ -696,9 +697,31 @@ export class AiService {
   }
 
   /**
-   * Ekstraksi metadata surat dari teks dokumen
+   * Ekstraksi metadata surat dari dokumen (mendukung PDF digital maupun PDF hasil scan fisik/kamera)
    */
-  public async extractSuratData(pdfText: string, originalFileName?: string): Promise<ExtractedSuratData> {
+  public async extractSuratData(
+    pdfText: string,
+    originalFileName?: string,
+    pdfFilePath?: string
+  ): Promise<ExtractedSuratData> {
+    // 1. Cek apakah dokumen PDF merupakan PDF hasil scan (tanpa layer teks atau teks sangat sedikit/rusak)
+    if (pdfFilePath && (await pdfService.isScannedPdf(pdfFilePath, pdfText))) {
+      console.log(
+        `[AiService] Dokumen PDF '${originalFileName || path.basename(pdfFilePath)}' terdeteksi sebagai PDF hasil scan (tanpa teks digital). Mengalihkan ke Multimodal Vision AI...`
+      );
+      const renderedPages = await pdfService.renderPdfPagesToImages(pdfFilePath, 4);
+      if (renderedPages.length > 0) {
+        try {
+          const visionResult = await this.extractSuratFromImages(renderedPages, originalFileName);
+          return visionResult;
+        } catch (visionErr) {
+          console.warn('[AiService] Vision AI pada PDF scan gagal, mencoba fallback parser:', visionErr);
+        } finally {
+          pdfService.cleanupRenderedPages(renderedPages);
+        }
+      }
+    }
+
     return this.extractDocumentMetadata(pdfText, originalFileName);
   }
 
@@ -801,9 +824,10 @@ ${pdfText.slice(0, 6000)}
   }
 
   /**
-   * Ekstraksi metadata dan isi surat dinas langsung dari berkas gambar (Multimodal Vision AI)
+   * Ekstraksi metadata dan isi surat dinas langsung dari berkas gambar atau kumpulan halaman scan (Multimodal Vision AI)
+   * Mendukung dokumen satu halaman maupun multi-halaman (misal: halaman surat dinas & lembar lampiran rundown acara)
    */
-  public async extractSuratFromImage(imagePath: string, originalFileName?: string): Promise<ExtractedSuratData> {
+  public async extractSuratFromImages(imagePaths: string[], originalFileName?: string): Promise<ExtractedSuratData> {
     const isUsingOpenRouter = Boolean(this.openAiClient);
     let model = 'google/gemini-2.5-flash';
 
@@ -819,17 +843,24 @@ ${pdfText.slice(0, 6000)}
       model = ENV.PDF_EXTRACTION_MODEL || 'gemini-2.5-flash';
     }
 
-    if ((this.genAiClient || this.openAiClient) && fs.existsSync(imagePath)) {
+    const validPaths = imagePaths.filter((p) => fs.existsSync(p));
+    if ((this.genAiClient || this.openAiClient) && validPaths.length > 0) {
       try {
-        const buffer = fs.readFileSync(imagePath);
-        const ext = path.extname(originalFileName || imagePath).toLowerCase();
-        const mimeType = imageService.detectImageMimeType(buffer, ext) || 'image/jpeg';
-        const base64Image = buffer.toString('base64');
+        const imagePayloads: Array<{ mimeType: string; base64: string }> = [];
+        for (const imgPath of validPaths) {
+          const buffer = fs.readFileSync(imgPath);
+          const ext = path.extname(imgPath).toLowerCase();
+          const mimeType = imageService.detectImageMimeType(buffer, ext) || 'image/jpeg';
+          imagePayloads.push({
+            mimeType,
+            base64: buffer.toString('base64'),
+          });
+        }
 
-        const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan (Kemnaker) yang ahli dan sangat teliti dalam menganalisis berkas gambar surat dinas resmi (foto surat fisik, scan surat, atau tangkapan layar surat dinas).
+        const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan (Kemnaker) yang ahli dan sangat teliti dalam menganalisis berkas dokumen surat dinas resmi (baik dokumen hasil scan scanner/kamera HP, foto fisik surat, maupun berkas gambar dokumen dinas).
 
 TUGAS UTAMA:
-Bacalah seluruh isi gambar surat dinas terlampir secara teliti dan menyeluruh, dari kop surat teratas, nomor, tanggal, lampiran, perihal, isi surat, jadwal/tempat acara, hingga penandatangan dan stempel di bagian bawah surat. Pastikan semua entitas diekstrak persis dan akurat sesuai yang tertulis pada gambar.
+Bacalah seluruh isi dokumen surat dinas terlampir secara teliti dan menyeluruh dari gambar halaman yang disediakan (dari kop surat teratas, nomor, tanggal, lampiran, perihal, isi surat, jadwal/tempat acara, hingga penandatangan dan stempel di bagian bawah surat). Jika terdapat lebih dari satu halaman terlampir, rangkum dan gabungkan informasinya secara lengkap. Pastikan semua entitas diekstrak persis dan akurat sesuai yang tertulis pada dokumen.
 
 1. Tentukan KATEGORI SURAT (kategoriSurat) secara akurat dari salah satu kode berikut:
    - "UND" : Undangan Menghadiri acara/rapat/seminar/konferensi/FGD/diskusi/lokakarya/dies natalis/peringatan umum (BUKAN pernikahan, BUKAN meminta pimpinan memberi sambutan/speech khusus).
@@ -868,20 +899,22 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
 
         let rawText = '';
         if (this.openAiClient) {
+          const content: any[] = [{ type: 'text', text: prompt }];
+          for (const item of imagePayloads) {
+            content.push({
+              type: 'image_url',
+              image_url: {
+                url: `data:${item.mimeType};base64,${item.base64}`,
+              },
+            });
+          }
+
           const res = await this.openAiClient.chat.completions.create({
             model,
             messages: [
               {
                 role: 'user',
-                content: [
-                  { type: 'text', text: prompt },
-                  {
-                    type: 'image_url',
-                    image_url: {
-                      url: `data:${mimeType};base64,${base64Image}`,
-                    },
-                  },
-                ],
+                content,
               },
             ],
             temperature: 0.1,
@@ -892,20 +925,22 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
             rawText = (res.choices?.[0]?.message as any).reasoning;
           }
         } else if (this.genAiClient) {
+          const parts: any[] = [{ text: prompt }];
+          for (const item of imagePayloads) {
+            parts.push({
+              inlineData: {
+                mimeType: item.mimeType,
+                data: item.base64,
+              },
+            });
+          }
+
           const res = await this.genAiClient.models.generateContent({
             model,
             contents: [
               {
                 role: 'user',
-                parts: [
-                  { text: prompt },
-                  {
-                    inlineData: {
-                      mimeType,
-                      data: base64Image,
-                    },
-                  },
-                ],
+                parts,
               },
             ],
           });
@@ -922,10 +957,10 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
     }
 
     // Fallback default jika AI offline
-    const cleanFileName = originalFileName || path.basename(imagePath);
+    const cleanFileName = originalFileName || (validPaths[0] ? path.basename(validPaths[0]) : 'dokumen.pdf');
     return {
       kategoriSurat: 'UND',
-      alasanKategori: 'Pemeriksaan default dari dokumen gambar.',
+      alasanKategori: 'Pemeriksaan default dari dokumen scan/gambar.',
       tanggalSurat: this.getTodayFormatted(),
       nomorSurat: `REF-${cleanFileName.replace(/\.[a-zA-Z0-9]+$/, '')}`,
       subject: `Surat Masuk (${cleanFileName})`,
@@ -939,6 +974,13 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       namaAcara: 'Kegiatan',
       sesiAcara: 'Sambutan dan Arahan',
     };
+  }
+
+  /**
+   * Ekstraksi metadata dan isi surat dinas langsung dari satu berkas gambar (Multimodal Vision AI)
+   */
+  public async extractSuratFromImage(imagePath: string, originalFileName?: string): Promise<ExtractedSuratData> {
+    return this.extractSuratFromImages([imagePath], originalFileName);
   }
 
   /**

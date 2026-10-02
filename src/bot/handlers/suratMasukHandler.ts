@@ -245,8 +245,8 @@ export class SuratMasukHandler {
     // Ekstraksi teks dari berkas PDF
     const rawPdfText = await pdfService.extractText(tempFilePath);
 
-    // AI Ekstraksi Data Dokumen & Pemahaman Isi Surat
-    const extractedData = await aiService.extractSuratData(rawPdfText, originalFileName);
+    // AI Ekstraksi Data Dokumen & Pemahaman Isi Surat (otomatis tangani PDF digital maupun PDF hasil scan fisik/kamera)
+    const extractedData = await aiService.extractSuratData(rawPdfText, originalFileName, tempFilePath);
 
     // Kategori surat hasil pemahaman AI (UND, PH, UNR, WR, AU, TAP, LP)
     const detectedJenis = (extractedData.kategoriSurat || 'UND').toUpperCase();

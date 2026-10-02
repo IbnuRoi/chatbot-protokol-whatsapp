@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { PDFParse } from 'pdf-parse';
+import { createCanvas } from '@napi-rs/canvas';
 import { ENV } from '../config/env';
 
 export interface PdfValidationResult {
@@ -157,6 +158,106 @@ export class PdfService {
    */
   public moveToPrivateStorage(tempFilePath: string, finalFileName: string): string {
     return this.moveToUploadStorage(tempFilePath, finalFileName);
+  }
+
+  /**
+   * Mendeteksi apakah berkas PDF merupakan PDF hasil scan kamera/alat scanner
+   * (tidak memiliki layer teks digital yang memadai, melainkan halaman berupa gambar bitmap)
+   */
+  public async isScannedPdf(filePath: string, text?: string): Promise<boolean> {
+    try {
+      let rawText = text;
+      if (rawText === undefined) {
+        rawText = await this.extractText(filePath);
+      }
+      if (!rawText || !rawText.trim()) return true;
+
+      // Bersihkan dekorasi penomoran halaman dan spasi/karakter whitespace
+      const clean = rawText
+        .replace(/--\s*\d+\s+of\s+\d+\s*--/gi, '')
+        .replace(/page\s*\d+\s*(?:of|\/)\s*\d+/gi, '')
+        .replace(/halaman\s*\d+\s*(?:dari|\/)\s*\d+/gi, '')
+        .replace(/[\r\n\t\s]+/g, ' ')
+        .trim();
+
+      const alphaWords = clean.match(/[a-zA-Z0-9]{2,}/g) || [];
+
+      // Dokumen PDF hasil scan biasanya tidak memiliki teks sama sekali (< 40 karakter atau < 8 kata)
+      return clean.length < 40 || alphaWords.length < 8;
+    } catch (e) {
+      console.error('Error checking if PDF is scanned:', e);
+      return false;
+    }
+  }
+
+  /**
+   * Me-render halaman-halaman berkas PDF menjadi berkas gambar JPEG beresolusi tinggi
+   * untuk dianalisis oleh Multimodal Vision AI.
+   *
+   * @param filePath Path berkas PDF
+   * @param maxPages Jumlah halaman maksimum yang di-render (default: 2)
+   * @param scale Resolusi render (default: 1.5 untuk teks tajam dan jelas)
+   */
+  public async renderPdfPagesToImages(filePath: string, maxPages = 4, scale = 1.5): Promise<string[]> {
+    const renderedPaths: string[] = [];
+    try {
+      if (!fs.existsSync(filePath)) return [];
+
+      const buffer = fs.readFileSync(filePath);
+      const pdfjs: any = await import('pdfjs-dist/legacy/build/pdf.mjs').catch(() => import('pdfjs-dist'));
+
+      const doc = await pdfjs.getDocument({
+        data: new Uint8Array(buffer),
+        useSystemFonts: true,
+        disableFontFace: true,
+      }).promise;
+
+      const totalPages = doc.numPages || 1;
+      const pagesToRender = Math.min(totalPages, maxPages);
+      const timestamp = Date.now();
+      const baseName = path.basename(filePath, path.extname(filePath)).replace(/[^a-zA-Z0-9_-]/g, '_');
+
+      for (let i = 1; i <= pagesToRender; i++) {
+        try {
+          const page = await doc.getPage(i);
+          const viewport = page.getViewport({ scale });
+          const canvas = createCanvas(Math.floor(viewport.width), Math.floor(viewport.height));
+          const ctx = canvas.getContext('2d');
+
+          await page.render({
+            canvasContext: ctx as any,
+            viewport,
+          }).promise;
+
+          const imgBuffer = canvas.toBuffer('image/jpeg', 85);
+          const tempImgName = `temp_scan_${timestamp}_${baseName}_p${i}.jpg`;
+          const tempImgPath = path.join(ENV.TEMP_STORAGE_PATH, tempImgName);
+          fs.writeFileSync(tempImgPath, imgBuffer);
+          renderedPaths.push(tempImgPath);
+        } catch (pageErr) {
+          console.warn(`[PdfService] Gagal me-render halaman ${i} dari PDF:`, pageErr);
+        }
+      }
+    } catch (err) {
+      console.error('[PdfService] Gagal me-render halaman PDF ke gambar:', err);
+    }
+    return renderedPaths;
+  }
+
+  /**
+   * Menghapus berkas gambar sementara hasil render PDF
+   */
+  public cleanupRenderedPages(imagePaths: string[]): void {
+    if (!Array.isArray(imagePaths)) return;
+    for (const imgPath of imagePaths) {
+      try {
+        if (fs.existsSync(imgPath)) {
+          fs.unlinkSync(imgPath);
+        }
+      } catch (err) {
+        console.warn(`[PdfService] Gagal menghapus file render sementara (${imgPath}):`, err);
+      }
+    }
   }
 }
 
