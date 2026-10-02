@@ -547,7 +547,7 @@ export class SuratMasukHandler {
       (customGuidePrefix ? `${customGuidePrefix}\n\n` : `✏️ *PANDUAN KOREKSI DATA SURAT*\n\n`) +
       `Silakan *salin (copy)* pesan template di bawah ini, ubah data pada bagian yang salah, lalu *langsung kirimkan kembali* ke chat ini tanpa perlu memilih menu:\n\n` +
       `📌 *Catatan Pengisian:*\n` +
-      `• *Asal Surat*: Format _Nama Pengirim - Jabatan - Asal Instansi_ (nama pejabat penandatangan di bagian bawah surat, jabatan, dan asal instansi)\n` +
+      `• *Asal Surat*: Format _Nama Pengirim - Jabatan Singkatan Instansi_ (contoh: Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital Kemenko Perekonomian)\n` +
       `• *Tanggal Acara*: Tanggal kegiatan (isi *-* jika tidak ada acara)\n` +
       `• *Jam Acara*: Waktu kegiatan (contoh: 09.00 WIB atau *-* jika tidak ada)\n` +
       `• *Tempat Acara*: Lokasi/tempat kegiatan (contoh: Hotel Bidakara Jakarta atau *-* jika tidak ada)\n` +
@@ -1078,7 +1078,7 @@ export class SuratMasukHandler {
       '2': { key: 'nomorSurat', label: 'Nomor Surat' },
       '3': { key: 'subject', label: 'Subject (Ringkasan)' },
       '4': { key: 'perihal', label: 'Perihal Resmi' },
-      '5': { key: 'asalSurat', label: 'Asal Surat (Nama Pengirim - Jabatan - Asal Instansi)' },
+      '5': { key: 'asalSurat', label: 'Asal Surat (Nama Pengirim - Jabatan Singkatan Instansi)' },
       '6': { key: 'dateEvent', label: 'Tanggal Acara' },
       '7': { key: 'timeEvent', label: 'Jam Acara' },
       '8': { key: 'placeEvent', label: 'Tempat Acara' },
@@ -1140,7 +1140,7 @@ export class SuratMasukHandler {
 
     let hint = '';
     if (target.key === 'asalSurat') {
-      hint = `\n_(Gunakan format: Nama Pengirim - Jabatan - Asal Instansi, contoh: Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital - Kemenko Perekonomian. Jika ada beberapa orang, pilih salah satu penandatangan)_\n`;
+      hint = `\n_(Gunakan format: Nama Pengirim - Jabatan Singkatan Instansi, contoh: Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital Kemenko Perekonomian. Jika ada beberapa orang, pilih salah satu penandatangan)_\n`;
     } else if (target.key === 'dateEvent') {
       hint = `\n_(Ketik tanggal pelaksanaan acara, atau ketik "-" jika tidak ada acara)_\n`;
     } else if (target.key === 'timeEvent') {

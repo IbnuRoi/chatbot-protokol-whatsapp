@@ -285,10 +285,191 @@ export function formatPerihalByTemplate(data: Partial<ExtractedSuratData>): stri
 }
 
 /**
+ * Kamus pemetaan nama panjang kementerian, lembaga, BUMN, universitas, dan organisasi ke bentuk singkatannya.
+ */
+export const INSTITUTION_ACRONYM_MAP: Record<string, string> = {
+  'kementerian koordinator bidang perekonomian': 'Kemenko Perekonomian',
+  'kementerian koordinator bidang pembangunan manusia dan kebudayaan': 'Kemenko PMK',
+  'kementerian koordinator bidang kemaritiman dan investasi': 'Kemenko Marves',
+  'kementerian koordinator bidang politik, hukum, dan keamanan': 'Kemenko Polhukam',
+  'kementerian ketenagakerjaan': 'Kemnaker',
+  'kemenaker': 'Kemnaker',
+  'kementerian keuangan': 'Kemenkeu',
+  'kementerian sekretariat negara': 'Kemensetneg',
+  'sekretariat kabinet': 'Setkab',
+  'kementerian perencanaan pembangunan nasional': 'Bappenas',
+  'kementerian ppn/bappenas': 'Bappenas',
+  'kementerian ppn': 'Bappenas',
+  'kementerian pendidikan, kebudayaan, riset, dan teknologi': 'Kemendikbudristek',
+  'kementerian pendidikan dasar dan menengah': 'Kemendikdasmen',
+  'kementerian pendidikan tinggi, sains, dan teknologi': 'Kemendiktisaintek',
+  'kementerian dalam negeri': 'Kemendagri',
+  'kementerian luar negeri': 'Kemlu',
+  'kementerian hukum dan hak asasi manusia': 'Kemenkumham',
+  'kementerian hukum': 'Kemenkum',
+  'kementerian hak asasi manusia': 'KemenHAM',
+  'kementerian pertahanan': 'Kemenhan',
+  'kementerian perindustrian': 'Kemenperin',
+  'kementerian perdagangan': 'Kemendag',
+  'kementerian pertanian': 'Kementan',
+  'kementerian kesehatan': 'Kemenkes',
+  'kementerian sosial': 'Kemensos',
+  'kementerian agama': 'Kemenag',
+  'kementerian perhubungan': 'Kemenhub',
+  'kementerian kelautan dan perikanan': 'KKP',
+  'kementerian energi dan sumber daya mineral': 'Kementerian ESDM',
+  'kementerian pekerjaan umum dan perumahan rakyat': 'Kementerian PUPR',
+  'kementerian pekerjaan umum': 'Kementerian PU',
+  'kementerian perumahan dan kawasan permukiman': 'Kementerian PKP',
+  'kementerian lingkungan hidup dan kehutanan': 'KLHK',
+  'kementerian lingkungan hidup': 'KLH',
+  'kementerian kehutanan': 'Kemenhut',
+  'kementerian desa, pembangunan daerah tertinggal, dan transmigrasi': 'Kemendes PDTT',
+  'kementerian desa dan pembangunan daerah tertinggal': 'Kemendes',
+  'kementerian transmigrasi': 'Kementrans',
+  'kementerian agraria dan tata ruang/badan pertanahan nasional': 'ATR/BPN',
+  'kementerian agraria dan tata ruang': 'Kementerian ATR',
+  'badan pertanahan nasional': 'BPN',
+  'kementerian komunikasi dan informatika': 'Kominfo',
+  'kementerian komunikasi dan digital': 'Kemkomdigi',
+  'kementerian badan usaha milik negara': 'Kementerian BUMN',
+  'kementerian koperasi dan usaha kecil dan menengah': 'Kemenkop UKM',
+  'kementerian koperasi': 'Kemenkop',
+  'kementerian usaha mikro, kecil, dan menengah': 'Kementerian UMKM',
+  'kementerian pariwisata dan ekonomi kreatif': 'Kemenparekraf',
+  'kementerian pariwisata': 'Kemenpar',
+  'kementerian ekonomi kreatif': 'KemenEkraf',
+  'kementerian pemberdayaan perempuan dan perlindungan anak': 'KemenPPPA',
+  'kementerian pendayagunaan aparatur negara dan reformasi birokrasi': 'KemenPAN-RB',
+  'kementerian pemuda dan olahraga': 'Kemenpora',
+  'kementerian investasi/badan koordinasi penanaman modal': 'BKPM',
+  'kementerian investasi dan hilirisasi/bkpm': 'BKPM',
+  'kementerian investasi': 'BKPM',
+  'kementerian perlindungan pekerja migran indonesia': 'KPPMI',
+  'dewan perwakilan rakyat republik indonesia': 'DPR RI',
+  'dewan perwakilan rakyat': 'DPR RI',
+  'majelis permusyawaratan rakyat republik indonesia': 'MPR RI',
+  'majelis permusyawaratan rakyat': 'MPR RI',
+  'dewan perwakilan daerah': 'DPD RI',
+  'badan pemeriksa keuangan': 'BPK RI',
+  'mahkamah konstitusi': 'MK RI',
+  'mahkamah agung': 'MA RI',
+  'badan penyelenggara jaminan sosial ketenagakerjaan': 'BPJS Ketenagakerjaan',
+  'badan penyelenggara jaminan sosial kesehatan': 'BPJS Kesehatan',
+  'badan pelindungan pekerja migran indonesia': 'BP2MI',
+  'badan perlindungan pekerja migran indonesia': 'BP2MI',
+  'badan nasional penanggulangan bencana': 'BNPB',
+  'badan nasional sertifikasi profesi': 'BNSP',
+  'badan pusat statistik': 'BPS',
+  'badan riset dan inovasi nasional': 'BRIN',
+  'badan pengawas obat dan makanan': 'BPOM',
+  'komisi pemberantasan korupsi': 'KPK',
+  'komisi pemilihan umum': 'KPU',
+  'badan pengawas pemilihan umum': 'Bawaslu',
+  'kejaksaan agung': 'Kejagung',
+  'kepolisian negara republik indonesia': 'Polri',
+  'kepolisian ri': 'Polri',
+  'tentara nasional indonesia': 'TNI',
+  'asosiasi pengusaha indonesia': 'APINDO',
+  'kamar dagang dan industri indonesia': 'KADIN',
+  'kamar dagang dan industri': 'KADIN',
+  'konfederasi serikat pekerja seluruh indonesia': 'KSPSI',
+  'konfederasi serikat buruh seluruh indonesia': 'KSBSI',
+  'konfederasi serikat buruh sejahtera indonesia': 'KSBSI',
+  'konfederasi serikat pekerja indonesia': 'KSPI',
+  'federasi serikat pekerja transport indonesia': 'FSPTI',
+  'federasi serikat pekerja metal indonesia': 'FSPMI',
+  'serikat pekerja nasional': 'SPN',
+  'serikat buruh nasionalis indonesia': 'SBNI',
+  'universitas indonesia': 'UI',
+  'institut pertanian bogor': 'IPB',
+  'institut teknologi bandung': 'ITB',
+  'universitas gadjah mada': 'UGM',
+  'universitas airlangga': 'UNAIR',
+  'universitas diponegoro': 'UNDIP',
+  'universitas brawijaya': 'UB',
+  'universitas padjadjaran': 'UNPAD',
+  'universitas sebelas maret': 'UNS',
+  'universitas negeri jakarta': 'UNJ',
+  'institut teknologi sepuluh nopember': 'ITS',
+  'universitas hasanuddin': 'UNHAS',
+  'pt telekomunikasi indonesia tbk': 'PT Telkom',
+  'pt telekomunikasi indonesia': 'PT Telkom',
+  'pt perusahaan listrik negara': 'PT PLN',
+  'pt pertamina': 'PT Pertamina',
+  'pt bank rakyat indonesia': 'PT BRI',
+  'pt bank mandiri': 'Bank Mandiri',
+  'pt bank negara indonesia': 'Bank BNI',
+  'pt kereta api indonesia': 'PT KAI',
+  'pt pos indonesia': 'Pos Indonesia',
+  'pt garuda indonesia': 'Garuda Indonesia',
+  'pt jasa raharja': 'Jasa Raharja',
+  'pt taspen': 'PT Taspen',
+};
+
+/**
+ * Menyingkat nama instansi/organisasi secara cerdas jika memiliki singkatan/akronim umum
+ */
+export function shortenInstitutionName(raw: string | undefined): string {
+  if (!raw || raw.trim() === '-' || raw.trim() === '' || raw.trim() === 'Instansi Terkait') return '';
+  const s = raw.trim();
+
+  // 1. Cek jika nama instansi memiliki tanda kurung dengan akronim, misal "Federasi Serikat Pekerja Transport Indonesia (FSPTI)" -> "FSPTI"
+  const parenMatch = s.match(/\(([^)]+)\)/);
+  if (parenMatch && parenMatch[1]) {
+    const inside = parenMatch[1].trim();
+    if (!/^(?:persero|tbk|ltd|inc|co)$/i.test(inside) && inside.length >= 2 && inside.length <= 25) {
+      if (inside === inside.toUpperCase() || /^[A-Z0-9\s/–-]+$/.test(inside)) {
+        return inside;
+      }
+    }
+  }
+
+  // 2. Bersihkan suffix "Republik Indonesia", "RI", "Persero", "Tbk"
+  const clean = s.replace(/\s*,?\s*(?:republik indonesia|RI|persero|tbk)\s*$/i, '').trim().toLowerCase();
+
+  for (const [k, v] of Object.entries(INSTITUTION_ACRONYM_MAP)) {
+    if (clean === k || clean.startsWith(k)) {
+      return v;
+    }
+  }
+
+  return s.replace(/\s*,?\s*(?:republik indonesia|RI)\s*$/i, '').trim();
+}
+
+/**
+ * Menggabungkan Jabatan dan Instansi secara padu tanpa strip pemisah
+ */
+export function combineJabatanInstansi(jabatan: string | undefined, instansi: string | undefined): string {
+  const cleanJab = (jabatan || '').replace(/[,;\s]+$/, '').trim();
+  const shortInst = shortenInstitutionName(instansi);
+
+  if (!shortInst || shortInst === '-' || shortInst === 'Instansi Terkait') {
+    return cleanJab;
+  }
+
+  if (!cleanJab || cleanJab === '-') {
+    return shortInst;
+  }
+
+  // Jika jabatan sudah memuat singkatan atau nama instansi (misal: "Rektor IPB" atau "Dirjen Binwasnaker Kemnaker")
+  const lowerJab = cleanJab.toLowerCase();
+  const lowerInst = shortInst.toLowerCase();
+  if (lowerJab.includes(lowerInst)) {
+    return cleanJab;
+  }
+
+  return `${cleanJab} ${shortInst}`.trim();
+}
+
+/**
  * Memformat dan merapikan kolom Asal Surat:
- * Format WAJIB: "Nama Pengirim - Jabatan - Asal Instansi" (nama individu/pejabat yang bertanda tangan di paling bawah, jabatan, dan asal instansi).
- * ATURAN: Jika ada beberapa orang penandatangan (misal: Ketua & Sekretaris, atau beberapa pimpinan),
- * pilih salah satu saja namanya beserta jabatannya yang sesuai.
+ * Format WAJIB: "Nama Pengirim - Jabatan Nama Instansi"
+ * ATURAN:
+ * 1. Pemisah tanda hubung (strip) HANYA ada di antara Nama Pengirim dan Jabatan Nama Instansi.
+ * 2. TIDAK ADA pemisah strip antara Jabatan dan Instansi.
+ * 3. Jika nama instansi memiliki singkatan, gunakan singkatannya saja.
+ * 4. Jika ada beberapa orang penandatangan (misal: Ketua & Sekretaris), pilih salah satu saja.
  */
 export function formatAsalSurat(raw: string, fallbackJabatan?: string, fallbackInstansi?: string): string {
   if (!raw || raw.trim() === '-' || raw.trim() === '') return '-';
@@ -315,9 +496,8 @@ export function formatAsalSurat(raw: string, fallbackJabatan?: string, fallbackI
       jab = jab.split(/\s+(?:dan|&|serta)\s+/i)[0].trim();
     }
 
-    if (name && jab) {
-      return inst ? `${name} - ${jab} - ${inst}`.slice(0, 220) : `${name} - ${jab}`.slice(0, 220);
-    }
+    const combined = combineJabatanInstansi(jab, inst);
+    return combined ? `${name} - ${combined}`.slice(0, 220) : name.slice(0, 220);
   }
 
   // Kasus 2: Format dengan strip " - "
@@ -326,20 +506,10 @@ export function formatAsalSurat(raw: string, fallbackJabatan?: string, fallbackI
 
     if (rawParts.length >= 2) {
       let name = rawParts[0];
-      let middle = rawParts[1];
 
       // Jika pada nama ada "Budi Santoso dan Ahmad Fauzi"
       if (/\s+(?:dan|&|serta)\s+/i.test(name)) {
         name = name.split(/\s+(?:dan|&|serta)\s+/i)[0].trim();
-      }
-
-      // Jika part[1] memuat pemisah antar orang (misal: "Ketua Umum dan Ahmad Fauzi")
-      const multiPersonMatch = middle.match(/^(.*?)\s+(?:dan|&|serta|\r?\n)\s+(.*)$/i);
-      if (multiPersonMatch) {
-        const jab1 = multiPersonMatch[1].trim();
-        return cleanFallbackInstansi
-          ? `${name} - ${jab1} - ${cleanFallbackInstansi}`.slice(0, 220)
-          : `${name} - ${jab1}`.slice(0, 220);
       }
 
       // Jika rawParts memiliki 3 bagian atau lebih (Nama - Jabatan - Instansi)
@@ -351,23 +521,19 @@ export function formatAsalSurat(raw: string, fallbackJabatan?: string, fallbackI
           jabatan = jabatan.split(/\s+(?:dan|&|serta)\s+/i)[0].trim().replace(/[,;\s]+$/, '');
         }
 
-        if (name && jabatan && instansi) {
-          return `${name} - ${jabatan} - ${instansi}`.slice(0, 220);
-        }
+        const combined = combineJabatanInstansi(jabatan, instansi || cleanFallbackInstansi);
+        return `${name} - ${combined}`.slice(0, 220);
       }
 
-      // Jika rawParts tepat 2 bagian (Nama - Jabatan)
+      // Jika rawParts tepat 2 bagian (Nama - JabatanInstansi atau Nama - Jabatan)
       if (rawParts.length === 2) {
-        let jabatan = rawParts[1].replace(/[,;\s]+$/, '').trim();
-        if (/\s+(?:dan|&|serta)\s+/i.test(jabatan)) {
-          jabatan = jabatan.split(/\s+(?:dan|&|serta)\s+/i)[0].trim().replace(/[,;\s]+$/, '');
+        let jabOrCombined = rawParts[1].replace(/[,;\s]+$/, '').trim();
+        if (/\s+(?:dan|&|serta)\s+/i.test(jabOrCombined)) {
+          jabOrCombined = jabOrCombined.split(/\s+(?:dan|&|serta)\s+/i)[0].trim().replace(/[,;\s]+$/, '');
         }
 
-        if (name && jabatan) {
-          return cleanFallbackInstansi
-            ? `${name} - ${jabatan} - ${cleanFallbackInstansi}`.slice(0, 220)
-            : `${name} - ${jabatan}`.slice(0, 220);
-        }
+        const combined = combineJabatanInstansi(jabOrCombined, cleanFallbackInstansi);
+        return `${name} - ${combined}`.slice(0, 220);
       }
     }
   }
@@ -385,18 +551,16 @@ export function formatAsalSurat(raw: string, fallbackJabatan?: string, fallbackI
     if (/\s+(?:dan|&|serta)\s+/i.test(name)) {
       name = name.split(/\s+(?:dan|&|serta)\s+/i)[0].trim();
     }
-    return cleanFallbackInstansi
-      ? `${name} - ${jabatan} - ${cleanFallbackInstansi}`.slice(0, 220)
-      : `${name} - ${jabatan}`.slice(0, 220);
+    const combined = combineJabatanInstansi(jabatan, cleanFallbackInstansi);
+    return `${name} - ${combined}`.slice(0, 220);
   }
 
   // Fallback jika belum ada strip
-  if (fallbackJabatan && fallbackJabatan !== '-' && cleanFallbackInstansi) {
-    return `${clean} - ${fallbackJabatan} - ${cleanFallbackInstansi}`.slice(0, 220);
-  } else if (fallbackJabatan && fallbackJabatan !== '-') {
-    return `${clean} - ${fallbackJabatan}`.slice(0, 220);
+  if (fallbackJabatan && fallbackJabatan !== '-') {
+    const combined = combineJabatanInstansi(fallbackJabatan, cleanFallbackInstansi);
+    return `${clean} - ${combined}`.slice(0, 220);
   } else if (cleanFallbackInstansi) {
-    return `${clean} - Pengirim - ${cleanFallbackInstansi}`.slice(0, 220);
+    return `${clean} - ${shortenInstitutionName(cleanFallbackInstansi)}`.slice(0, 220);
   }
 
   return clean.slice(0, 220);
@@ -581,7 +745,7 @@ TUGAS UTAMA:
    - "tanggalSurat": "tanggal surat dibuat dalam bahasa Indonesia (misal: '15 September 2026')"
    - "namaPengirim": "nama lengkap orang/pejabat pengirim yang menandatangani surat di bagian paling bawah surat beserta gelarnya jika ada (CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM' atau 'Budi Santoso, S.E.'). BUKAN instansi! JIKA ADA BEBERAPA ORANG PENANDATANGAN (misal: Ketua dan Sekretaris, atau beberapa pimpinan): PILIH SALAH SATU NAMA SAJA (utamakan penandatangan pertama/jabatan tertinggi). JANGAN menggabungkan beberapa nama!"
    - "jabatanPengirim": "jabatan resmi orang/pejabat yang menandatangani surat di bagian paling bawah surat yang SESUAI DENGAN namaPengirim yang dipilih (CONTOH: 'Deputi Bidang Koordinasi Ekonomi Digital' atau 'Direktur Utama' atau 'Ketua Umum'). BUKAN instansi!"
-   - "asalSurat": "gabungan nama pengirim yang bertanda tangan di paling bawah, jabatannya, dan asal instansi dengan format 'Nama Pengirim - Jabatan - Asal Instansi' (CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital - Kementerian Koordinator Bidang Perekonomian' atau 'Budi Santoso, S.E. - Direktur Utama - PT Telekomunikasi Indonesia Tbk'). JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA BESERTA JABATAN DAN ASAL INSTANSINYA (jangan gabungkan beberapa nama orang)!"
+   - "asalSurat": "gabungan nama pengirim yang bertanda tangan di paling bawah, jabatannya, dan asal instansi dengan format 'Nama Pengirim - Jabatan Singkatan Instansi' (pemisah strip HANYA di antara nama pengirim dan jabatan instansi, TIDAK ADA strip antara jabatan dan instansi, serta jika nama instansi memiliki singkatan gunakan singkatannya saja, CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital Kemenko Perekonomian' atau 'Budi Santoso, S.E. - Direktur Utama PT Telkom' atau 'Prof. Dr. Ir. Arif Satria, S.P., M.Si. - Rektor IPB'). JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA BESERTA JABATAN DAN ASAL INSTANSINYA (jangan gabungkan beberapa nama orang)!"
    - "penyelenggara": "nama lembaga/instansi/organisasi pengirim atau penyelenggara acara dari KOP SURAT teratas atau stempel resmi (CONTOH: 'Kementerian Koordinator Bidang Perekonomian' atau 'PT Telekomunikasi Indonesia Tbk' atau 'Institut Pertanian Bogor')"
    - "namaAcara": "nama murni acara/kegiatan saja (CONTOH: 'Rapat Kerja Nasional (Rakornas) VII Tahun 2026' atau 'Forum Koordinasi Ketenagakerjaan Nasional 2026'). HAPUS dan JANGAN masukkan kata pengantar permohonan seperti 'Permohonan Sambutan pada Pembukaan' atau 'Undangan Menghadiri' atau nama instansi penyelenggara di bagian akhir acara!"
    - "temaAcara": "tema spesifik acara jika ada tertulis (misal: 'Transformasi Tenaga Kerja Menuju Indonesia Emas 2045', atau '-' jika tidak ada tema)"
@@ -683,7 +847,7 @@ Bacalah seluruh isi gambar surat dinas terlampir secara teliti dan menyeluruh, d
    - "tanggalSurat": "tanggal surat dibuat/diterbitkan yang tertulis pada gambar dalam bahasa Indonesia (misal: '15 September 2026')"
    - "namaPengirim": "nama lengkap orang/pejabat pengirim yang menandatangani surat di bagian paling bawah surat beserta gelar lengkapnya (CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM' atau 'Budi Santoso, S.E.'). BUKAN instansi! JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA (utamakan penandatangan pertama/jabatan tertinggi). JANGAN menggabungkan beberapa nama!"
    - "jabatanPengirim": "jabatan resmi orang/pejabat yang menandatangani surat di bagian paling bawah surat yang SESUAI DENGAN namaPengirim yang dipilih (CONTOH: 'Deputi Bidang Koordinasi Ekonomi Digital' atau 'Direktur Utama' atau 'Ketua Umum'). BUKAN instansi!"
-   - "asalSurat": "gabungan nama pengirim yang bertanda tangan di paling bawah, jabatannya, dan asal instansi dengan format 'Nama Pengirim - Jabatan - Asal Instansi' (CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital - Kementerian Koordinator Bidang Perekonomian' atau 'Budi Santoso, S.E. - Direktur Utama - PT Telekomunikasi Indonesia Tbk'). JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA BESERTA JABATAN DAN ASAL INSTANSINYA!"
+   - "asalSurat": "gabungan nama pengirim yang bertanda tangan di paling bawah, jabatannya, dan asal instansi dengan format 'Nama Pengirim - Jabatan Singkatan Instansi' (pemisah strip HANYA di antara nama pengirim dan jabatan instansi, TIDAK ADA strip antara jabatan dan instansi, serta jika nama instansi memiliki singkatan gunakan singkatannya saja, CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital Kemenko Perekonomian' atau 'Budi Santoso, S.E. - Direktur Utama PT Telkom' atau 'Prof. Dr. Ir. Arif Satria, S.P., M.Si. - Rektor IPB'). JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA BESERTA JABATAN DAN ASAL INSTANSINYA!"
    - "penyelenggara": "nama lembaga/instansi/organisasi pengirim atau penyelenggara acara dari KOP SURAT teratas atau stempel resmi pada gambar (CONTOH: 'Kementerian Koordinator Bidang Perekonomian' atau 'PT Telekomunikasi Indonesia Tbk' atau 'Institut Pertanian Bogor')"
    - "namaAcara": "nama murni acara/kegiatan saja (CONTOH: 'Rapat Kerja Nasional (Rakornas) VII Tahun 2026' atau 'Forum Koordinasi Ketenagakerjaan Nasional 2026'). HAPUS kata pengantar seperti 'Permohonan Sambutan pada Pembukaan' atau nama instansi di akhir!"
    - "temaAcara": "tema spesifik acara jika ada tertulis di gambar (misal: 'Transformasi Tenaga Kerja Menuju Indonesia Emas 2045', atau '-' jika tidak ada tema)"
@@ -803,27 +967,27 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       const cleanAcara = cleanNamaAcara(rawAcara, extractedPenyelenggara);
       const cleanSesi = cleanSesiAcara(parsed.sesiAcara, cleanAcara);
 
-      // Format asalSurat: WAJIB nama pengirim yang bertanda tangan di paling bawah, jabatan, dan asal instansi: "Nama Pengirim - Jabatan - Asal Instansi"
+      // Format asalSurat: WAJIB nama pengirim yang bertanda tangan di paling bawah, jabatan, dan instansi: "Nama Pengirim - Jabatan Singkatan Instansi"
       let finalAsalSurat = (parsed.asalSurat || '').trim();
       const namaPengirim = (parsed.namaPengirim || '').trim();
       const jabatanPengirim = (parsed.jabatanPengirim || '').trim();
       const instansiPenyelenggara = extractedPenyelenggara && extractedPenyelenggara !== '-' ? extractedPenyelenggara : '';
 
       if (namaPengirim && jabatanPengirim && !finalAsalSurat.includes(' - ')) {
-        finalAsalSurat = instansiPenyelenggara
-          ? `${namaPengirim} - ${jabatanPengirim} - ${instansiPenyelenggara}`
-          : `${namaPengirim} - ${jabatanPengirim}`;
+        const jabInst = combineJabatanInstansi(jabatanPengirim, instansiPenyelenggara);
+        finalAsalSurat = jabInst ? `${namaPengirim} - ${jabInst}` : namaPengirim;
       } else if (!finalAsalSurat || finalAsalSurat === '-') {
         if (namaPengirim && jabatanPengirim) {
-          finalAsalSurat = instansiPenyelenggara
-            ? `${namaPengirim} - ${jabatanPengirim} - ${instansiPenyelenggara}`
-            : `${namaPengirim} - ${jabatanPengirim}`;
+          const jabInst = combineJabatanInstansi(jabatanPengirim, instansiPenyelenggara);
+          finalAsalSurat = jabInst ? `${namaPengirim} - ${jabInst}` : namaPengirim;
         } else if (namaPengirim) {
-          finalAsalSurat = instansiPenyelenggara
-            ? `${namaPengirim} - Pengirim - ${instansiPenyelenggara}`
+          const shortInst = shortenInstitutionName(instansiPenyelenggara);
+          finalAsalSurat = shortInst
+            ? `${namaPengirim} - Pengirim ${shortInst}`
             : `${namaPengirim} - Pengirim`;
         } else {
-          finalAsalSurat = instansiPenyelenggara ? `Pimpinan - ${instansiPenyelenggara}` : '-';
+          const shortInst = shortenInstitutionName(instansiPenyelenggara);
+          finalAsalSurat = shortInst ? `Pimpinan - ${shortInst}` : '-';
         }
       }
       finalAsalSurat = formatAsalSurat(finalAsalSurat, jabatanPengirim, instansiPenyelenggara);
@@ -1109,23 +1273,23 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       }
     }
 
-    // Susun format WAJIB: "Nama Pengirim - Jabatan - Asal Instansi"
+    // Susun format: "Nama Pengirim - Jabatan Singkatan Instansi"
     let asalSurat = '-';
     const instansiClean = penyelenggara && penyelenggara !== 'Instansi Terkait' ? penyelenggara : '';
     if (namaPengirim && jabatanPengirim) {
-      asalSurat = instansiClean
-        ? `${namaPengirim} - ${jabatanPengirim} - ${instansiClean}`
-        : `${namaPengirim} - ${jabatanPengirim}`;
+      const jabInst = combineJabatanInstansi(jabatanPengirim, instansiClean);
+      asalSurat = jabInst ? `${namaPengirim} - ${jabInst}` : namaPengirim;
     } else if (namaPengirim) {
-      asalSurat = instansiClean
-        ? `${namaPengirim} - Pengirim - ${instansiClean}`
+      const shortInst = shortenInstitutionName(instansiClean);
+      asalSurat = shortInst
+        ? `${namaPengirim} - Pengirim ${shortInst}`
         : `${namaPengirim} - Pengirim`;
     } else if (jabatanPengirim) {
-      asalSurat = instansiClean
-        ? `Pengirim - ${jabatanPengirim} - ${instansiClean}`
-        : `Pengirim - ${jabatanPengirim}`;
+      const jabInst = combineJabatanInstansi(jabatanPengirim, instansiClean);
+      asalSurat = jabInst ? `Pengirim - ${jabInst}` : `Pengirim - ${jabatanPengirim}`;
     } else {
-      asalSurat = instansiClean ? `Pimpinan - ${instansiClean}` : 'Pimpinan - Instansi Terkait';
+      const shortInst = shortenInstitutionName(instansiClean);
+      asalSurat = shortInst ? `Pimpinan - ${shortInst}` : 'Pimpinan - Instansi Terkait';
     }
     asalSurat = formatAsalSurat(asalSurat, jabatanPengirim, instansiClean);
 
