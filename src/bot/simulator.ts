@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { messageRouter } from './messageRouter';
 import { pdfService } from '../services/pdfService';
+import { imageService } from '../services/imageService';
 import { prisma } from '../database/prisma';
 import { BotResponse } from './types';
 
@@ -25,7 +26,7 @@ export async function runInteractiveSimulator() {
   console.log('================================================================');
   console.log('Perintah Tambahan Simulator:');
   console.log('  /upload              -> Simulasi mengirim file PDF surat resmi');
-  console.log('  /upload <path_pdf>   -> Mengirimkan file PDF kustom dari komputer');
+  console.log('  /upload <path_file>  -> Mengirimkan berkas PDF atau Gambar (JPG/PNG) dari komputer');
   console.log('  /user <nomor_wa>     -> Ganti nomor WhatsApp pengirim');
   console.log('  /users               -> Tampilkan daftar nomor whitelist');
   console.log('  /exit                -> Keluar dari simulator');
@@ -97,37 +98,45 @@ export async function runInteractiveSimulator() {
       }
 
       if (trimmed === '/upload' || trimmed.startsWith('/upload ')) {
-        let pdfPath = '';
+        let filePath = '';
         let fileName = 'undangan_resmi_pmk.pdf';
 
         if (trimmed === '/upload') {
-          pdfPath = await createSampleInvitationPdf();
+          filePath = await createSampleInvitationPdf();
         } else {
           let rawPath = trimmed.replace(/^\/upload\s+/i, '').trim();
           // Hapus tanda kutip jika user copy-as-path di Windows ("C:\path\file.pdf")
           rawPath = rawPath.replace(/^["']|["']$/g, '').trim();
-          pdfPath = path.isAbsolute(rawPath) ? rawPath : path.resolve(process.cwd(), rawPath);
-          fileName = path.basename(pdfPath);
+          filePath = path.isAbsolute(rawPath) ? rawPath : path.resolve(process.cwd(), rawPath);
+          fileName = path.basename(filePath);
         }
 
-        if (!fs.existsSync(pdfPath)) {
-          console.log(`❌ Berkas tidak ditemukan: ${pdfPath}`);
+        if (!fs.existsSync(filePath)) {
+          console.log(`❌ Berkas tidak ditemukan: ${filePath}`);
           console.log(`💡 Tips: Pastikan path file benar. Anda bisa drag & drop file ke terminal atau klik kanan > Copy as Path.`);
           promptUser();
           return;
         }
 
-        // Salin ke temp storage
-        const buffer = fs.readFileSync(pdfPath);
-        const savedTempPath = pdfService.saveTempPdf(buffer, fileName);
+        const ext = path.extname(fileName).toLowerCase();
+        const isImage = ['.jpg', '.jpeg', '.png', '.webp', '.bmp'].includes(ext);
 
-        console.log(`📤 Mengirim berkas PDF: ${fileName} (${buffer.length} bytes)...`);
+        // Salin ke temp storage
+        const buffer = fs.readFileSync(filePath);
+        const savedTempPath = isImage
+          ? imageService.saveTempImage(buffer, fileName)
+          : pdfService.saveTempPdf(buffer, fileName);
+
+        const mimeType = isImage ? (imageService.detectImageMimeType(buffer, ext) || 'image/jpeg') : 'application/pdf';
+
+        console.log(`📤 Mengirim berkas ${isImage ? 'Gambar' : 'PDF'}: ${fileName} (${buffer.length} bytes)...`);
         const reply = await messageRouter.processMessage({
           senderNumber: currentPhone,
           media: {
             filePath: savedTempPath,
             fileName,
-            mimeType: 'application/pdf',
+            mimeType,
+            isImage,
           },
         });
         printBotReply(reply);

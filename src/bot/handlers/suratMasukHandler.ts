@@ -1,6 +1,7 @@
 import { sessionService, BotState, UserSession, ExtractedSuratData } from '../../services/sessionService';
 import { suratService } from '../../services/suratService';
 import { pdfService } from '../../services/pdfService';
+import { imageService } from '../../services/imageService';
 import { aiService, formatPerihalByTemplate, generateSubjectSummary, formatAsalSurat } from '../../services/aiService';
 import { NluResult } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
@@ -28,8 +29,8 @@ export class SuratMasukHandler {
 
     const text =
       `📥 *REGISTRASI SURAT MASUK*\n\n` +
-      `Silakan langsung kirimkan berkas dokumen surat berformat *PDF* ke chat ini. 📄\n\n` +
-      `Sistem cerdas Protokol akan otomatis membaca isi surat, menentukan kategori (*UND / PH / UNR / AU / WR / TAP*), meng-generate nomor agenda sesuai kategori, dan menyusun perihal resmi sesuai template standar.\n\n` +
+      `Silakan langsung kirimkan berkas dokumen surat berformat *PDF* atau *Foto / Gambar Surat* (JPG, JPEG, PNG) ke chat ini. 📄🖼️\n\n` +
+      `Sistem cerdas Protokol akan otomatis membaca isi surat dari teks maupun gambar secara presisi, menentukan kategori (*UND / PH / UNR / AU / WR / TAP / LP*), meng-generate nomor agenda sesuai kategori, dan menyusun perihal resmi sesuai template standar.\n\n` +
       `Ketik *batal* jika ingin membatalkan.`;
 
     return { text };
@@ -278,6 +279,58 @@ export class SuratMasukHandler {
   }
 
   /**
+   * Menangani unggah berkas gambar langsung (foto kamera, galeri, atau dokumen gambar)
+   */
+  public async handleDirectImageUpload(
+    session: UserSession,
+    tempFilePath: string,
+    originalFileName: string
+  ): Promise<BotResponse> {
+    const scanResult = await imageService.validateAndScanImage(tempFilePath, originalFileName);
+
+    if (!scanResult.isValid || !scanResult.isSafe) {
+      return {
+        text:
+          `⚠️ *Unggahan Gambar Ditolak!*\n\n` +
+          `Alasan: ${scanResult.errorMessage || 'Berkas gambar tidak memenuhi standar keamanan sistem.'}\n\n` +
+          `Silakan kirimkan kembali gambar surat yang valid (JPG, JPEG, PNG, atau WEBP, maks. 20 MB).`,
+      };
+    }
+
+    // AI Multimodal Vision Ekstraksi Data Dokumen & Pemahaman Isi Surat dari Gambar
+    const extractedData = await aiService.extractSuratFromImage(tempFilePath, originalFileName);
+
+    // Kategori surat hasil pemahaman AI (UND, PH, UNR, WR, AU, TAP, LP)
+    const detectedJenis = (extractedData.kategoriSurat || 'UND').toUpperCase();
+    const defaultTipe = 'Biasa';
+
+    // Generate Nomor Agenda otomatis berdasarkan kategori surat yang dihasilkan chatbot
+    const generatedAgenda = await suratService.generateNomorAgenda(detectedJenis);
+    const finalFileName = generateLetterFileName(originalFileName);
+
+    const finalPerihal = extractedData.perihal || '-';
+    const finalSubject = (extractedData.subject || generateSubjectSummary(finalPerihal, extractedData)).slice(0, 200);
+
+    sessionService.updateDraft(session.whatsappNumber, {
+      jenisSurat: detectedJenis,
+      tipeSurat: defaultTipe,
+      nomorAgenda: generatedAgenda,
+      asalInstansi: 'Lainnya',
+      tempPdfPath: tempFilePath,
+      tempPdfName: originalFileName,
+      finalFileName,
+      fileSize: scanResult.fileSize,
+      extractedData,
+      finalPerihal,
+      finalSubject,
+    });
+
+    sessionService.setState(session.whatsappNumber, BotState.SURAT_MASUK_REVIEW_DATA);
+
+    return this.renderExtractedDataReview(session);
+  }
+
+  /**
    * Menangani berkas PDF yang diunggah dari menu manual
    */
   public async handlePdfUpload(
@@ -494,7 +547,7 @@ export class SuratMasukHandler {
       (customGuidePrefix ? `${customGuidePrefix}\n\n` : `✏️ *PANDUAN KOREKSI DATA SURAT*\n\n`) +
       `Silakan *salin (copy)* pesan template di bawah ini, ubah data pada bagian yang salah, lalu *langsung kirimkan kembali* ke chat ini tanpa perlu memilih menu:\n\n` +
       `📌 *Catatan Pengisian:*\n` +
-      `• *Asal Surat*: Format _Nama Pengirim - Jabatan_ (nama pejabat penandatangan di bagian bawah surat, bukan instansi)\n` +
+      `• *Asal Surat*: Format _Nama Pengirim - Jabatan - Asal Instansi_ (nama pejabat penandatangan di bagian bawah surat, jabatan, dan asal instansi)\n` +
       `• *Tanggal Acara*: Tanggal kegiatan (isi *-* jika tidak ada acara)\n` +
       `• *Jam Acara*: Waktu kegiatan (contoh: 09.00 WIB atau *-* jika tidak ada)\n` +
       `• *Tempat Acara*: Lokasi/tempat kegiatan (contoh: Hotel Bidakara Jakarta atau *-* jika tidak ada)\n` +
@@ -1025,7 +1078,7 @@ export class SuratMasukHandler {
       '2': { key: 'nomorSurat', label: 'Nomor Surat' },
       '3': { key: 'subject', label: 'Subject (Ringkasan)' },
       '4': { key: 'perihal', label: 'Perihal Resmi' },
-      '5': { key: 'asalSurat', label: 'Asal Surat (Nama Pengirim - Jabatan)' },
+      '5': { key: 'asalSurat', label: 'Asal Surat (Nama Pengirim - Jabatan - Asal Instansi)' },
       '6': { key: 'dateEvent', label: 'Tanggal Acara' },
       '7': { key: 'timeEvent', label: 'Jam Acara' },
       '8': { key: 'placeEvent', label: 'Tempat Acara' },
@@ -1087,7 +1140,7 @@ export class SuratMasukHandler {
 
     let hint = '';
     if (target.key === 'asalSurat') {
-      hint = `\n_(Gunakan format: Nama Pengirim - Jabatan, nama penandatangan di paling bawah surat, bukan instansi. Jika ada beberapa orang, pilih salah satu nama beserta jabatannya)_\n`;
+      hint = `\n_(Gunakan format: Nama Pengirim - Jabatan - Asal Instansi, contoh: Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital - Kemenko Perekonomian. Jika ada beberapa orang, pilih salah satu penandatangan)_\n`;
     } else if (target.key === 'dateEvent') {
       hint = `\n_(Ketik tanggal pelaksanaan acara, atau ketik "-" jika tidak ada acara)_\n`;
     } else if (target.key === 'timeEvent') {

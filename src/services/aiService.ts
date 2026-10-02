@@ -1,8 +1,11 @@
+import fs from 'fs';
+import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
 import { ENV } from '../config/env';
 import { ExtractedSuratData } from './sessionService';
 import { splitPicNameAndPhone } from '../utils/textHelper';
+import { imageService } from './imageService';
 
 /**
  * Memformat rumusan Perihal resmi sesuai formula template resmi berdasarkan kategori surat:
@@ -283,113 +286,117 @@ export function formatPerihalByTemplate(data: Partial<ExtractedSuratData>): stri
 
 /**
  * Memformat dan merapikan kolom Asal Surat:
- * Format WAJIB: "Nama Pengirim - Jabatan" (nama individu/pejabat yang bertanda tangan di paling bawah, bukan instansi).
+ * Format WAJIB: "Nama Pengirim - Jabatan - Asal Instansi" (nama individu/pejabat yang bertanda tangan di paling bawah, jabatan, dan asal instansi).
  * ATURAN: Jika ada beberapa orang penandatangan (misal: Ketua & Sekretaris, atau beberapa pimpinan),
  * pilih salah satu saja namanya beserta jabatannya yang sesuai.
  */
-export function formatAsalSurat(raw: string, fallbackJabatan?: string): string {
+export function formatAsalSurat(raw: string, fallbackJabatan?: string, fallbackInstansi?: string): string {
   if (!raw || raw.trim() === '-' || raw.trim() === '') return '-';
   let clean = raw.trim().replace(/^[\*•\-\s]+/, '');
 
   // 1. Bersihkan penomoran awal seperti "1. ", "1) ", dsb.
   clean = clean.replace(/^(?:(?:1\.|1\)|nomor\s*1|ke-?1)\s*)/i, '').trim();
 
-  // Delimiter untuk memisahkan beberapa orang penandatangan
-  const multiPersonSplitter = /(?:\r?\n+|;\s*|\s+(?:dan|serta|&|\/)\s+|\s*(?=\b2[\.\)]\s+))/i;
+  const cleanFallbackInstansi = (fallbackInstansi && fallbackInstansi !== '-' && fallbackInstansi !== 'Instansi Terkait')
+    ? fallbackInstansi.trim()
+    : undefined;
 
-  const dashCount = (clean.match(/\s+-\s+/g) || []).length;
+  // Kasus 1: Menggunakan pemisah tanda kurung: "Nama (Jabatan) Instansi" atau "Nama (Jabatan)"
+  const parenMatch = clean.match(/^([^\(\)\n]+?)\s*\(([^\)\n]+)\)(?:\s*[-–—]?\s*(.*))?$/);
+  if (parenMatch && !clean.includes(' - ')) {
+    let name = parenMatch[1].trim();
+    let jab = parenMatch[2].trim();
+    let inst = parenMatch[3] ? parenMatch[3].trim() : cleanFallbackInstansi;
 
-  if (dashCount > 1) {
-    // KASUS A: Ada beberapa pasang "Nama - Jabatan"
-    // Contoh: "Dr. Budi Santoso - Ketua Umum dan Ahmad Fauzi, S.E. - Sekretaris Jenderal"
-    const segments = clean.split(multiPersonSplitter)
-      .map(s => s.trim().replace(/^(?:(?:1\.|1\)|2\.|2\))\s*)/, ''))
-      .filter(s => s.includes(' - '));
-    if (segments.length > 0) {
-      clean = segments[0];
+    if (/\s+(?:dan|&|serta)\s+/i.test(name)) {
+      name = name.split(/\s+(?:dan|&|serta)\s+/i)[0].trim();
     }
-  } else if (dashCount === 1) {
-    // KASUS B: Ada tepat satu strip " - "
-    // Sub-kasus B1: "Budi Santoso dan Ahmad Fauzi - Ketua dan Sekretaris"
-    // Sub-kasus B2: "Budi Santoso - Ketua Umum dan Ahmad Fauzi"
-    const parts = clean.split(' - ');
-    let name = parts[0].trim();
-    let jabatan = parts.slice(1).join(' - ').trim();
-
-    // Jika pada bagian nama terdapat lebih dari satu orang (misal: "Budi Santoso dan Ahmad Fauzi")
-    if (/\s+(?:dan|&|serta|\/)\s+/i.test(name)) {
-      name = name.split(/\s+(?:dan|&|serta|\/)\s+/i)[0].trim();
-    }
-    // Jika pada bagian jabatan terdapat lebih dari satu jabatan (misal: "Ketua dan Sekretaris")
-    // atau kelanjutan nama orang kedua (misal: "Ketua Umum dan Ahmad Fauzi")
-    if (/\s+(?:dan|&|serta|\/)\s+/i.test(jabatan)) {
-      jabatan = jabatan.split(/\s+(?:dan|&|serta|\/)\s+/i)[0].trim();
+    if (/\s+(?:dan|&|serta)\s+/i.test(jab)) {
+      jab = jab.split(/\s+(?:dan|&|serta)\s+/i)[0].trim();
     }
 
-    if (name && jabatan) {
-      return `${name} - ${jabatan}`.slice(0, 220);
-    }
-  } else {
-    // KASUS C: Tidak ada strip " - " sama sekali
-    // Contoh: "Budi Santoso (Ketua Umum) dan Ahmad Fauzi (Sekretaris)"
-    // atau "Dr. Budi Santoso, Ketua Umum dan Ahmad Fauzi, Sekretaris"
-    const segments = clean.split(multiPersonSplitter)
-      .map(s => s.trim().replace(/^(?:(?:1\.|1\)|2\.|2\))\s*)/, ''))
-      .filter(Boolean);
-    if (segments.length > 1) {
-      clean = segments[0];
-    }
-  }
-
-  // Cek format "Nama (Jabatan)"
-  const parenMatch = clean.match(/^([^\(\)\n]+?)\s*\(([^\)\n]+)\)/);
-  if (parenMatch) {
-    const name = parenMatch[1].trim();
-    const jab = parenMatch[2].trim();
     if (name && jab) {
-      return `${name} - ${jab}`.slice(0, 220);
+      return inst ? `${name} - ${jab} - ${inst}`.slice(0, 220) : `${name} - ${jab}`.slice(0, 220);
     }
   }
 
-  // Cek format "Nama - Jabatan"
+  // Kasus 2: Format dengan strip " - "
   if (clean.includes(' - ')) {
-    const parts = clean.split(' - ');
-    let name = parts[0].trim();
-    let jabatan = parts.slice(1).join(' - ').trim();
-    if (/\s+(?:dan|&|serta|\/)\s+/i.test(name)) {
-      name = name.split(/\s+(?:dan|&|serta|\/)\s+/i)[0].trim();
-    }
-    if (/\s+(?:dan|&|serta|\/)\s+/i.test(jabatan)) {
-      jabatan = jabatan.split(/\s+(?:dan|&|serta|\/)\s+/i)[0].trim();
-    }
-    if (name && jabatan) {
-      return `${name} - ${jabatan}`.slice(0, 220);
+    const rawParts = clean.split(' - ').map(p => p.trim());
+
+    if (rawParts.length >= 2) {
+      let name = rawParts[0];
+      let middle = rawParts[1];
+
+      // Jika pada nama ada "Budi Santoso dan Ahmad Fauzi"
+      if (/\s+(?:dan|&|serta)\s+/i.test(name)) {
+        name = name.split(/\s+(?:dan|&|serta)\s+/i)[0].trim();
+      }
+
+      // Jika part[1] memuat pemisah antar orang (misal: "Ketua Umum dan Ahmad Fauzi")
+      const multiPersonMatch = middle.match(/^(.*?)\s+(?:dan|&|serta|\r?\n)\s+(.*)$/i);
+      if (multiPersonMatch) {
+        const jab1 = multiPersonMatch[1].trim();
+        return cleanFallbackInstansi
+          ? `${name} - ${jab1} - ${cleanFallbackInstansi}`.slice(0, 220)
+          : `${name} - ${jab1}`.slice(0, 220);
+      }
+
+      // Jika rawParts memiliki 3 bagian atau lebih (Nama - Jabatan - Instansi)
+      if (rawParts.length >= 3) {
+        let jabatan = rawParts[1].replace(/[,;\s]+$/, '').trim();
+        let instansi = rawParts.slice(2).join(' - ').replace(/[,;\s]+$/, '').trim();
+
+        if (/\s+(?:dan|&|serta)\s+/i.test(jabatan)) {
+          jabatan = jabatan.split(/\s+(?:dan|&|serta)\s+/i)[0].trim().replace(/[,;\s]+$/, '');
+        }
+
+        if (name && jabatan && instansi) {
+          return `${name} - ${jabatan} - ${instansi}`.slice(0, 220);
+        }
+      }
+
+      // Jika rawParts tepat 2 bagian (Nama - Jabatan)
+      if (rawParts.length === 2) {
+        let jabatan = rawParts[1].replace(/[,;\s]+$/, '').trim();
+        if (/\s+(?:dan|&|serta)\s+/i.test(jabatan)) {
+          jabatan = jabatan.split(/\s+(?:dan|&|serta)\s+/i)[0].trim().replace(/[,;\s]+$/, '');
+        }
+
+        if (name && jabatan) {
+          return cleanFallbackInstansi
+            ? `${name} - ${jabatan} - ${cleanFallbackInstansi}`.slice(0, 220)
+            : `${name} - ${jabatan}`.slice(0, 220);
+        }
+      }
     }
   }
 
-  // Cek format "Nama, Jabatan" (gunakan greedy .* agar koma gelar tidak memotong nama)
+  // Kasus 3: Format "Nama, Jabatan"
   const commaJabatanMatch = clean.match(
     /^(.*),\s*(Menteri|Wakil Menteri|Sekretaris Jenderal|Sekjen|Sekretaris|Direktur Jenderal|Dirjen|Direktur Utama|Direktur|Kepala Badan|Kepala Dinas|Kepala Biro|Kepala Bagian|Kepala|Ketua Umum|Ketua Panitia|Ketua|Rektor|Dekan|Pimpinan|Deputi|Manager|General Manager|Presiden Direktur|Presiden|Bupati|Walikota|Gubernur|Koordinator|Kuasa Direksi|Kuasa)(.*)$/i
   );
   if (commaJabatanMatch) {
     let name = commaJabatanMatch[1].trim();
     let jabatan = `${commaJabatanMatch[2]}${commaJabatanMatch[3]}`.trim();
-    if (/\s+(?:dan|&|serta|\/)\s+/i.test(jabatan)) {
-      jabatan = jabatan.split(/\s+(?:dan|&|serta|\/)\s+/i)[0].trim();
+    if (/\s+(?:dan|&|serta)\s+/i.test(jabatan)) {
+      jabatan = jabatan.split(/\s+(?:dan|&|serta)\s+/i)[0].trim();
     }
-    if (/\s+(?:dan|&|serta|\/)\s+/i.test(name)) {
-      name = name.split(/\s+(?:dan|&|serta|\/)\s+/i)[0].trim();
+    if (/\s+(?:dan|&|serta)\s+/i.test(name)) {
+      name = name.split(/\s+(?:dan|&|serta)\s+/i)[0].trim();
     }
-    return `${name} - ${jabatan}`.slice(0, 220);
+    return cleanFallbackInstansi
+      ? `${name} - ${jabatan} - ${cleanFallbackInstansi}`.slice(0, 220)
+      : `${name} - ${jabatan}`.slice(0, 220);
   }
 
-  // Fallback jika belum ada strip dan ada fallbackJabatan
-  if (fallbackJabatan && fallbackJabatan !== '-' && !clean.includes(' - ')) {
-    let name = clean;
-    if (/\s+(?:dan|&|serta|\/)\s+/i.test(name)) {
-      name = name.split(/\s+(?:dan|&|serta|\/)\s+/i)[0].trim();
-    }
-    return `${name} - ${fallbackJabatan}`.slice(0, 220);
+  // Fallback jika belum ada strip
+  if (fallbackJabatan && fallbackJabatan !== '-' && cleanFallbackInstansi) {
+    return `${clean} - ${fallbackJabatan} - ${cleanFallbackInstansi}`.slice(0, 220);
+  } else if (fallbackJabatan && fallbackJabatan !== '-') {
+    return `${clean} - ${fallbackJabatan}`.slice(0, 220);
+  } else if (cleanFallbackInstansi) {
+    return `${clean} - Pengirim - ${cleanFallbackInstansi}`.slice(0, 220);
   }
 
   return clean.slice(0, 220);
@@ -574,7 +581,7 @@ TUGAS UTAMA:
    - "tanggalSurat": "tanggal surat dibuat dalam bahasa Indonesia (misal: '15 September 2026')"
    - "namaPengirim": "nama lengkap orang/pejabat pengirim yang menandatangani surat di bagian paling bawah surat beserta gelarnya jika ada (CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM' atau 'Budi Santoso, S.E.'). BUKAN instansi! JIKA ADA BEBERAPA ORANG PENANDATANGAN (misal: Ketua dan Sekretaris, atau beberapa pimpinan): PILIH SALAH SATU NAMA SAJA (utamakan penandatangan pertama/jabatan tertinggi). JANGAN menggabungkan beberapa nama!"
    - "jabatanPengirim": "jabatan resmi orang/pejabat yang menandatangani surat di bagian paling bawah surat yang SESUAI DENGAN namaPengirim yang dipilih (CONTOH: 'Deputi Bidang Koordinasi Ekonomi Digital' atau 'Direktur Utama' atau 'Ketua Umum'). BUKAN instansi!"
-   - "asalSurat": "gabungan nama pengirim yang bertanda tangan di paling bawah dan jabatannya dengan format 'Nama Pengirim - Jabatan' (CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital' atau 'Budi Santoso - Direktur Utama'). ATURAN MUTLAK: Isi asal surat BUKAN instansi pengirim, melainkan NAMA PENGIRIM YANG BERTANDA TANGAN DI PALING BAWAH dengan format 'Nama Pengirim - Jabatan'! JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA BESERTA JABATANNYA YANG SESUAI (jangan gabungkan beberapa nama orang)!"
+   - "asalSurat": "gabungan nama pengirim yang bertanda tangan di paling bawah, jabatannya, dan asal instansi dengan format 'Nama Pengirim - Jabatan - Asal Instansi' (CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital - Kementerian Koordinator Bidang Perekonomian' atau 'Budi Santoso, S.E. - Direktur Utama - PT Telekomunikasi Indonesia Tbk'). JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA BESERTA JABATAN DAN ASAL INSTANSINYA (jangan gabungkan beberapa nama orang)!"
    - "penyelenggara": "nama lembaga/instansi/organisasi pengirim atau penyelenggara acara dari KOP SURAT teratas atau stempel resmi (CONTOH: 'Kementerian Koordinator Bidang Perekonomian' atau 'PT Telekomunikasi Indonesia Tbk' atau 'Institut Pertanian Bogor')"
    - "namaAcara": "nama murni acara/kegiatan saja (CONTOH: 'Rapat Kerja Nasional (Rakornas) VII Tahun 2026' atau 'Forum Koordinasi Ketenagakerjaan Nasional 2026'). HAPUS dan JANGAN masukkan kata pengantar permohonan seperti 'Permohonan Sambutan pada Pembukaan' atau 'Undangan Menghadiri' atau nama instansi penyelenggara di bagian akhir acara!"
    - "temaAcara": "tema spesifik acara jika ada tertulis (misal: 'Transformasi Tenaga Kerja Menuju Indonesia Emas 2045', atau '-' jika tidak ada tema)"
@@ -616,126 +623,9 @@ ${pdfText.slice(0, 6000)}
           rawText = res.text || '';
         }
 
-        const clean = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-        const cleanJson = clean.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
-        const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
-
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-
-          const kategori: 'UND' | 'PH' | 'UNR' | 'WR' | 'AU' | 'TAP' | 'LP' =
-            parsed.kategoriSurat && ['UND', 'PH', 'UNR', 'WR', 'AU', 'TAP', 'LP'].includes(parsed.kategoriSurat)
-              ? parsed.kategoriSurat
-              : 'UND';
-
-          const extractedPenyelenggara = (parsed.penyelenggara || '').trim();
-          // Bersihkan nama acara dan peran sesi acara agar bebas dari pengulangan/redundansi
-          const rawAcara = (parsed.namaAcara || parsed.event || '-').trim();
-          const cleanAcara = cleanNamaAcara(rawAcara, extractedPenyelenggara);
-          const cleanSesi = cleanSesiAcara(parsed.sesiAcara, cleanAcara);
-
-          // Format asalSurat: WAJIB nama pengirim yang bertanda tangan di paling bawah: "Nama Pengirim - Jabatan" (bukan instansi)
-          let finalAsalSurat = (parsed.asalSurat || '').trim();
-          const namaPengirim = (parsed.namaPengirim || '').trim();
-          const jabatanPengirim = (parsed.jabatanPengirim || '').trim();
-
-          if (namaPengirim && jabatanPengirim && !finalAsalSurat.includes(' - ')) {
-            finalAsalSurat = `${namaPengirim} - ${jabatanPengirim}`;
-          } else if (!finalAsalSurat || finalAsalSurat === '-') {
-            if (namaPengirim && jabatanPengirim) {
-              finalAsalSurat = `${namaPengirim} - ${jabatanPengirim}`;
-            } else if (namaPengirim) {
-              finalAsalSurat = `${namaPengirim} - Pengirim`;
-            } else {
-              finalAsalSurat = '-';
-            }
-          }
-          finalAsalSurat = formatAsalSurat(finalAsalSurat, jabatanPengirim);
-
-          const rawPicName = (parsed.picName || '').trim();
-          const rawPicPhone = (parsed.picPhoneNumber || '').trim();
-          const rawPicPengirim = (parsed.picPengirim || '').trim();
-
-          let finalPicName = rawPicName && rawPicName !== '-' ? rawPicName : '-';
-          let finalPicPhone = rawPicPhone && rawPicPhone !== '-' ? rawPicPhone : '-';
-
-          // Jika salah satu belum terisi, coba pisahkan dari picPengirim atau saling melengkapi
-          if ((finalPicName === '-' || finalPicPhone === '-') && rawPicPengirim && rawPicPengirim !== '-') {
-            const splitted = splitPicNameAndPhone(rawPicPengirim);
-            if (finalPicName === '-' && splitted.name !== '-') finalPicName = splitted.name;
-            if (finalPicPhone === '-' && splitted.phone !== '-') finalPicPhone = splitted.phone;
-          } else if (finalPicName !== '-' && finalPicPhone === '-') {
-            const splitted = splitPicNameAndPhone(finalPicName);
-            if (splitted.phone !== '-') {
-              finalPicPhone = splitted.phone;
-              finalPicName = splitted.name;
-            }
-          }
-
-          finalPicName = finalPicName.slice(0, 100);
-          finalPicPhone = finalPicPhone.slice(0, 50);
-
-          const finalPicCombined = finalPicName !== '-' && finalPicPhone !== '-'
-            ? `${finalPicName} (${finalPicPhone})`
-            : (finalPicName !== '-' ? finalPicName : finalPicPhone);
-
-          const rawDateEvent = (parsed.dateEvent || '').trim();
-          let cleanDateEvent = (rawDateEvent && rawDateEvent !== '-' && !/^(?:tidak\s+ada|belum\s+ada|null|undefined|-)$/i.test(rawDateEvent))
-            ? rawDateEvent.replace(/^[\*•\-\s]+/, '').slice(0, 100)
-            : undefined;
-
-          const rawTimeEvent = (parsed.timeEvent || '').trim();
-          let cleanTimeEvent = (rawTimeEvent && rawTimeEvent !== '-' && !/^(?:tidak\s+ada|belum\s+ada|null|undefined|-)$/i.test(rawTimeEvent))
-            ? rawTimeEvent.replace(/^[\*•\-\s]+/, '').slice(0, 100)
-            : undefined;
-
-          const rawPlaceEvent = (parsed.placeEvent || '').trim();
-          let cleanPlaceEvent = (rawPlaceEvent && rawPlaceEvent !== '-' && !/^(?:tidak\s+ada|belum\s+ada|null|undefined|-)$/i.test(rawPlaceEvent))
-            ? rawPlaceEvent.replace(/^[\*•\-\s]+/, '').slice(0, 220)
-            : undefined;
-
-          // Jika cleanTimeEvent belum ada tetapi cleanDateEvent memuat pola jam (misal: "20 Oktober 2026, Pukul 09.00 WIB")
-          if (!cleanTimeEvent && cleanDateEvent) {
-            const timeInDateMatch = cleanDateEvent.match(/(?:pukul|jam)?\s*(\d{1,2}[:.]\d{2}(?:\s*(?:-|s\.?d\.?|sampai|\/)\s*(?:\d{1,2}[:.]\d{2}|selesai))?\s*(?:WIB|WITA|WIT)?)/i);
-            if (timeInDateMatch && timeInDateMatch[1]) {
-              cleanTimeEvent = timeInDateMatch[1].trim();
-              cleanDateEvent = cleanDateEvent.replace(/[,;]?\s*(?:pukul|jam)?\s*\d{1,2}[:.]\d{2}(?:\s*(?:-|s\.?d\.?|sampai|\/)\s*(?:\d{1,2}[:.]\d{2}|selesai))?\s*(?:WIB|WITA|WIT)?/i, '').trim();
-            }
-          }
-
-          const extracted: ExtractedSuratData = {
-            kategoriSurat: kategori,
-            alasanKategori: parsed.alasanKategori || '',
-            tanggalSurat: parsed.tanggalSurat || this.getTodayFormatted(),
-            nomorSurat: (parsed.nomorSurat || '-').trim().slice(0, 100),
-            subject: cleanAcara || parsed.subject || 'Surat Masuk',
-            asalSurat: finalAsalSurat.slice(0, 220),
-            event: cleanAcara,
-            dateEvent: cleanDateEvent,
-            timeEvent: cleanTimeEvent,
-            placeEvent: cleanPlaceEvent,
-            picPengirim: finalPicCombined.slice(0, 100),
-            picName: finalPicName,
-            picPhoneNumber: finalPicPhone,
-            namaAcara: cleanAcara,
-            temaAcara: parsed.temaAcara && parsed.temaAcara !== '-' ? parsed.temaAcara : undefined,
-            penyelenggara: extractedPenyelenggara && extractedPenyelenggara !== '-' ? extractedPenyelenggara : 'Instansi Terkait',
-            sesiAcara: cleanSesi,
-            mempelai1: parsed.mempelai1 && parsed.mempelai1 !== '-' ? parsed.mempelai1 : undefined,
-            mempelai2: parsed.mempelai2 && parsed.mempelai2 !== '-' ? parsed.mempelai2 : undefined,
-            pokokBahasan: parsed.pokokBahasan && parsed.pokokBahasan !== '-' ? parsed.pokokBahasan : undefined,
-            rangkaUcapan: parsed.rangkaUcapan && parsed.rangkaUcapan !== '-' ? parsed.rangkaUcapan : undefined,
-            perihal: '', // Akan diformat di bawah
-          };
-
-          // Format perihal secara ketat mengikuti formula template resmi berdasarkan kategori
-          extracted.perihal = formatPerihalByTemplate(extracted);
-          // Kolom subject merupakan ringkasan dari isi perihal yang telah digenerate (maks 200 karakter)
-          extracted.subject = generateSubjectSummary(extracted.perihal, extracted);
-          // Samakan isi dari acara seperti yang ada di perihal, templatenya sama
-          extracted.event = extracted.perihal;
-
-          return extracted;
+        const parsedResult = this.parseAiExtractionResponse(rawText, originalFileName);
+        if (parsedResult) {
+          return parsedResult;
         }
       } catch (err) {
         console.warn(`[AiService] Ekstraksi cerdas AI (${model}) gagal, menggunakan fallback parser:`, err);
@@ -744,6 +634,288 @@ ${pdfText.slice(0, 6000)}
 
     // 2. Fallback Rule-Based Parser (Jika AI Key kosong atau respons tidak sesuai)
     return this.fallbackRuleBasedExtraction(pdfText, originalFileName);
+  }
+
+  /**
+   * Ekstraksi metadata dan isi surat dinas langsung dari berkas gambar (Multimodal Vision AI)
+   */
+  public async extractSuratFromImage(imagePath: string, originalFileName?: string): Promise<ExtractedSuratData> {
+    const isUsingOpenRouter = Boolean(this.openAiClient);
+    let model = 'google/gemini-2.5-flash';
+
+    if (isUsingOpenRouter) {
+      if (ENV.PDF_EXTRACTION_MODEL && (ENV.PDF_EXTRACTION_MODEL.includes('/') || ENV.PDF_EXTRACTION_MODEL.includes('vision'))) {
+        model = ENV.PDF_EXTRACTION_MODEL;
+      } else if (ENV.PDF_EXTRACTION_MODEL && !ENV.PDF_EXTRACTION_MODEL.startsWith('gemini-')) {
+        model = ENV.PDF_EXTRACTION_MODEL;
+      } else {
+        model = 'google/gemini-2.5-flash';
+      }
+    } else {
+      model = ENV.PDF_EXTRACTION_MODEL || 'gemini-2.5-flash';
+    }
+
+    if ((this.genAiClient || this.openAiClient) && fs.existsSync(imagePath)) {
+      try {
+        const buffer = fs.readFileSync(imagePath);
+        const ext = path.extname(originalFileName || imagePath).toLowerCase();
+        const mimeType = imageService.detectImageMimeType(buffer, ext) || 'image/jpeg';
+        const base64Image = buffer.toString('base64');
+
+        const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan (Kemnaker) yang ahli dan sangat teliti dalam menganalisis berkas gambar surat dinas resmi (foto surat fisik, scan surat, atau tangkapan layar surat dinas).
+
+TUGAS UTAMA:
+Bacalah seluruh isi gambar surat dinas terlampir secara teliti dan menyeluruh, dari kop surat teratas, nomor, tanggal, lampiran, perihal, isi surat, jadwal/tempat acara, hingga penandatangan dan stempel di bagian bawah surat. Pastikan semua entitas diekstrak persis dan akurat sesuai yang tertulis pada gambar.
+
+1. Tentukan KATEGORI SURAT (kategoriSurat) secara akurat dari salah satu kode berikut:
+   - "UND" : Undangan Menghadiri acara/rapat/seminar/konferensi/FGD/diskusi/lokakarya/dies natalis/peringatan umum (BUKAN pernikahan, BUKAN meminta pimpinan memberi sambutan/speech khusus).
+   - "PH"  : Permohonan Hadir yang meminta Menteri / Pimpinan Kemnaker untuk MEMBERIKAN SAMBUTAN, KEYNOTE SPEECH, ARAHAN, MEMBUKA ACARA, atau menjadi NARASUMBER / PEMBICARA.
+   - "UNR" : Undangan Pernikahan (akad nikah, resepsi pernikahan, walimah, ngunduh mantu).
+   - "AU"  : Permohonan Audiensi / Silaturahmi resmi / Tatap muka / Kunjungan kehormatan dari instansi, organisasi, atau serikat pekerja.
+   - "WR"  : Permohonan Wawancara / Peliputan khusus dari media / pers / jurnalis.
+   - "TAP" : Permohonan pembuatan atau rekaman Video Ucapan (selamat ulang tahun, harlah, milad, perayaan hari jadi).
+   - "LP"  : Dokumen Laporan (laporan kegiatan, laporan pelaksanaan, pertanggungjawaban).
+
+2. Aturan ekstraksi entitas secara presisi sesuai gambar:
+   - "kategoriSurat": "UND" | "PH" | "UNR" | "WR" | "AU" | "TAP" | "LP"
+   - "alasanKategori": "penjelasan singkat mengapa dokumen masuk kategori ini berdasarkan gambar"
+   - "nomorSurat": "nomor registrasi surat dinas resmi yang tertulis pada gambar (CONTOH: 'HM.4.6/189/D.IV.M.EKON/09/2026' atau 'B-102/DIR/IX/2026'). SANGAT PENTING: JANGAN mengambil nomor jalan/alamat kantor!"
+   - "tanggalSurat": "tanggal surat dibuat/diterbitkan yang tertulis pada gambar dalam bahasa Indonesia (misal: '15 September 2026')"
+   - "namaPengirim": "nama lengkap orang/pejabat pengirim yang menandatangani surat di bagian paling bawah surat beserta gelar lengkapnya (CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM' atau 'Budi Santoso, S.E.'). BUKAN instansi! JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA (utamakan penandatangan pertama/jabatan tertinggi). JANGAN menggabungkan beberapa nama!"
+   - "jabatanPengirim": "jabatan resmi orang/pejabat yang menandatangani surat di bagian paling bawah surat yang SESUAI DENGAN namaPengirim yang dipilih (CONTOH: 'Deputi Bidang Koordinasi Ekonomi Digital' atau 'Direktur Utama' atau 'Ketua Umum'). BUKAN instansi!"
+   - "asalSurat": "gabungan nama pengirim yang bertanda tangan di paling bawah, jabatannya, dan asal instansi dengan format 'Nama Pengirim - Jabatan - Asal Instansi' (CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital - Kementerian Koordinator Bidang Perekonomian' atau 'Budi Santoso, S.E. - Direktur Utama - PT Telekomunikasi Indonesia Tbk'). JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA BESERTA JABATAN DAN ASAL INSTANSINYA!"
+   - "penyelenggara": "nama lembaga/instansi/organisasi pengirim atau penyelenggara acara dari KOP SURAT teratas atau stempel resmi pada gambar (CONTOH: 'Kementerian Koordinator Bidang Perekonomian' atau 'PT Telekomunikasi Indonesia Tbk' atau 'Institut Pertanian Bogor')"
+   - "namaAcara": "nama murni acara/kegiatan saja (CONTOH: 'Rapat Kerja Nasional (Rakornas) VII Tahun 2026' atau 'Forum Koordinasi Ketenagakerjaan Nasional 2026'). HAPUS kata pengantar seperti 'Permohonan Sambutan pada Pembukaan' atau nama instansi di akhir!"
+   - "temaAcara": "tema spesifik acara jika ada tertulis di gambar (misal: 'Transformasi Tenaga Kerja Menuju Indonesia Emas 2045', atau '-' jika tidak ada tema)"
+   - "sesiAcara": "khusus kategori PH, peran/sesi yang dimohonkan kepada Menteri / Pimpinan Kemnaker (CONTOH: 'Sambutan', 'Keynote Speech', 'Sambutan dan Arahan', 'Membuka Acara', 'Narasumber'). HANYA sebutkan jenis perannya saja tanpa mengulang nama acara/instansi!"
+   - "mempelai1": "jika UNR, nama mempelai 1 dan orang tua (misal: 'Anisa Rahmawati (Putri Bapak Ahmad dan Ibu Siti)', atau '-')"
+   - "mempelai2": "jika UNR, nama mempelai 2 dan orang tua (misal: 'Dimas Pratama (Putra Bapak Bambang dan Ibu Sri)', atau '-')"
+   - "pokokBahasan": "jika WR/AU, pokok bahasan audiensi atau wawancara (atau '-')"
+   - "rangkaUcapan": "jika TAP, rangka pembuatan video ucapan (misal: 'Hari Ulang Tahun ke-75 PT Aneka Tambang Tbk', atau '-')"
+   - "picName": "nama lengkap orang PIC / Narahubung / Contact Person jika tertera di gambar surat (CONTOH: 'Sdr. Ahmad Fauzi' atau 'Budi Santoso'). BUKAN nomor telepon! Jika tidak ada, isi '-'"
+   - "picPhoneNumber": "nomor HP / telepon / WhatsApp dari PIC yang tertera di gambar (CONTOH: '081234567890' atau '+6281234567890'). HANYA digit nomor kontak! Jika tidak ada, isi '-'"
+   - "picPengirim": "gabungan nama PIC dan nomor telepon (CONTOH: 'Ahmad Fauzi (081234567890)'). Jika tidak ada, isi '-'"
+   - "dateEvent": "hari/tanggal pelaksanaan acara/kegiatan yang disebutkan di dalam isi surat pada gambar (CONTOH: 'Senin, 20 Oktober 2026' atau '20 Oktober 2026'). BUKAN tanggal pembuatan surat! Jika surat TIDAK memiliki tanggal event/acara, isi '-'"
+   - "timeEvent": "jam/waktu mulai dan/atau selesai pelaksanaan acara/kegiatan yang tercantum di dalam gambar surat (CONTOH: '09.00 WIB' atau '08.30 - 12.00 WIB' atau '13.00 WIB s.d. selesai'). Jika surat TIDAK memuat jam acara, isi '-'"
+   - "placeEvent": "lokasi/tempat diselenggarakannya acara/kegiatan yang tercantum di dalam gambar surat (CONTOH: 'Hotel Bidakara Jakarta' atau 'Ruang Rapat Tridharma Lantai 2' atau 'Grand Ballroom Hotel Indonesia Kempinski' atau 'Aplikasi Zoom Meeting / Daring'). HANYA nama tempat/lokasi acara! Jika tidak ada, isi '-'"
+
+KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN TANPA PENJELASAN LAIN:
+`;
+
+        let rawText = '';
+        if (this.openAiClient) {
+          const res = await this.openAiClient.chat.completions.create({
+            model,
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: prompt },
+                  {
+                    type: 'image_url',
+                    image_url: {
+                      url: `data:${mimeType};base64,${base64Image}`,
+                    },
+                  },
+                ],
+              },
+            ],
+            temperature: 0.1,
+            max_tokens: 2500,
+          });
+          rawText = res.choices?.[0]?.message?.content || '';
+          if (!rawText && (res.choices?.[0]?.message as any)?.reasoning) {
+            rawText = (res.choices?.[0]?.message as any).reasoning;
+          }
+        } else if (this.genAiClient) {
+          const res = await this.genAiClient.models.generateContent({
+            model,
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  { text: prompt },
+                  {
+                    inlineData: {
+                      mimeType,
+                      data: base64Image,
+                    },
+                  },
+                ],
+              },
+            ],
+          });
+          rawText = res.text || '';
+        }
+
+        const parsedResult = this.parseAiExtractionResponse(rawText, originalFileName);
+        if (parsedResult) {
+          return parsedResult;
+        }
+      } catch (err) {
+        console.warn(`[AiService] Ekstraksi Vision AI gambar (${model}) gagal:`, err);
+      }
+    }
+
+    // Fallback default jika AI offline
+    const cleanFileName = originalFileName || path.basename(imagePath);
+    return {
+      kategoriSurat: 'UND',
+      alasanKategori: 'Pemeriksaan default dari dokumen gambar.',
+      tanggalSurat: this.getTodayFormatted(),
+      nomorSurat: `REF-${cleanFileName.replace(/\.[a-zA-Z0-9]+$/, '')}`,
+      subject: `Surat Masuk (${cleanFileName})`,
+      asalSurat: 'Pimpinan - Instansi Terkait',
+      event: `Surat dari Instansi Terkait terkait Kegiatan`,
+      perihal: `Surat dari Instansi Terkait terkait Kegiatan`,
+      picPengirim: '-',
+      picName: '-',
+      picPhoneNumber: '-',
+      penyelenggara: 'Instansi Terkait',
+      namaAcara: 'Kegiatan',
+      sesiAcara: 'Sambutan dan Arahan',
+    };
+  }
+
+  /**
+   * Helper parsing terpusat untuk output JSON dari model AI (baik teks PDF maupun Vision Gambar)
+   */
+  private parseAiExtractionResponse(rawText: string, originalFileName?: string): ExtractedSuratData | null {
+    if (!rawText || !rawText.trim()) return null;
+
+    try {
+      const clean = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+      const cleanJson = clean.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+      const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
+
+      if (!jsonMatch) return null;
+
+      const parsed = JSON.parse(jsonMatch[0]);
+
+      const kategori: 'UND' | 'PH' | 'UNR' | 'WR' | 'AU' | 'TAP' | 'LP' =
+        parsed.kategoriSurat && ['UND', 'PH', 'UNR', 'WR', 'AU', 'TAP', 'LP'].includes(parsed.kategoriSurat)
+          ? parsed.kategoriSurat
+          : 'UND';
+
+      const extractedPenyelenggara = (parsed.penyelenggara || '').trim();
+      // Bersihkan nama acara dan peran sesi acara agar bebas dari pengulangan/redundansi
+      const rawAcara = (parsed.namaAcara || parsed.event || '-').trim();
+      const cleanAcara = cleanNamaAcara(rawAcara, extractedPenyelenggara);
+      const cleanSesi = cleanSesiAcara(parsed.sesiAcara, cleanAcara);
+
+      // Format asalSurat: WAJIB nama pengirim yang bertanda tangan di paling bawah, jabatan, dan asal instansi: "Nama Pengirim - Jabatan - Asal Instansi"
+      let finalAsalSurat = (parsed.asalSurat || '').trim();
+      const namaPengirim = (parsed.namaPengirim || '').trim();
+      const jabatanPengirim = (parsed.jabatanPengirim || '').trim();
+      const instansiPenyelenggara = extractedPenyelenggara && extractedPenyelenggara !== '-' ? extractedPenyelenggara : '';
+
+      if (namaPengirim && jabatanPengirim && !finalAsalSurat.includes(' - ')) {
+        finalAsalSurat = instansiPenyelenggara
+          ? `${namaPengirim} - ${jabatanPengirim} - ${instansiPenyelenggara}`
+          : `${namaPengirim} - ${jabatanPengirim}`;
+      } else if (!finalAsalSurat || finalAsalSurat === '-') {
+        if (namaPengirim && jabatanPengirim) {
+          finalAsalSurat = instansiPenyelenggara
+            ? `${namaPengirim} - ${jabatanPengirim} - ${instansiPenyelenggara}`
+            : `${namaPengirim} - ${jabatanPengirim}`;
+        } else if (namaPengirim) {
+          finalAsalSurat = instansiPenyelenggara
+            ? `${namaPengirim} - Pengirim - ${instansiPenyelenggara}`
+            : `${namaPengirim} - Pengirim`;
+        } else {
+          finalAsalSurat = instansiPenyelenggara ? `Pimpinan - ${instansiPenyelenggara}` : '-';
+        }
+      }
+      finalAsalSurat = formatAsalSurat(finalAsalSurat, jabatanPengirim, instansiPenyelenggara);
+
+      const rawPicName = (parsed.picName || '').trim();
+      const rawPicPhone = (parsed.picPhoneNumber || '').trim();
+      const rawPicPengirim = (parsed.picPengirim || '').trim();
+
+      let finalPicName = rawPicName && rawPicName !== '-' ? rawPicName : '-';
+      let finalPicPhone = rawPicPhone && rawPicPhone !== '-' ? rawPicPhone : '-';
+
+      // Jika salah satu belum terisi, coba pisahkan dari picPengirim atau saling melengkapi
+      if ((finalPicName === '-' || finalPicPhone === '-') && rawPicPengirim && rawPicPengirim !== '-') {
+        const splitted = splitPicNameAndPhone(rawPicPengirim);
+        if (finalPicName === '-' && splitted.name !== '-') finalPicName = splitted.name;
+        if (finalPicPhone === '-' && splitted.phone !== '-') finalPicPhone = splitted.phone;
+      } else if (finalPicName !== '-' && finalPicPhone === '-') {
+        const splitted = splitPicNameAndPhone(finalPicName);
+        if (splitted.phone !== '-') {
+          finalPicPhone = splitted.phone;
+          finalPicName = splitted.name;
+        }
+      }
+
+      finalPicName = finalPicName.slice(0, 100);
+      finalPicPhone = finalPicPhone.slice(0, 50);
+
+      const finalPicCombined = finalPicName !== '-' && finalPicPhone !== '-'
+        ? `${finalPicName} (${finalPicPhone})`
+        : (finalPicName !== '-' ? finalPicName : finalPicPhone);
+
+      const rawDateEvent = (parsed.dateEvent || '').trim();
+      let cleanDateEvent = (rawDateEvent && rawDateEvent !== '-' && !/^(?:tidak\s+ada|belum\s+ada|null|undefined|-)$/i.test(rawDateEvent))
+        ? rawDateEvent.replace(/^[\*•\-\s]+/, '').slice(0, 100)
+        : undefined;
+
+      const rawTimeEvent = (parsed.timeEvent || '').trim();
+      let cleanTimeEvent = (rawTimeEvent && rawTimeEvent !== '-' && !/^(?:tidak\s+ada|belum\s+ada|null|undefined|-)$/i.test(rawTimeEvent))
+        ? rawTimeEvent.replace(/^[\*•\-\s]+/, '').slice(0, 100)
+        : undefined;
+
+      const rawPlaceEvent = (parsed.placeEvent || '').trim();
+      let cleanPlaceEvent = (rawPlaceEvent && rawPlaceEvent !== '-' && !/^(?:tidak\s+ada|belum\s+ada|null|undefined|-)$/i.test(rawPlaceEvent))
+        ? rawPlaceEvent.replace(/^[\*•\-\s]+/, '').slice(0, 220)
+        : undefined;
+
+      // Jika cleanTimeEvent belum ada tetapi cleanDateEvent memuat pola jam (misal: "20 Oktober 2026, Pukul 09.00 WIB")
+      if (!cleanTimeEvent && cleanDateEvent) {
+        const timeInDateMatch = cleanDateEvent.match(/(?:pukul|jam)?\s*(\d{1,2}[:.]\d{2}(?:\s*(?:-|s\.?d\.?|sampai|\/)\s*(?:\d{1,2}[:.]\d{2}|selesai))?\s*(?:WIB|WITA|WIT)?)/i);
+        if (timeInDateMatch && timeInDateMatch[1]) {
+          cleanTimeEvent = timeInDateMatch[1].trim();
+          cleanDateEvent = cleanDateEvent.replace(/[,;]?\s*(?:pukul|jam)?\s*\d{1,2}[:.]\d{2}(?:\s*(?:-|s\.?d\.?|sampai|\/)\s*(?:\d{1,2}[:.]\d{2}|selesai))?\s*(?:WIB|WITA|WIT)?/i, '').trim();
+        }
+      }
+
+      const extracted: ExtractedSuratData = {
+        kategoriSurat: kategori,
+        alasanKategori: parsed.alasanKategori || '',
+        tanggalSurat: parsed.tanggalSurat || this.getTodayFormatted(),
+        nomorSurat: (parsed.nomorSurat || '-').trim().slice(0, 100),
+        subject: cleanAcara || parsed.subject || 'Surat Masuk',
+        asalSurat: finalAsalSurat.slice(0, 220),
+        event: cleanAcara,
+        dateEvent: cleanDateEvent,
+        timeEvent: cleanTimeEvent,
+        placeEvent: cleanPlaceEvent,
+        picPengirim: finalPicCombined.slice(0, 100),
+        picName: finalPicName,
+        picPhoneNumber: finalPicPhone,
+        namaAcara: cleanAcara,
+        temaAcara: parsed.temaAcara && parsed.temaAcara !== '-' ? parsed.temaAcara : undefined,
+        penyelenggara: extractedPenyelenggara && extractedPenyelenggara !== '-' ? extractedPenyelenggara : 'Instansi Terkait',
+        sesiAcara: cleanSesi,
+        mempelai1: parsed.mempelai1 && parsed.mempelai1 !== '-' ? parsed.mempelai1 : undefined,
+        mempelai2: parsed.mempelai2 && parsed.mempelai2 !== '-' ? parsed.mempelai2 : undefined,
+        pokokBahasan: parsed.pokokBahasan && parsed.pokokBahasan !== '-' ? parsed.pokokBahasan : undefined,
+        rangkaUcapan: parsed.rangkaUcapan && parsed.rangkaUcapan !== '-' ? parsed.rangkaUcapan : undefined,
+        perihal: '', // Akan diformat di bawah
+      };
+
+      // Format perihal secara ketat mengikuti formula template resmi berdasarkan kategori
+      extracted.perihal = formatPerihalByTemplate(extracted);
+      // Kolom subject merupakan ringkasan dari isi perihal yang telah digenerate (maks 200 karakter)
+      extracted.subject = generateSubjectSummary(extracted.perihal, extracted);
+      // Samakan isi dari acara seperti yang ada di perihal, templatenya sama
+      extracted.event = extracted.perihal;
+
+      return extracted;
+    } catch (parseErr) {
+      console.warn('[AiService] Gagal mem-parse JSON hasil respons AI:', parseErr);
+      return null;
+    }
   }
 
   /**
@@ -937,18 +1109,25 @@ ${pdfText.slice(0, 6000)}
       }
     }
 
-    // Susun format WAJIB: "Nama Pengirim - Jabatan"
+    // Susun format WAJIB: "Nama Pengirim - Jabatan - Asal Instansi"
     let asalSurat = '-';
+    const instansiClean = penyelenggara && penyelenggara !== 'Instansi Terkait' ? penyelenggara : '';
     if (namaPengirim && jabatanPengirim) {
-      asalSurat = `${namaPengirim} - ${jabatanPengirim}`;
+      asalSurat = instansiClean
+        ? `${namaPengirim} - ${jabatanPengirim} - ${instansiClean}`
+        : `${namaPengirim} - ${jabatanPengirim}`;
     } else if (namaPengirim) {
-      asalSurat = `${namaPengirim} - Pengirim`;
+      asalSurat = instansiClean
+        ? `${namaPengirim} - Pengirim - ${instansiClean}`
+        : `${namaPengirim} - Pengirim`;
     } else if (jabatanPengirim) {
-      asalSurat = `Pengirim - ${jabatanPengirim}`;
+      asalSurat = instansiClean
+        ? `Pengirim - ${jabatanPengirim} - ${instansiClean}`
+        : `Pengirim - ${jabatanPengirim}`;
     } else {
-      asalSurat = `Pimpinan - ${penyelenggara}`;
+      asalSurat = instansiClean ? `Pimpinan - ${instansiClean}` : 'Pimpinan - Instansi Terkait';
     }
-    asalSurat = formatAsalSurat(asalSurat);
+    asalSurat = formatAsalSurat(asalSurat, jabatanPengirim, instansiClean);
 
     // 7. Cari PIC / kontak (pisahkan nama dan nomor HP)
     const hpMatch = text.match(/(?:08\d{2}[- ]?\d{4}[- ]?\d{3,4}|\+62\d{2}[- ]?\d{4}[- ]?\d{3,4})/);

@@ -1,3 +1,4 @@
+import path from 'path';
 import { authHandler } from './handlers/authHandler';
 import { menuHandler } from './handlers/menuHandler';
 import { suratMasukHandler } from './handlers/suratMasukHandler';
@@ -22,6 +23,7 @@ export interface IncomingMessagePayload {
     filePath: string;
     fileName: string;
     mimeType?: string;
+    isImage?: boolean;
   };
 }
 
@@ -96,8 +98,22 @@ export class MessageRouter {
       return bantuanHandler.showBantuanMenu(session);
     }
 
-    // 4. Tangani Pengunggahan Dokumen PDF (Otomatis langsung registrasi surat)
+    // 4. Tangani Pengunggahan Berkas Media (Dokumen PDF atau Gambar/Foto Surat)
     if (payload.media) {
+      const ext = path.extname(payload.media.fileName).toLowerCase();
+      const isImg =
+        payload.media.isImage === true ||
+        ['.jpg', '.jpeg', '.png', '.webp', '.bmp'].includes(ext) ||
+        Boolean(payload.media.mimeType && payload.media.mimeType.startsWith('image/'));
+
+      if (isImg) {
+        return suratMasukHandler.handleDirectImageUpload(
+          session,
+          payload.media.filePath,
+          payload.media.fileName
+        );
+      }
+
       return suratMasukHandler.handleDirectPdfUpload(
         session,
         payload.media.filePath,

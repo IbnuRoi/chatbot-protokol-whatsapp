@@ -12,6 +12,7 @@ import path from 'path';
 import fs from 'fs';
 import { messageRouter } from './messageRouter';
 import { pdfService } from '../services/pdfService';
+import { imageService } from '../services/imageService';
 import { prisma } from '../database/prisma';
 import { BotResponse, getResponseText } from './types';
 
@@ -223,13 +224,67 @@ export class WhatsAppClient {
             msg.message?.documentWithCaptionMessage?.message ||
             msg.message;
 
-          // 1. Periksa apakah pesan berupa dokumen (PDF)
+          // 1. Periksa apakah pesan berupa foto/gambar langsung dari kamera atau galeri
+          const imageMsg = rawMsg?.imageMessage;
+          if (imageMsg) {
+            const mimetype = imageMsg.mimetype || 'image/jpeg';
+            let ext = '.jpg';
+            if (mimetype.includes('png')) ext = '.png';
+            else if (mimetype.includes('webp')) ext = '.webp';
+            else if (mimetype.includes('bmp')) ext = '.bmp';
+
+            const fileName = `foto_surat_${Date.now()}${ext}`;
+            console.log(`\n📷 [WhatsApp Inbound] Foto / Gambar Surat Masuk dari ${senderNumber}: ${fileName} (${mimetype})`);
+
+            const buffer = (await downloadMediaMessage(msg, 'buffer', {})) as Buffer;
+            const tempPath = imageService.saveTempImage(buffer, fileName);
+
+            const reply = await messageRouter.processMessage({
+              senderNumber,
+              pushName: msg.pushName || '',
+              media: {
+                filePath: tempPath,
+                fileName,
+                mimeType: mimetype,
+                isImage: true,
+              },
+            });
+
+            await this.sendReply(remoteJid, reply);
+            continue;
+          }
+
+          // 2. Periksa apakah pesan berupa dokumen (PDF atau berkas gambar yang dikirim sebagai dokumen)
           const docMessage = rawMsg?.documentMessage;
           if (docMessage) {
             const fileName = docMessage.fileName || 'dokumen.pdf';
             const mimetype = docMessage.mimetype || '';
+            const ext = path.extname(fileName).toLowerCase();
+            const isDocImage =
+              ['.jpg', '.jpeg', '.png', '.webp', '.bmp'].includes(ext) ||
+              mimetype.startsWith('image/');
 
-            if (mimetype.includes('pdf') || fileName.toLowerCase().endsWith('.pdf')) {
+            if (isDocImage) {
+              console.log(`\n🖼️ [WhatsApp Inbound] Dokumen Gambar dari ${senderNumber}: ${fileName}`);
+              const buffer = (await downloadMediaMessage(msg, 'buffer', {})) as Buffer;
+              const tempPath = imageService.saveTempImage(buffer, fileName);
+
+              const reply = await messageRouter.processMessage({
+                senderNumber,
+                pushName: msg.pushName || '',
+                media: {
+                  filePath: tempPath,
+                  fileName,
+                  mimeType: mimetype,
+                  isImage: true,
+                },
+              });
+
+              await this.sendReply(remoteJid, reply);
+              continue;
+            }
+
+            if (mimetype.includes('pdf') || ext === '.pdf') {
               console.log(`\n📥 [WhatsApp Inbound] Dokumen PDF dari ${senderNumber}: ${fileName}`);
               const buffer = (await downloadMediaMessage(msg, 'buffer', {})) as Buffer;
               const tempPath = pdfService.saveTempPdf(buffer, fileName);
@@ -241,6 +296,7 @@ export class WhatsAppClient {
                   filePath: tempPath,
                   fileName,
                   mimeType: mimetype,
+                  isImage: false,
                 },
               });
 
