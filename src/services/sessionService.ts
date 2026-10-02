@@ -64,6 +64,7 @@ export interface ExtractedSuratData {
   picPhoneNumber?: string;
   dateEvent?: string;
   timeEvent?: string;
+  placeEvent?: string;
 }
 
 export interface SuratDraftData {

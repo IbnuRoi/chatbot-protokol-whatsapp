@@ -65,6 +65,7 @@ export interface NormalizedSurat {
   event?: string | null;
   dateEvent?: string | null;
   timeEvent?: string | null;
+  placeEvent?: string | null;
   picPengirim?: string | null;
   picName?: string | null;
   picPhoneNumber?: string | null;
@@ -145,6 +146,7 @@ export class SuratService {
       asalSurat: letter.from || '-',
       asalInstansi: letter.institution_origin || 'Lainnya',
       event: letter.place_event || '-',
+      placeEvent: letter.place_event || null,
       dateEvent: letter.date_event ? formatTanggalIndo(letter.date_event, true) : null,
       timeEvent: letter.time_event
         ? `${String(letter.time_event.getUTCHours()).padStart(2, '0')}:${String(letter.time_event.getUTCMinutes()).padStart(2, '0')} ${letter.time_zone || 'WIB'}`
@@ -337,7 +339,10 @@ export class SuratService {
       const safeNomorSurat = (draft.extractedData.nomorSurat || '-').trim().slice(0, 100);
       const safeAsalSurat = (draft.extractedData.asalSurat || '-').trim().slice(0, 225);
       const safeSubject = finalSubject.trim().slice(0, 200);
-      const safePlaceEvent = finalPerihal.trim().slice(0, 225);
+      const rawPlaceEvent = draft.extractedData.placeEvent;
+      const safePlaceEvent = (rawPlaceEvent && rawPlaceEvent !== '-' && rawPlaceEvent.trim().length > 0)
+        ? rawPlaceEvent.trim().slice(0, 220)
+        : null;
       const safeFileName = finalFileName.trim().slice(0, 225);
       const safeInstansi = (draft.asalInstansi || 'Lainnya').trim().slice(0, 50);
       const safeCreatorName = creatorName.trim().slice(0, 191);

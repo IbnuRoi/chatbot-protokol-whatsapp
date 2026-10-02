@@ -326,6 +326,7 @@ export class SuratMasukHandler {
       `• 📝 *Perihal Resmi* : ${finalPerihal}\n` +
       (data?.dateEvent && data.dateEvent !== '-' ? `• 🗓️ *Tanggal Acara*   : ${data.dateEvent}\n` : '') +
       (data?.timeEvent && data.timeEvent !== '-' ? `• ⏰ *Jam Acara*       : ${data.timeEvent}\n` : '') +
+      (data?.placeEvent && data.placeEvent !== '-' ? `• 📍 *Tempat Acara*    : ${data.placeEvent}\n` : '') +
       `• 👤 *Nama PIC*      : ${picName}\n` +
       `• 📞 *Nomor PIC*     : ${picPhone}\n` +
       `• 👤 *Petugas Input* : ${session.userName || 'Petugas Protokol'}\n\n` +
@@ -412,6 +413,7 @@ export class SuratMasukHandler {
             `• 📝 *Perihal Resmi*: ${finalPerihal}\n` +
             (savedData?.dateEvent && savedData.dateEvent !== '-' ? `• 🗓️ *Tanggal Acara*   : ${savedData.dateEvent}\n` : '') +
             (savedData?.timeEvent && savedData.timeEvent !== '-' ? `• ⏰ *Jam Acara*       : ${savedData.timeEvent}\n` : '') +
+            (savedData?.placeEvent && savedData.placeEvent !== '-' ? `• 📍 *Tempat Acara*    : ${savedData.placeEvent}\n` : '') +
             `• 👤 *Nama PIC*     : ${picName}\n` +
             `• 📞 *Nomor PIC*    : ${picPhone}\n` +
             `• 📂 *Status Disposisi*: 🟡 BELUM DISPOSISI\n` +
@@ -495,6 +497,7 @@ export class SuratMasukHandler {
       `• *Asal Surat*: Format _Nama Pengirim - Jabatan_ (nama pejabat penandatangan di bagian bawah surat, bukan instansi)\n` +
       `• *Tanggal Acara*: Tanggal kegiatan (isi *-* jika tidak ada acara)\n` +
       `• *Jam Acara*: Waktu kegiatan (contoh: 09.00 WIB atau *-* jika tidak ada)\n` +
+      `• *Tempat Acara*: Lokasi/tempat kegiatan (contoh: Hotel Bidakara Jakarta atau *-* jika tidak ada)\n` +
       `• *Pilihan Kategori*: UND, PH, UNR, AU, WR, TAP, LP\n\n` +
       `_(Ketik *batal* jika ingin membatalkan)_`;
 
@@ -508,6 +511,7 @@ export class SuratMasukHandler {
       `Perihal: ${perihal}\n` +
       `Tanggal Acara: ${data?.dateEvent || '-'}\n` +
       `Jam Acara: ${data?.timeEvent || '-'}\n` +
+      `Tempat Acara: ${data?.placeEvent || '-'}\n` +
       `Nama PIC: ${picName}\n` +
       `Nomor PIC: ${picPhone}`;
 
@@ -629,6 +633,14 @@ export class SuratMasukHandler {
       }
       updatedKeys.push('Jam Acara');
     }
+    if (parsed.placeEvent !== undefined) {
+      if (parsed.placeEvent === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(parsed.placeEvent)) {
+        session.draftSurat.extractedData.placeEvent = undefined;
+      } else {
+        session.draftSurat.extractedData.placeEvent = parsed.placeEvent.trim().slice(0, 220);
+      }
+      updatedKeys.push('Tempat Acara');
+    }
     if (parsed.picName) {
       session.draftSurat.extractedData.picName = parsed.picName.trim().slice(0, 100);
       updatedKeys.push('Nama PIC');
@@ -688,6 +700,16 @@ export class SuratMasukHandler {
       lower.includes('jam event') ||
       lower.includes('time event') ||
       lower.includes('waktu acara') ||
+      lower.includes('tempat acara') ||
+      lower.includes('tempat kegiatan') ||
+      lower.includes('tempat event') ||
+      lower.includes('lokasi acara') ||
+      lower.includes('lokasi kegiatan') ||
+      lower.includes('lokasi event') ||
+      lower.includes('place event') ||
+      lower.includes('tempat') ||
+      lower.includes('lokasi') ||
+      lower.includes('venue') ||
       lower.includes('pukul') ||
       lower.includes('jam') ||
       lower.includes('date event') ||
@@ -712,6 +734,7 @@ export class SuratMasukHandler {
     event?: string;
     dateEvent?: string;
     timeEvent?: string;
+    placeEvent?: string;
     picPengirim?: string;
     picName?: string;
     picPhoneNumber?: string;
@@ -726,6 +749,7 @@ export class SuratMasukHandler {
       event?: string;
       dateEvent?: string;
       timeEvent?: string;
+      placeEvent?: string;
       picPengirim?: string;
       picName?: string;
       picPhoneNumber?: string;
@@ -905,6 +929,23 @@ export class SuratMasukHandler {
           result.dateEvent = rawVal;
         }
       }
+      // 7d. Tempat Acara / Lokasi (placeEvent)
+      else if (
+        rawKey === 'tempat acara' ||
+        rawKey === 'tempat kegiatan' ||
+        rawKey === 'tempat event' ||
+        rawKey === 'lokasi acara' ||
+        rawKey === 'lokasi kegiatan' ||
+        rawKey === 'lokasi event' ||
+        rawKey === 'place event' ||
+        rawKey === 'tempat' ||
+        rawKey === 'lokasi' ||
+        rawKey === 'venue' ||
+        rawKey === 'ruang' ||
+        rawKey === 'ruangan'
+      ) {
+        result.placeEvent = rawVal;
+      }
       // 8. Event / Nama Acara
       else if (
         rawKey === 'event' ||
@@ -987,10 +1028,11 @@ export class SuratMasukHandler {
       '5': { key: 'asalSurat', label: 'Asal Surat (Nama Pengirim - Jabatan)' },
       '6': { key: 'dateEvent', label: 'Tanggal Acara' },
       '7': { key: 'timeEvent', label: 'Jam Acara' },
-      '8': { key: 'picName', label: 'Nama PIC' },
-      '9': { key: 'picPhoneNumber', label: 'Nomor Kontak PIC' },
-      '10': { key: 'jenisSurat', label: 'Kategori / Jenis Surat' },
-      '11': { key: 'tipeSurat', label: 'Tipe / Klasifikasi' },
+      '8': { key: 'placeEvent', label: 'Tempat Acara' },
+      '9': { key: 'picName', label: 'Nama PIC' },
+      '10': { key: 'picPhoneNumber', label: 'Nomor Kontak PIC' },
+      '11': { key: 'jenisSurat', label: 'Kategori / Jenis Surat' },
+      '12': { key: 'tipeSurat', label: 'Tipe / Klasifikasi' },
     };
 
     let target: { key: string; label: string } | undefined = fieldMap[clean];
@@ -1003,16 +1045,17 @@ export class SuratMasukHandler {
       else if (lower.includes('asal') || lower.includes('pengirim') || lower.includes('penandatangan') || lower.includes('ttd') || lower.includes('instansi')) target = fieldMap['5'];
       else if (lower.includes('tanggal acara') || lower.includes('tgl acara') || lower.includes('date event') || lower.includes('tanggal kegiatan')) target = fieldMap['6'];
       else if (lower.includes('jam acara') || lower.includes('jam event') || lower.includes('jam kegiatan') || lower.includes('time event') || lower.includes('pukul') || lower.includes('jam')) target = fieldMap['7'];
-      else if (lower.includes('nama pic') || lower === 'nama') target = fieldMap['8'];
-      else if (lower.includes('nomor pic') || lower.includes('no pic') || lower.includes('hp pic') || lower.includes('wa pic') || lower.includes('telepon pic') || lower.includes('kontak pic') || lower.includes('telepon') || lower.includes('nomor hp') || lower.includes('no hp')) target = fieldMap['9'];
-      else if (lower.includes('pic') || lower.includes('kontak')) target = fieldMap['8'];
-      else if (lower.includes('kategori') || lower.includes('jenis')) target = fieldMap['10'];
-      else if (lower.includes('tipe') || lower.includes('klasifikasi')) target = fieldMap['11'];
+      else if (lower.includes('tempat acara') || lower.includes('lokasi acara') || lower.includes('tempat') || lower.includes('lokasi') || lower.includes('venue') || lower.includes('place event')) target = fieldMap['8'];
+      else if (lower.includes('nama pic') || lower === 'nama') target = fieldMap['9'];
+      else if (lower.includes('nomor pic') || lower.includes('no pic') || lower.includes('hp pic') || lower.includes('wa pic') || lower.includes('telepon pic') || lower.includes('kontak pic') || lower.includes('telepon') || lower.includes('nomor hp') || lower.includes('no hp')) target = fieldMap['10'];
+      else if (lower.includes('pic') || lower.includes('kontak')) target = fieldMap['9'];
+      else if (lower.includes('kategori') || lower.includes('jenis')) target = fieldMap['11'];
+      else if (lower.includes('tipe') || lower.includes('klasifikasi')) target = fieldMap['12'];
     }
 
     if (!target) {
       return {
-        text: `⚠️ Data yang ingin diubah belum dikenali.\n\nSilakan ketik nomor (1-11) atau nama data yang ingin diubah (contoh: *Subject*, *Perihal*, *Asal Surat*, *Tanggal Acara*, *Jam Acara*, *Nama PIC*, *Nomor PIC*, *Kategori*):`,
+        text: `⚠️ Data yang ingin diubah belum dikenali.\n\nSilakan ketik nomor (1-12) atau nama data yang ingin diubah (contoh: *Subject*, *Perihal*, *Asal Surat*, *Tanggal Acara*, *Jam Acara*, *Tempat Acara*, *Nama PIC*, *Nomor PIC*, *Kategori*):`,
       };
     }
 
@@ -1032,6 +1075,8 @@ export class SuratMasukHandler {
       currentValue = session.draftSurat?.extractedData?.dateEvent || '-';
     } else if (target.key === 'timeEvent') {
       currentValue = session.draftSurat?.extractedData?.timeEvent || '-';
+    } else if (target.key === 'placeEvent') {
+      currentValue = session.draftSurat?.extractedData?.placeEvent || '-';
     } else if (target.key === 'picName') {
       currentValue = session.draftSurat?.extractedData?.picName || (session.draftSurat?.extractedData?.picPengirim ? splitPicNameAndPhone(session.draftSurat.extractedData.picPengirim).name : '') || '-';
     } else if (target.key === 'picPhoneNumber') {
@@ -1047,6 +1092,8 @@ export class SuratMasukHandler {
       hint = `\n_(Ketik tanggal pelaksanaan acara, atau ketik "-" jika tidak ada acara)_\n`;
     } else if (target.key === 'timeEvent') {
       hint = `\n_(Ketik jam/waktu pelaksanaan acara, contoh: 09.00 WIB atau 09.00 - 12.00 WIB, atau ketik "-" jika tidak ada jam acara)_\n`;
+    } else if (target.key === 'placeEvent') {
+      hint = `\n_(Ketik tempat/lokasi pelaksanaan acara, contoh: Hotel Bidakara Jakarta atau Ruang Rapat Lt. 2, atau ketik "-" jika tidak ada tempat acara)_\n`;
     }
 
     return {
@@ -1125,6 +1172,12 @@ export class SuratMasukHandler {
           session.draftSurat.extractedData.timeEvent = undefined;
         } else {
           session.draftSurat.extractedData.timeEvent = val.slice(0, 100);
+        }
+      } else if (field === 'placeEvent') {
+        if (val === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(val)) {
+          session.draftSurat.extractedData.placeEvent = undefined;
+        } else {
+          session.draftSurat.extractedData.placeEvent = val.slice(0, 220);
         }
       } else if (field === 'picName') {
         const cleanPicName = val.slice(0, 100);
@@ -1307,6 +1360,7 @@ export class SuratMasukHandler {
       `• *Event/Agenda*   : ${ext?.event}\n` +
       (ext?.dateEvent && ext.dateEvent !== '-' ? `• *Tanggal Acara*   : ${ext.dateEvent}\n` : '') +
       (ext?.timeEvent && ext.timeEvent !== '-' ? `• *Jam Acara*       : ${ext.timeEvent}\n` : '') +
+      (ext?.placeEvent && ext.placeEvent !== '-' ? `• *Tempat Acara*    : ${ext.placeEvent}\n` : '') +
       `• *Nama PIC*       : ${picName}\n` +
       `• *Nomor PIC*      : ${picPhone}\n` +
       `• *Perihal Final*  : ${draft?.finalPerihal}\n` +

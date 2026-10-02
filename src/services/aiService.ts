@@ -588,6 +588,7 @@ TUGAS UTAMA:
    - "picPengirim": "gabungan nama PIC dan nomor telepon (CONTOH: 'Ahmad Fauzi (081234567890)'). Jika tidak ada, isi '-'"
    - "dateEvent": "hari/tanggal pelaksanaan acara/kegiatan/event yang disebutkan di dalam isi surat (CONTOH: 'Senin, 20 Oktober 2026' atau '20 Oktober 2026' atau '25 - 27 November 2026'). BUKAN tanggal pembuatan surat! Jika surat TIDAK memiliki tanggal event/acara (misalnya surat laporan biasa, pemberitahuan tanpa acara, dll), isi '-'"
    - "timeEvent": "jam/waktu mulai dan/atau selesai pelaksanaan acara/kegiatan yang tercantum di dalam surat (CONTOH: '09.00 WIB' atau '08.30 - 12.00 WIB' atau '13.00 WIB s.d. selesai' atau '10.00 WITA'). Jika surat TIDAK memuat jam acara, isi '-'"
+   - "placeEvent": "lokasi/tempat diselenggarakannya acara/kegiatan/event yang tercantum di dalam isi surat (CONTOH: 'Hotel Bidakara Jakarta' atau 'Ruang Rapat Tridharma Lantai 2' atau 'Grand Ballroom Hotel Indonesia Kempinski' atau 'Aplikasi Zoom Meeting / Daring' atau 'Bandung'). HANYA nama tempat/lokasi acara! Jika surat TIDAK memuat tempat/lokasi acara, isi '-'"
 
 KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN TANPA PENJELASAN LAIN:
 
@@ -688,6 +689,11 @@ ${pdfText.slice(0, 6000)}
             ? rawTimeEvent.replace(/^[\*•\-\s]+/, '').slice(0, 100)
             : undefined;
 
+          const rawPlaceEvent = (parsed.placeEvent || '').trim();
+          let cleanPlaceEvent = (rawPlaceEvent && rawPlaceEvent !== '-' && !/^(?:tidak\s+ada|belum\s+ada|null|undefined|-)$/i.test(rawPlaceEvent))
+            ? rawPlaceEvent.replace(/^[\*•\-\s]+/, '').slice(0, 220)
+            : undefined;
+
           // Jika cleanTimeEvent belum ada tetapi cleanDateEvent memuat pola jam (misal: "20 Oktober 2026, Pukul 09.00 WIB")
           if (!cleanTimeEvent && cleanDateEvent) {
             const timeInDateMatch = cleanDateEvent.match(/(?:pukul|jam)?\s*(\d{1,2}[:.]\d{2}(?:\s*(?:-|s\.?d\.?|sampai|\/)\s*(?:\d{1,2}[:.]\d{2}|selesai))?\s*(?:WIB|WITA|WIT)?)/i);
@@ -707,6 +713,7 @@ ${pdfText.slice(0, 6000)}
             event: cleanAcara,
             dateEvent: cleanDateEvent,
             timeEvent: cleanTimeEvent,
+            placeEvent: cleanPlaceEvent,
             picPengirim: finalPicCombined.slice(0, 100),
             picName: finalPicName,
             picPhoneNumber: finalPicPhone,
@@ -992,6 +999,18 @@ ${pdfText.slice(0, 6000)}
       timeEvent = timeEventMatch[1].trim().slice(0, 100);
     }
 
+    // 12. Cari tempat/lokasi pelaksanaan kegiatan jika ada
+    let placeEvent: string | undefined = undefined;
+    const placeEventMatch = text.match(
+      /(?:tempat|lokasi|bertempat\s+di|venue|ruang(?:an)?)\s*[:.-]?\s*([^\n\r,]+(?:,\s*[^\n\r,]+)?)/i
+    );
+    if (placeEventMatch && placeEventMatch[1]) {
+      const candidate = placeEventMatch[1].trim().replace(/^[\*•\-\s]+/, '');
+      if (candidate.length >= 3 && !/^(?:pukul|jam|hari|tanggal|-)$/i.test(candidate)) {
+        placeEvent = candidate.slice(0, 220);
+      }
+    }
+
     const data: ExtractedSuratData = {
       kategoriSurat,
       tanggalSurat,
@@ -1001,6 +1020,7 @@ ${pdfText.slice(0, 6000)}
       event: cleanEventName,
       dateEvent,
       timeEvent,
+      placeEvent,
       picPengirim: picPengirim.slice(0, 100),
       picName: picName.slice(0, 100),
       picPhoneNumber: picPhone.slice(0, 50),
