@@ -9,6 +9,7 @@ import { cariSuratHandler } from './handlers/cariSuratHandler';
 import { hybridSearchHandler } from './handlers/hybridSearchHandler';
 import { bantuanHandler } from './handlers/bantuanHandler';
 import { sessionService, BotState, UserSession } from '../services/sessionService';
+import { pdfService } from '../services/pdfService';
 import { nluService, NluResult } from '../services/nluService';
 import { jadwalService } from '../services/jadwalService';
 import { extractDateRangeFromText } from '../utils/dateHelper';
@@ -98,13 +99,61 @@ export class MessageRouter {
       return bantuanHandler.showBantuanMenu(session);
     }
 
-    // 4. Tangani Pengunggahan Berkas Media (Dokumen PDF atau Gambar/Foto Surat)
+    // 4. Tangani Pengunggahan Berkas Media (Dokumen PDF atau Gambar/Foto Surat atau Lembar Disposisi)
     if (payload.media) {
       const ext = path.extname(payload.media.fileName).toLowerCase();
       const isImg =
         payload.media.isImage === true ||
         ['.jpg', '.jpeg', '.png', '.webp', '.bmp'].includes(ext) ||
         Boolean(payload.media.mimeType && payload.media.mimeType.startsWith('image/'));
+
+      // 4a. Jika sesi sedang dalam status menunggu upload berkas disposisi
+      if (session.state === BotState.DISPOSISI_UPLOAD_BERKAS) {
+        return disposisiHandler.handleDirectUpload(
+          session,
+          payload.media.filePath,
+          payload.media.fileName,
+          isImg
+        );
+      }
+
+      // 4b. Jika nama file atau caption teks memuat kata kunci disposisi
+      const isDisposisiFile =
+        payload.media.fileName.toLowerCase().includes('disposisi') ||
+        (payload.text && payload.text.toLowerCase().includes('disposisi'));
+
+      if (isDisposisiFile) {
+        return disposisiHandler.handleDirectUpload(
+          session,
+          payload.media.filePath,
+          payload.media.fileName,
+          isImg
+        );
+      }
+
+      // 4c. Jika berupa dokumen PDF, cek apakah memuat teks 'LEMBAR DISPOSISI'
+      if (!isImg) {
+        try {
+          const rawPdfText = await pdfService.extractText(payload.media.filePath);
+          const upperText = (rawPdfText || '').toUpperCase();
+          if (
+            upperText.includes('LEMBAR DISPOSISI') ||
+            (upperText.includes('DISPOSISI') && (upperText.includes('DITERUSKAN') || upperText.includes('AGENDA')))
+          ) {
+            console.log(
+              `[MessageRouter] Dokumen PDF '${payload.media.fileName}' terdeteksi sebagai LEMBAR DISPOSISI. Mengalihkan ke DisposisiHandler...`
+            );
+            return disposisiHandler.handleDirectUpload(
+              session,
+              payload.media.filePath,
+              payload.media.fileName,
+              false
+            );
+          }
+        } catch (pdfErr) {
+          console.warn('[MessageRouter] Gagal membaca teks PDF untuk deteksi awal disposisi:', pdfErr);
+        }
+      }
 
       if (isImg) {
         return suratMasukHandler.handleDirectImageUpload(
@@ -220,7 +269,11 @@ export class MessageRouter {
       session.state === BotState.SURAT_MASUK_EDIT_TEMPLATE ||
       session.state === BotState.SURAT_MASUK_INPUT_NILAI_KOREKSI ||
       session.state === BotState.SURAT_MASUK_INPUT_PERIHAL_MANUAL ||
-      session.state === BotState.SURAT_MASUK_INPUT_AGENDA_MANUAL;
+      session.state === BotState.SURAT_MASUK_INPUT_AGENDA_MANUAL ||
+      session.state === BotState.DISPOSISI_INPUT_NILAI_KOREKSI ||
+      session.state === BotState.DISPOSISI_INPUT_AGENDA_MANUAL ||
+      session.state === BotState.DISPOSISI_EDIT_FIELD ||
+      session.state === BotState.DISPOSISI_REVIEW_DATA;
 
     let isDifferentFeature = false;
 
@@ -229,6 +282,7 @@ export class MessageRouter {
     } else if (isJadwalState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
+        nlu.intent === 'INPUT_DISPOSISI' ||
         nlu.intent === 'CARI_SURAT' ||
         nlu.intent === 'RIWAYAT' ||
         nlu.intent === 'DISPOSISI' ||
@@ -238,6 +292,7 @@ export class MessageRouter {
     } else if (isCariSuratState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
+        nlu.intent === 'INPUT_DISPOSISI' ||
         nlu.intent.startsWith('JADWAL_') ||
         nlu.intent === 'DISPOSISI' ||
         nlu.intent === 'CARI_UMUM' ||
@@ -246,6 +301,7 @@ export class MessageRouter {
     } else if (isDisposisiState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
+        nlu.intent === 'INPUT_DISPOSISI' ||
         nlu.intent.startsWith('JADWAL_') ||
         nlu.intent === 'CARI_SURAT' ||
         nlu.intent === 'RIWAYAT' ||
@@ -255,6 +311,7 @@ export class MessageRouter {
     } else if (isRiwayatState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
+        nlu.intent === 'INPUT_DISPOSISI' ||
         nlu.intent.startsWith('JADWAL_') ||
         nlu.intent === 'DISPOSISI' ||
         nlu.intent === 'CARI_SURAT' ||
@@ -269,6 +326,7 @@ export class MessageRouter {
       isDifferentFeature =
         !isConfirmationOrFormInput &&
         (nlu.intent.startsWith('JADWAL_') ||
+          nlu.intent === 'INPUT_DISPOSISI' ||
           nlu.intent === 'DISPOSISI' ||
           nlu.intent === 'CARI_SURAT' ||
           nlu.intent === 'RIWAYAT' ||
@@ -409,6 +467,28 @@ export class MessageRouter {
       case BotState.DISPOSISI_INPUT_NOMOR:
         return disposisiHandler.handleSearch(session, textInput);
 
+      case BotState.DISPOSISI_UPLOAD_BERKAS:
+        return this.handleConversationalInterruption(
+          session,
+          textInput,
+          `📄 *Menunggu Berkas Disposisi*\n\n` +
+          `Silakan kirimkan file PDF atau foto lembar disposisi Anda ke sini ya.\n\n` +
+          `_(Ketik *Batal* untuk membatalkan)_`,
+          nlu
+        );
+
+      case BotState.DISPOSISI_REVIEW_DATA:
+        return disposisiHandler.handleReviewResponse(session, textInput);
+
+      case BotState.DISPOSISI_EDIT_FIELD:
+        return disposisiHandler.handleEditChoice(session, textInput);
+
+      case BotState.DISPOSISI_INPUT_NILAI_KOREKSI:
+        return disposisiHandler.handleEditValue(session, textInput);
+
+      case BotState.DISPOSISI_INPUT_AGENDA_MANUAL:
+        return disposisiHandler.handleAgendaManualInput(session, textInput);
+
       // Alur Riwayat
       case BotState.RIWAYAT_LIST:
         return riwayatHandler.handleListInput(session, textInput);
@@ -455,6 +535,10 @@ export class MessageRouter {
       if (session.draftSurat) {
         await suratMasukHandler.handleFinalConfirm(session, '2', nlu);
       }
+      if (session.draftDisposisi?.tempFilePath) {
+        pdfService.deleteTempPdf(session.draftDisposisi.tempFilePath);
+      }
+      sessionService.clearDisposisiDraft(session.whatsappNumber);
       sessionService.resetSession(session.whatsappNumber);
       const cancelNote = `Baik *${session.userName}*, proses sebelumnya telah dibatalkan.`;
       const reply = nlu.conversationalReply && nlu.conversationalReply.toLowerCase().includes('batal')
@@ -468,6 +552,10 @@ export class MessageRouter {
       if (session.draftSurat) {
         await suratMasukHandler.handleFinalConfirm(session, '2', nlu);
       }
+      if (session.draftDisposisi?.tempFilePath) {
+        pdfService.deleteTempPdf(session.draftDisposisi.tempFilePath);
+      }
+      sessionService.clearDisposisiDraft(session.whatsappNumber);
       sessionService.deleteSession(session.whatsappNumber);
       return {
         text:
@@ -771,6 +859,11 @@ export class MessageRouter {
           return prependIntro(res, nlu.conversationalReply);
         }
         const res = await jadwalHandler.promptSearch(session);
+        return prependIntro(res, nlu.conversationalReply);
+      }
+
+      case 'INPUT_DISPOSISI': {
+        const res = await disposisiHandler.promptUpload(session);
         return prependIntro(res, nlu.conversationalReply);
       }
 

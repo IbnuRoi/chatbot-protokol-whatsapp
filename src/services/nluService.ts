@@ -6,6 +6,7 @@ import { isPureGreeting, isFormConfirmationInput } from '../utils/textHelper';
 export type NluIntent =
   | 'GREETING'
   | 'SURAT_MASUK'
+  | 'INPUT_DISPOSISI'
   | 'JADWAL_HARI_INI'
   | 'JADWAL_BESOK'
   | 'JADWAL_BERIKUTNYA'
@@ -283,6 +284,51 @@ export class NluService {
       }
     }
 
+    // 0c. Shortcut langsung untuk Input / Catat Lembar Disposisi
+    if (
+      /\b(?:input|catat|rekam|tambah|unggah|upload)\s+(?:lembar\s+)?disposisi\b/i.test(cleanText) ||
+      /\bdisposisi\s+(?:baru|surat\s+masuk)\b/i.test(cleanText)
+    ) {
+      return {
+        intent: 'INPUT_DISPOSISI',
+        confidence: 1.0,
+        conversationalReply: `Baik ${userName}, silakan kirimkan dokumen atau foto lembar disposisinya:`,
+        entities: {},
+      };
+    }
+
+    if (currentState === 'DISPOSISI_REVIEW_DATA') {
+      const isConfirm =
+        lowerText === '1' || lowerText === 'ya' || lowerText === 'simpan' || lowerText === 'sesuai' || lowerText === 'ok';
+      const isKoreksi =
+        lowerText === '2' || lowerText === 'koreksi' || lowerText === 'ubah' || lowerText === 'edit';
+      if (isConfirm || isKoreksi) {
+        return {
+          intent: 'SUBMIT_STEP',
+          confidence: 1.0,
+          conversationalReply: isConfirm
+            ? `Baik ${userName}, memproses penyimpanan lembar disposisi...`
+            : `Silakan pilih bagian data yang ingin Anda koreksi:`,
+          entities: {},
+        };
+      }
+    }
+
+    if (
+      currentState === 'DISPOSISI_EDIT_FIELD' ||
+      currentState === 'DISPOSISI_INPUT_NILAI_KOREKSI' ||
+      currentState === 'DISPOSISI_INPUT_AGENDA_MANUAL'
+    ) {
+      if (lowerText !== 'batal' && lowerText !== 'kembali' && lowerText !== '/cancel') {
+        return {
+          intent: 'SUBMIT_STEP',
+          confidence: 1.0,
+          conversationalReply: `Memproses data disposisi...`,
+          entities: {},
+        };
+      }
+    }
+
     const client = this.getClient();
 
     if (!client) {
@@ -306,23 +352,26 @@ export class NluService {
         `- JANGAN PERNAH menyertakan instruksi menu kaku/robotik di balasanmu, seperti "Ketik angka 1 - 6...", "Ketik *menu*...", dsb.\n` +
         `- JANGAN PERNAH menyertakan placeholder dalam tanda kurung siku seperti "[insert ...]", "[sebutkan ...]", "[detail ...]", "[rincian]".\n` +
         `- JANGAN gunakan garis pemisah panjang (seperti "━━━━━━━━━━").\n\n` +
-        `=== PANDUAN 6 FITUR UTAMA SISTEM (KLASIFIKASI SEIMBANG & TEPAT SASARAN) ===\n` +
+        `=== PANDUAN FITUR UTAMA SISTEM (KLASIFIKASI SEIMBANG & TEPAT SASARAN) ===\n` +
         `1. REGISTRASI SURAT MASUK (Intent: "SURAT_MASUK"):\n` +
         `   - Pengguna ingin mendaftarkan, membuat, menginput, atau mengunggah surat masuk baru.\n` +
         `   - Contoh: "input surat baru", "registrasi surat masuk", "mau daftar surat", "bikin surat", "upload dokumen surat", "tambah surat masuk".\n\n` +
-        `2. PENCARIAN ARSIP SURAT (Intent: "CARI_SURAT"):\n` +
+        `2. PENCATATAN LEMBAR DISPOSISI (Intent: "INPUT_DISPOSISI"):\n` +
+        `   - Pengguna ingin mencatat, menginput, mengunggah, atau merekam berkas lembar disposisi baru dari pimpinan.\n` +
+        `   - Contoh: "input disposisi", "catat disposisi", "upload lembar disposisi", "unggah disposisi", "rekam disposisi", "tambah disposisi".\n\n` +
+        `3. PENCARIAN ARSIP SURAT (Intent: "CARI_SURAT"):\n` +
         `   - Pengguna ingin mencari dokumen / arsip surat masuk berdasarkan perihal, topik, instansi, pengirim, atau kata kunci tertentu.\n` +
         `   - Contoh: "carikan surat tentang vokasi", "cari surat rakor", "dokumen k3", "surat dari kemenkeu", "cek surat audiensi", "surat permohonan".\n` +
         `   - WAJIB ekstrak entities.keyword (kata kunci/topik perihal surat).\n` +
         `   - CATATAN: Jika pengguna meminta "carikan surat terbaru", "surat terbaru", "surat terakhir", atau "surat yang baru masuk", klasifikasikan sebagai "RIWAYAT" atau "CARI_SURAT" dengan keyword="terbaru".\n\n` +
-        `3. RIWAYAT ARSIP SURAT MASUK (Intent: "RIWAYAT"):\n` +
+        `4. RIWAYAT ARSIP SURAT MASUK (Intent: "RIWAYAT"):\n` +
         `   - Pengguna ingin melihat daftar / log riwayat surat masuk terkini atau terbaru.\n` +
         `   - Contoh: "carikan surat terbaru", "surat terbaru", "surat masuk terbaru", "lihat surat masuk", "daftar surat", "riwayat surat masuk", "surat terakhir", "arsip surat terkini".\n\n` +
-        `4. PELACAKAN STATUS DISPOSISI (Intent: "DISPOSISI"):\n` +
+        `5. PELACAKAN STATUS DISPOSISI (Intent: "DISPOSISI"):\n` +
         `   - Pengguna ingin melacak atau mengecek status disposisi surat / nomor agenda.\n` +
         `   - Contoh: "lacak disposisi", "cek status disposisi", "status surat 320/M/PH/IX/2026", "surat nomor 123 sudah disposisi belum?", "disposisi surat rakor".\n` +
         `   - WAJIB ekstrak entities.nomorSurat (nomor agenda atau nomor surat jika disebutkan).\n\n` +
-        `5. JADWAL & KEGIATAN PROTOKOL (Intent: "JADWAL_*"):\n` +
+        `6. JADWAL & KEGIATAN PROTOKOL (Intent: "JADWAL_*"):\n` +
         `   - HANYA gunakan jika pengguna menanyakan kegiatan, agenda pimpinan, rapat, atau acara protokol:\n` +
         `   * JADWAL_HARI_INI: Agenda HARI INI saja ("jadwal hari ini", "agenda hari ini", "ada acara apa hari ini").\n` +
         `   * JADWAL_BESOK: Agenda BESOK saja ("jadwal besok", "agenda besok", "kegiatan besok").\n` +
@@ -330,12 +379,12 @@ export class NluService {
         `   * JADWAL_RENTANG: Agenda rentang waktu spesifik ("jadwal 2 hari kedepan", "3 hari ke depan", "5 hari kedepan", "seminggu kedepan", "dua minggu kedepan", "10 hari ke depan"). Ekstrak entities.rentangHari (integer) & entities.rentangLabel.\n` +
         `   * JADWAL_MENDATANG: Agenda masa depan umum tanpa angka ("jadwal mendatang", "agenda ke depan", "kegiatan akan datang").\n` +
         `   * JADWAL_CARI: Mencari agenda kegiatan spesifik berdasarkan tanggal tertentu atau nama kegiatan ("jadwal tanggal 18 september", "jadwal rakor", "agenda bksti"). Ekstrak entities.tanggal (YYYY-MM-DD) atau entities.keyword.\n\n` +
-        `6. PENCARIAN UMUM TERPADU / HYBRID (Intent: "CARI_UMUM"):\n` +
+        `7. PENCARIAN UMUM TERPADU / HYBRID (Intent: "CARI_UMUM"):\n` +
         `   - WAJIB digunakan jika pengguna menanyakan atau mencari topik, kata kunci, isu, nama instansi/organisasi yang TIDAK SECARA KHUSUS membatasi hanya pada 'surat' saja atau hanya pada 'jadwal' saja, ATAU jika pengguna menanyakan surat dan jadwal sekaligus.\n` +
         `   - Contoh: "ada info tentang vokasi?", "info vokasi", "vokasi", "tentang k3", "kunker papua", "ada kegiatan atau surat apa soal amazon?", "ada apa tentang apindo?", "apakah ada jadwal atau surat perihal pelatihan?", "informasi bnn".\n` +
         `   - Ekstrak entities.keyword = kata kunci topik pencarian.\n` +
         `   - Bot akan memeriksa arsip surat dan jadwal kegiatan sekaligus, lalu menyajikannya secara bersamaan dalam SATU bubble chat bila keduanya memiliki hasil yang sesuai!\n\n` +
-        `7. BANTUAN & PANDUAN (Intent: "BANTUAN"):\n` +
+        `8. BANTUAN & PANDUAN (Intent: "BANTUAN"):\n` +
         `   - Pengguna meminta panduan atau menu bantuan ("bantuan", "help", "panduan", "cara pakai").\n\n` +
         `=== ATURAN MUTLAK PERALIHAN KONTEKS (CONTEXT SWITCHING) ===\n` +
         `- Pengguna DAPAT beralih atau meminta fitur lain KAPAN SAJA di tengah alur percakapan!\n` +
@@ -349,7 +398,7 @@ export class NluService {
         `- Jika menanyakan identitas bot ("kamu siapa?", "siapa namamu?"): intent = "CHITCHAT".\n\n` +
         `WAJIB menjawab HANYA dalam format JSON valid berikut tanpa teks pendahuluan atau penutup apapun:\n` +
         `{\n` +
-        `  "intent": "GREETING | SURAT_MASUK | JADWAL_HARI_INI | JADWAL_BESOK | JADWAL_BERIKUTNYA | JADWAL_MENDATANG | JADWAL_RENTANG | JADWAL_CARI | DISPOSISI | RIWAYAT | CARI_SURAT | CARI_UMUM | BANTUAN | BATAL | SELESAI | CHITCHAT | SUBMIT_STEP",\n` +
+        `  "intent": "GREETING | SURAT_MASUK | INPUT_DISPOSISI | JADWAL_HARI_INI | JADWAL_BESOK | JADWAL_BERIKUTNYA | JADWAL_MENDATANG | JADWAL_RENTANG | JADWAL_CARI | DISPOSISI | RIWAYAT | CARI_SURAT | CARI_UMUM | BANTUAN | BATAL | SELESAI | CHITCHAT | SUBMIT_STEP",\n` +
         `  "conversationalReply": "HANYA 1 kalimat sapaan/pengantar singkat (contoh: 'Halo ${userName}, ini jadwal kegiatan protokol hari ini:'). DILARANG MENULIS DAFTAR JADWAL/JAM/SURAT APAPUN!",\n` +
         `  "entities": {\n` +
         `    "keyword": "kata kunci pencarian jika ada",\n` +
@@ -1223,6 +1272,23 @@ export class NluService {
 
     // 7. Disposisi
     if (lower.includes('disposisi')) {
+      if (
+        lower.includes('input') ||
+        lower.includes('catat') ||
+        lower.includes('unggah') ||
+        lower.includes('upload') ||
+        lower.includes('rekam') ||
+        lower.includes('tambah') ||
+        lower.includes('masukkan')
+      ) {
+        return {
+          intent: 'INPUT_DISPOSISI',
+          confidence: 0.9,
+          conversationalReply: `Baik ${userName}, silakan kirimkan dokumen atau foto lembar disposisinya:`,
+          entities: {},
+        };
+      }
+
       const matches = text.match(/([A-Z0-9\-\/]{4,})/i);
       const nomor = matches && !matches[1].toLowerCase().includes('disposisi') ? matches[1] : undefined;
       return {

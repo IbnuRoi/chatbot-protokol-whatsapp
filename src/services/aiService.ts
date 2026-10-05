@@ -3,7 +3,7 @@ import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
 import { ENV } from '../config/env';
-import { ExtractedSuratData } from './sessionService';
+import { ExtractedSuratData, ExtractedDisposisiData } from './sessionService';
 import { splitPicNameAndPhone } from '../utils/textHelper';
 import { imageService } from './imageService';
 import { pdfService } from './pdfService';
@@ -1432,6 +1432,264 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
     ];
     return `${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`;
+  }
+
+  /**
+   * Ekstraksi metadata dan isi Lembar Disposisi dari berkas PDF (baik PDF digital maupun scan fisik)
+   */
+  public async extractDisposisiFromPdf(
+    pdfFilePath: string,
+    originalFileName?: string
+  ): Promise<ExtractedDisposisiData> {
+    const pdfText = await pdfService.extractText(pdfFilePath);
+    const isScanned = await pdfService.isScannedPdf(pdfFilePath, pdfText);
+
+    if (isScanned) {
+      console.log(
+        `[AiService] Lembar disposisi '${originalFileName || path.basename(pdfFilePath)}' berupa scan fisik. Merender ke gambar vision...`
+      );
+      const renderedPages = await pdfService.renderPdfPagesToImages(pdfFilePath, 3);
+      if (renderedPages.length > 0) {
+        try {
+          return await this.extractDisposisiFromImages(renderedPages, originalFileName);
+        } finally {
+          pdfService.cleanupRenderedPages(renderedPages);
+        }
+      }
+    }
+
+    if (pdfText && pdfText.trim().length > 30) {
+      return this.extractDisposisiFromText(pdfText, originalFileName);
+    }
+
+    const renderedPages = await pdfService.renderPdfPagesToImages(pdfFilePath, 3);
+    if (renderedPages.length > 0) {
+      try {
+        return await this.extractDisposisiFromImages(renderedPages, originalFileName);
+      } finally {
+        pdfService.cleanupRenderedPages(renderedPages);
+      }
+    }
+
+    return this.extractDisposisiFromText(pdfText || '', originalFileName);
+  }
+
+  /**
+   * Ekstraksi Lembar Disposisi dari teks digital
+   */
+  public async extractDisposisiFromText(
+    text: string,
+    originalFileName?: string
+  ): Promise<ExtractedDisposisiData> {
+    const isUsingOpenRouter = Boolean(this.openAiClient);
+    let model = 'openrouter/free';
+    if (isUsingOpenRouter) {
+      if (ENV.CHAT_MODEL && !ENV.CHAT_MODEL.includes('free') && ENV.CHAT_MODEL.includes('/')) {
+        model = ENV.CHAT_MODEL;
+      } else {
+        model = 'google/gemini-2.5-flash';
+      }
+    } else {
+      model = ENV.PDF_EXTRACTION_MODEL || 'gemini-2.5-flash';
+    }
+
+    const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan (Kemnaker) yang bertugas mengekstrak formulir LEMBAR DISPOSISI resmi Kemnaker.
+
+Teks dokumen Lembar Disposisi:
+"""
+${text.slice(0, 10000)}
+"""
+
+TUGAS UTAMA:
+Bacalah teks dokumen di atas dan ekstrak data disposisi secara akurat:
+1. "isDisposisi": boolean (apakah ini formulir lembar disposisi)
+2. "nomorAgenda": nomor agenda surat (CONTOH: "UND/2026/09/0001" atau "0012/UND/IX/2026"). JANGAN mengambil nomor surat!
+3. "nomorSurat": nomor surat dinas pengirim yang dicantumkan di lembar disposisi (jika ada).
+4. "asalSurat": instansi / pengirim surat (jika ada).
+5. "perihal": perihal atau hal surat yang tertera.
+6. "tanggalDisposisi": tanggal lembar disposisi (format: "DD MMMM YYYY", misal "5 Oktober 2026" atau tanggal hari ini).
+7. "pemberiDisposisi": pejabat pemberi disposisi (default: "Menteri Ketenagakerjaan").
+8. "diteruskanKepada": array string nama-nama pejabat yang dituju/dicentang (misal: ["Wakil Menteri", "Sekretaris Jenderal", "Dirjen PHI & Jamsos TK"]).
+9. "arahanDisposisi": array string instruksi/tindakan yang dicentang (misal: ["Agendakan", "Hadiri", "Wakili", "Tindak Lanjuti", "Pelajari / Telaah", "Siapkan Bahan"]).
+10. "catatan": catatan tertulis / instruksi khusus pimpinan.
+
+KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN TANPA PENJELASAN LAIN:
+`;
+
+    let rawText = '';
+    try {
+      if (this.openAiClient) {
+        const res = await this.openAiClient.chat.completions.create({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1,
+          max_tokens: 1500,
+        });
+        rawText = res.choices?.[0]?.message?.content || '';
+        if (!rawText && (res.choices?.[0]?.message as any)?.reasoning) {
+          rawText = (res.choices?.[0]?.message as any).reasoning;
+        }
+      } else if (this.genAiClient) {
+        const res = await this.genAiClient.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        });
+        rawText = res.text || '';
+      }
+    } catch (e) {
+      console.warn('[AiService] Ekstraksi disposisi dari teks gagal:', e);
+    }
+
+    return this.parseDisposisiResponse(rawText, originalFileName);
+  }
+
+  /**
+   * Ekstraksi Lembar Disposisi langsung dari gambar/foto (Multimodal Vision AI)
+   */
+  public async extractDisposisiFromImages(
+    imagePaths: string[],
+    originalFileName?: string
+  ): Promise<ExtractedDisposisiData> {
+    const isUsingOpenRouter = Boolean(this.openAiClient);
+    let model = 'openrouter/free';
+    if (isUsingOpenRouter) {
+      if (ENV.CHAT_MODEL && !ENV.CHAT_MODEL.includes('free') && ENV.CHAT_MODEL.includes('/')) {
+        model = ENV.CHAT_MODEL;
+      } else {
+        model = 'google/gemini-2.5-flash';
+      }
+    } else {
+      model = ENV.PDF_EXTRACTION_MODEL || 'gemini-2.5-flash';
+    }
+
+    const validPaths = imagePaths.filter((p) => fs.existsSync(p));
+    if ((this.genAiClient || this.openAiClient) && validPaths.length > 0) {
+      try {
+        const imagePayloads: Array<{ mimeType: string; base64: string }> = [];
+        for (const imgPath of validPaths) {
+          const buffer = fs.readFileSync(imgPath);
+          const ext = path.extname(imgPath).toLowerCase();
+          const mimeType = imageService.detectImageMimeType(buffer, ext) || 'image/jpeg';
+          imagePayloads.push({
+            mimeType,
+            base64: buffer.toString('base64'),
+          });
+        }
+
+        const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan (Kemnaker) yang ahli dalam membaca LEMBAR DISPOSISI resmi Kemnaker.
+
+TUGAS UTAMA:
+Bacalah formulir / lembar disposisi terlampir secara teliti (baik scan scanner, foto kamera HP, dokumen cetak bertanda tangan/centangan pena).
+
+Ekstrak entitas data berikut:
+1. "isDisposisi": boolean (true jika dokumen adalah formulir lembar disposisi)
+2. "nomorAgenda": nomor agenda surat yang tertera pada kolom Nomor Agenda (CONTOH: "UND/2026/09/0001", "0012/UND/IX/2026", "PH/2026/09/0003"). SANGAT PENTING: Jangan tertukar dengan nomor surat dinas pengirim!
+3. "nomorSurat": nomor surat pengirim jika tercantum pada lembar disposisi.
+4. "asalSurat": instansi / pengirim surat yang tertulis pada kolom Surat Dari / Asal Surat.
+5. "perihal": perihal atau ringkasan isi surat yang tertera.
+6. "tanggalDisposisi": tanggal pemberian disposisi (misal: "5 Oktober 2026").
+7. "pemberiDisposisi": pejabat yang mendisposisikan surat (default: "Menteri Ketenagakerjaan").
+8. "diteruskanKepada": daftar pejabat yang dicentang / ditandai / ditulis pada bagian 'Diteruskan Kepada' (CONTOH: ["Wakil Menteri", "Sekretaris Jenderal", "Dirjen Binapenta & PKK", "Dirjen PHI & Jamsos TK", "Dirjen Binalavotas", "Dirjen Binwasnaker & K3", "Inspektur Jenderal", "Kepala Barenbang", "Kepala Biro Protokol", "Kepala Biro Humas", "Kepala Biro Hukum"]). HANYA sertakan yang benar-benar dicentang / dipilih!
+9. "arahanDisposisi": daftar petunjuk / tindakan yang dicentang atau ditandai pada lembar disposisi (CONTOH: ["Agendakan", "Hadiri", "Wakili", "Tindak Lanjuti", "Pelajari / Telaah", "Siapkan Bahan / Tanggapan", "Koordinasikan", "Untuk Diketahui / Arsip"]).
+10. "catatan": catatan tambahan / arahan tulisan tangan pimpinan yang tertulis pada kolom catatan (CONTOH: "Dimohon hadir didampingi Biro Hukum", atau "-" jika kosong).
+
+KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN TANPA PENJELASAN LAIN:
+`;
+
+        let rawText = '';
+        if (this.openAiClient) {
+          const content: any[] = [{ type: 'text', text: prompt }];
+          for (const item of imagePayloads) {
+            content.push({
+              type: 'image_url',
+              image_url: {
+                url: `data:${item.mimeType};base64,${item.base64}`,
+              },
+            });
+          }
+
+          const res = await this.openAiClient.chat.completions.create({
+            model,
+            messages: [{ role: 'user', content }],
+            temperature: 0.1,
+            max_tokens: 1500,
+          });
+          rawText = res.choices?.[0]?.message?.content || '';
+          if (!rawText && (res.choices?.[0]?.message as any)?.reasoning) {
+            rawText = (res.choices?.[0]?.message as any).reasoning;
+          }
+        } else if (this.genAiClient) {
+          const parts: any[] = [{ text: prompt }];
+          for (const item of imagePayloads) {
+            parts.push({
+              inlineData: {
+                mimeType: item.mimeType,
+                data: item.base64,
+              },
+            });
+          }
+
+          const res = await this.genAiClient.models.generateContent({
+            model,
+            contents: [{ role: 'user', parts }],
+          });
+          rawText = res.text || '';
+        }
+
+        const parsed = this.parseDisposisiResponse(rawText, originalFileName);
+        if (parsed) return parsed;
+      } catch (err) {
+        console.warn(`[AiService] Ekstraksi Vision AI disposisi (${model}) gagal:`, err);
+      }
+    }
+
+    return this.parseDisposisiResponse('', originalFileName);
+  }
+
+  /**
+   * Helper parsing JSON output disposisi
+   */
+  private parseDisposisiResponse(rawText: string, originalFileName?: string): ExtractedDisposisiData {
+    let cleanJson = (rawText || '')
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
+      .replace(/```(?:json)?/gi, '')
+      .replace(/```/g, '')
+      .trim();
+    const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
+
+    let parsed: any = {};
+    if (jsonMatch) {
+      try {
+        parsed = JSON.parse(jsonMatch[0]);
+      } catch (e) {}
+    }
+
+    const diteruskan = Array.isArray(parsed.diteruskanKepada)
+      ? parsed.diteruskanKepada.map((s: any) => String(s).trim()).filter(Boolean)
+      : (typeof parsed.diteruskanKepada === 'string' && parsed.diteruskanKepada.trim() !== '-'
+          ? parsed.diteruskanKepada.split(/[,;\n]+/).map((s: string) => s.trim()).filter(Boolean)
+          : []);
+
+    const arahan = Array.isArray(parsed.arahanDisposisi)
+      ? parsed.arahanDisposisi.map((s: any) => String(s).trim()).filter(Boolean)
+      : (typeof parsed.arahanDisposisi === 'string' && parsed.arahanDisposisi.trim() !== '-'
+          ? parsed.arahanDisposisi.split(/[,;\n]+/).map((s: string) => s.trim()).filter(Boolean)
+          : []);
+
+    const cleanAgenda = String(parsed.nomorAgenda || '').trim();
+    const cleanFileName = originalFileName || 'disposisi.pdf';
+
+    return {
+      nomorAgenda: cleanAgenda && cleanAgenda !== '-' ? cleanAgenda : '',
+      nomorSurat: String(parsed.nomorSurat || '').trim() || '-',
+      asalSurat: String(parsed.asalSurat || '').trim() || '-',
+      perihal: String(parsed.perihal || '').trim() || '-',
+      tanggalDisposisi: String(parsed.tanggalDisposisi || '').trim() || this.getTodayFormatted(),
+      pemberiDisposisi: String(parsed.pemberiDisposisi || '').trim() || 'Menteri Ketenagakerjaan',
+      diteruskanKepada: diteruskan.length > 0 ? diteruskan : ['Sekretaris Jenderal'],
+      arahanDisposisi: arahan.length > 0 ? arahan : ['Agendakan'],
+      catatan: String(parsed.catatan || '').trim() || '-',
+    };
   }
 }
 

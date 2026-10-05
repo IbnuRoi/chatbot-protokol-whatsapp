@@ -44,6 +44,8 @@ storage/letters/private/*
 !storage/letters/private/.gitkeep
 storage/private/*
 !storage/private/.gitkeep
+storage/dispositions/*
+!storage/dispositions/.gitkeep
 
 # Operating System & IDE Files
 .DS_Store

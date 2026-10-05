@@ -24,6 +24,11 @@ export enum BotState {
 
   // Alur Disposisi
   DISPOSISI_INPUT_NOMOR = 'DISPOSISI_INPUT_NOMOR',
+  DISPOSISI_UPLOAD_BERKAS = 'DISPOSISI_UPLOAD_BERKAS',
+  DISPOSISI_REVIEW_DATA = 'DISPOSISI_REVIEW_DATA',
+  DISPOSISI_EDIT_FIELD = 'DISPOSISI_EDIT_FIELD',
+  DISPOSISI_INPUT_NILAI_KOREKSI = 'DISPOSISI_INPUT_NILAI_KOREKSI',
+  DISPOSISI_INPUT_AGENDA_MANUAL = 'DISPOSISI_INPUT_AGENDA_MANUAL',
 
   // Alur Riwayat
   RIWAYAT_LIST = 'RIWAYAT_LIST',
@@ -84,6 +89,37 @@ export interface SuratDraftData {
   finalSubject?: string;
 }
 
+export interface ExtractedDisposisiData {
+  nomorAgenda: string;
+  nomorSurat?: string;
+  asalSurat?: string;
+  perihal?: string;
+  tanggalDisposisi?: string;
+  pemberiDisposisi?: string;
+  diteruskanKepada?: string[];
+  arahanDisposisi?: string[];
+  catatan?: string;
+}
+
+export interface DisposisiDraftData {
+  tempFilePath?: string;
+  tempFileName?: string;
+  finalFileName?: string;
+  finalFileUrl?: string;
+  fileSize?: number;
+  isImage?: boolean;
+  extractedData?: ExtractedDisposisiData;
+  matchedLetter?: {
+    id: number;
+    agendaNumber: string;
+    from: string;
+    subject: string;
+    perihal: string;
+    dateLetter?: string;
+  };
+  fieldBeingEdited?: string;
+}
+
 export interface UserSession {
   whatsappNumber: string;
   userId: number;
@@ -92,6 +128,7 @@ export interface UserSession {
   state: BotState;
   lastActive: Date;
   draftSurat?: SuratDraftData;
+  draftDisposisi?: DisposisiDraftData;
   riwayatPage?: number;
   selectedSuratId?: number;
   searchKeyword?: string;
@@ -164,11 +201,30 @@ class SessionService {
     }
   }
 
+  public updateDisposisiDraft(whatsappNumber: string, partialDraft: Partial<DisposisiDraftData>): void {
+    const session = this.getSession(whatsappNumber);
+    if (session) {
+      session.draftDisposisi = {
+        ...(session.draftDisposisi || {}),
+        ...partialDraft,
+      };
+      session.lastActive = new Date();
+    }
+  }
+
+  public clearDisposisiDraft(whatsappNumber: string): void {
+    const session = this.getSession(whatsappNumber);
+    if (session) {
+      session.draftDisposisi = undefined;
+    }
+  }
+
   public resetSession(whatsappNumber: string): void {
     const session = this.sessions.get(whatsappNumber);
     if (session) {
       session.state = BotState.MAIN_MENU;
       session.draftSurat = undefined;
+      session.draftDisposisi = undefined;
       session.riwayatPage = 0;
       session.selectedSuratId = undefined;
       session.searchKeyword = undefined;

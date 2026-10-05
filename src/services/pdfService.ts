@@ -154,6 +154,31 @@ export class PdfService {
   }
 
   /**
+   * Memindahkan file lembar disposisi dari temp ke storage disposisi (folder lokal / symlink server)
+   */
+  public moveToDispositionStorage(tempFilePath: string, finalFileName: string): string {
+    const uploadDir = ENV.DISPOSITION_STORAGE_PATH;
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    const targetPath = path.join(uploadDir, finalFileName);
+    if (tempFilePath === targetPath && fs.existsSync(targetPath)) {
+      return targetPath;
+    }
+    if (fs.existsSync(targetPath)) {
+      if (fs.existsSync(tempFilePath)) {
+        this.deleteTempPdf(tempFilePath);
+      }
+      return targetPath;
+    }
+    if (fs.existsSync(tempFilePath)) {
+      fs.copyFileSync(tempFilePath, targetPath);
+      this.deleteTempPdf(tempFilePath);
+    }
+    return targetPath;
+  }
+
+  /**
    * Alias backward-compatible untuk memindahkan file ke storage upload
    */
   public moveToPrivateStorage(tempFilePath: string, finalFileName: string): string {

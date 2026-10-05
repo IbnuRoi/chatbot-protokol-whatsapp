@@ -50,6 +50,12 @@ export const ENV = {
   ),
   SESSION_TIMEOUT_MINUTES: 30,
   FILE_URL: process.env.FILE_URL || 'https://pwa-protokol.gatsu51.com/files/letter/',
+  DISPOSITION_STORAGE_PATH: path.resolve(
+    process.cwd(),
+    process.env.DISPOSITION_STORAGE_PATH || './storage/dispositions'
+  ),
+  DISPOSITION_FILE_URL:
+    process.env.DISPOSITION_FILE_URL || 'https://pwa-protokol.gatsu51.com/files/disposition/',
 };
 
 // Pastikan direktori storage tersedia
@@ -59,4 +65,7 @@ if (!fs.existsSync(ENV.TEMP_STORAGE_PATH)) {
 }
 if (!fs.existsSync(ENV.UPLOAD_STORAGE_PATH)) {
   fs.mkdirSync(ENV.UPLOAD_STORAGE_PATH, { recursive: true });
+}
+if (!fs.existsSync(ENV.DISPOSITION_STORAGE_PATH)) {
+  fs.mkdirSync(ENV.DISPOSITION_STORAGE_PATH, { recursive: true });
 }

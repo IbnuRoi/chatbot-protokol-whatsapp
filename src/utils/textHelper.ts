@@ -195,6 +195,33 @@ export function generateLetterFileName(originalOrExtName?: string | null): strin
 }
 
 /**
+ * Menghasilkan format nama berkas unik yang sesuai dengan standar kolom `file` di tabel `dispositions` database.
+ * Format standar sama dengan format letters: {timestamp_10_digit}_{uniqid_13_hex}.{ext}
+ */
+export function generateDispositionFileName(originalOrExtName?: string | null): string {
+  return generateLetterFileName(originalOrExtName);
+}
+
+/**
+ * Mendapatkan URL publik berkas lembar disposisi berdasarkan nama file di database.
+ */
+export function getDispositionFileUrl(fileName?: string | null): string | null {
+  if (!fileName || fileName.trim() === '' || fileName.trim() === '-') {
+    return null;
+  }
+
+  const cleanFile = fileName.trim();
+  if (cleanFile.startsWith('http://') || cleanFile.startsWith('https://')) {
+    return cleanFile;
+  }
+
+  const baseUrl = (ENV.DISPOSITION_FILE_URL || 'https://pwa-protokol.gatsu51.com/files/disposition/').endsWith('/')
+    ? (ENV.DISPOSITION_FILE_URL || 'https://pwa-protokol.gatsu51.com/files/disposition/')
+    : `${ENV.DISPOSITION_FILE_URL || 'https://pwa-protokol.gatsu51.com/files/disposition/'}/`;
+  return `${baseUrl}${cleanFile}`;
+}
+
+/**
  * Memeriksa apakah teks input pengguna murni berupa sapaan/greeting santai atau pembuka percakapan
  * (contoh: "halo", "hai", "pagi", "selamat pagi", "assalamualaikum", "ping", "menu", dsb.)
  * tanpa memuat permintaan atau kata kunci pencarian fitur lainnya.
