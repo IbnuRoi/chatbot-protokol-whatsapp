@@ -7,6 +7,7 @@ import { DisposisiDraftData } from './sessionService';
 import { pdfService } from './pdfService';
 import { generateDispositionFileName, getDispositionFileUrl } from '../utils/textHelper';
 import { parseIndonesianDateToDate } from '../utils/dateHelper';
+import { matchPositionsList, matchActionsList } from '../utils/dispositionMatcher';
 
 export interface SaveDisposisiResult {
   success: boolean;
@@ -240,34 +241,23 @@ export class DisposisiService {
         try {
           const allPositions = await prisma.positions.findMany({
             where: { deleted_at: null },
+            select: { id: true, name: true, alias: true },
           });
 
-          for (const posName of draft.extractedData.diteruskanKepada) {
-            const cleanTarget = posName.toLowerCase().replace(/[^a-z0-9]/g, '');
-            if (!cleanTarget) continue;
+          const matchedPositions = matchPositionsList(draft.extractedData.diteruskanKepada, allPositions);
 
-            const matched = allPositions.find((p) => {
-              const pName = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-              const pAlias = (p.alias || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-              return (
-                pName.includes(cleanTarget) ||
-                cleanTarget.includes(pName) ||
-                (pAlias && (pAlias.includes(cleanTarget) || cleanTarget.includes(pAlias)))
-              );
+          for (const pos of matchedPositions) {
+            await prisma.disposition_positions.create({
+              data: {
+                disposition_id: disp.id,
+                position_id: BigInt(pos.id),
+                note: '',
+                created_by: userName || 'Petugas Protokol',
+                created_at: new Date(),
+                updated_at: new Date(),
+              },
             });
-
-            if (matched) {
-              await prisma.disposition_positions.create({
-                data: {
-                  disposition_id: disp.id,
-                  position_id: matched.id,
-                  note: '',
-                  created_by: userName || 'Petugas Protokol',
-                  created_at: new Date(),
-                  updated_at: new Date(),
-                },
-              });
-            }
+            console.log(`[DisposisiService] Berhasil menautkan jabatan: "${pos.name}" (ID: ${pos.id}) ke disposisi ID: ${disp.id}`);
           }
         } catch (posErr) {
           console.warn('[DisposisiService] Gagal memetakan disposition_positions:', posErr);
@@ -279,29 +269,23 @@ export class DisposisiService {
         try {
           const allActions = await prisma.actions.findMany({
             where: { deleted_at: null },
+            select: { id: true, name: true },
           });
 
-          for (const actName of draft.extractedData.arahanDisposisi) {
-            const cleanTarget = actName.toLowerCase().replace(/[^a-z0-9]/g, '');
-            if (!cleanTarget) continue;
+          const matchedActions = matchActionsList(draft.extractedData.arahanDisposisi, allActions);
 
-            const matched = allActions.find((a) => {
-              const aName = a.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-              return aName.includes(cleanTarget) || cleanTarget.includes(aName);
+          for (const act of matchedActions) {
+            await prisma.disposition_actions.create({
+              data: {
+                disposition_id: disp.id,
+                action_id: BigInt(act.id),
+                note: '',
+                created_by: userName || 'Petugas Protokol',
+                created_at: new Date(),
+                updated_at: new Date(),
+              },
             });
-
-            if (matched) {
-              await prisma.disposition_actions.create({
-                data: {
-                  disposition_id: disp.id,
-                  action_id: matched.id,
-                  note: '',
-                  created_by: userName || 'Petugas Protokol',
-                  created_at: new Date(),
-                  updated_at: new Date(),
-                },
-              });
-            }
+            console.log(`[DisposisiService] Berhasil menautkan arahan: "${act.name}" (ID: ${act.id}) ke disposisi ID: ${disp.id}`);
           }
         } catch (actErr) {
           console.warn('[DisposisiService] Gagal memetakan disposition_actions:', actErr);

@@ -12,6 +12,7 @@ import {
   getDispositionFileUrl,
   generateDispositionFileName,
   isPureGreeting,
+  cleanHtml,
 } from '../../utils/textHelper';
 import { formatWaktuInputIndo } from '../../utils/dateHelper';
 
@@ -161,7 +162,8 @@ export class DisposisiHandler {
 
     const agendaDisplay = letter ? letter.agendaNumber : (ext.nomorAgenda || '-');
     const pengirimDisplay = letter ? letter.from : (ext.asalSurat || '-');
-    const perihalDisplay = letter ? letter.perihal : (ext.perihal || '-');
+    const perihalRaw = letter ? letter.perihal : (ext.perihal || '-');
+    const perihalDisplay = cleanHtml(perihalRaw) || perihalRaw;
 
     const isUpdate = Boolean(draft.existingDispositionId);
     const headerTitle = isUpdate
