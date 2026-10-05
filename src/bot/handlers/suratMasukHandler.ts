@@ -469,10 +469,11 @@ export class SuratMasukHandler {
             (savedData?.placeEvent && savedData.placeEvent !== '-' ? `• 📍 *Tempat Acara*    : ${savedData.placeEvent}\n` : '') +
             `• 👤 *Nama PIC*     : ${picName}\n` +
             `• 📞 *Nomor PIC*    : ${picPhone}\n` +
-            `• 📂 *Status Disposisi*: 🟡 BELUM DISPOSISI\n` +
+            `• 📅 *Jadwal Acara*  : 🟢 Otomatis Terjadwal (Diagendakan)\n` +
+            `• 📂 *Status Disposisi*: 🟡 Belum Ada Disposisi\n` +
             `• 👤 *Diinput Oleh*  : ${userPenginput}\n` +
             `• ⏰ *Waktu Input*   : ${waktuInputStr}\n\n` +
-            `_Catatan: Berkas telah tersimpan di database dan siap ditindaklanjuti lebih lanjut melalui sistem protokol._\n\n` +
+            `_Catatan: Surat telah tersimpan di database dan otomatis langsung masuk ke agenda jadwal kegiatan protokol._\n\n` +
             `Bila ada hal lain yang ingin Anda kelola atau cari, silakan beri tahu saya ya. 😊`,
         };
       } else {
@@ -1454,10 +1455,11 @@ export class SuratMasukHandler {
             `Surat telah resmi tercatat di sistem:\n` +
             `• 📌 *Nomor Agenda*   : ${result.nomorAgenda}\n` +
             fileLine +
-            `• 📂 *Status Disposisi*: 🟡 BELUM DISPOSISI\n` +
+            `• 📅 *Jadwal Acara*    : 🟢 Otomatis Terjadwal (Diagendakan)\n` +
+            `• 📂 *Status Disposisi*: 🟡 Belum Ada Disposisi\n` +
             `• 👤 *Diinput Oleh*    : ${userPenginput}\n` +
             `• ⏰ *Waktu Input*     : ${waktuInputStr}\n\n` +
-            `Berkas PDF telah dipindahkan ke penyimpanan yang aman. Silakan beri tahu saya jika ada hal lain yang bisa dibantu.`,
+            `Berkas PDF telah disimpan dan otomatis diagendakan pada jadwal kegiatan protokol. Silakan beri tahu saya jika ada hal lain yang bisa dibantu.`,
         };
       } else {
         return {

@@ -12,6 +12,7 @@ export interface SuratRegistrationResult {
   message: string;
   nomorAgenda?: string;
   suratId?: number;
+  eventId?: number;
   fileName?: string;
   createdBy?: string;
   createdAt?: Date;
@@ -414,7 +415,7 @@ export class SuratService {
         }
       }
 
-      // Catat activity log
+      // Catat activity log surat
       try {
         await prisma.activity_log.create({
           data: {
@@ -440,11 +441,134 @@ export class SuratService {
         console.warn('Failed to write activity_log:', logErr);
       }
 
+      // Otomatis masukkan ke jadwal kegiatan (tabel events) walaupun belum ada lembar disposisi
+      let createdEvent: any = null;
+      try {
+        // Tentukan tanggal kegiatan (prioritas: parsedDateEvent -> parsedDate -> hari ini waktu WIB)
+        let eventYear: number, eventMonth: number, eventDay: number;
+        if (parsedDateEvent || parsedDate) {
+          const targetDate = (parsedDateEvent || parsedDate)!;
+          eventYear = targetDate.getUTCFullYear();
+          eventMonth = targetDate.getUTCMonth();
+          eventDay = targetDate.getUTCDate();
+        } else {
+          const now = new Date();
+          const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+          const wibDate = new Date(utcMs + 7 * 3600000);
+          eventYear = wibDate.getFullYear();
+          eventMonth = wibDate.getMonth();
+          eventDay = wibDate.getDate();
+        }
+
+        // Tentukan jam mulai (default 09:00 WIB jika tidak ada jam spesifik pada surat)
+        let startH = 9;
+        let startM = 0;
+        if (parsedTimeEvent) {
+          startH = parsedTimeEvent.getUTCHours();
+          startM = parsedTimeEvent.getUTCMinutes();
+        }
+
+        // Kolom events.event_time_start di PostgreSQL tersimpan dengan pergeseran +7 jam
+        // (misal jam 09:00 WIB tersimpan sebagai 16:00:00 UTC)
+        const eventTimeStart = new Date(Date.UTC(eventYear, eventMonth, eventDay, startH + 7, startM, 0, 0));
+
+        let eventTimeFinish: Date | null = null;
+        if (parsedTimeFinish) {
+          const finishH = parsedTimeFinish.getUTCHours();
+          const finishM = parsedTimeFinish.getUTCMinutes();
+          eventTimeFinish = new Date(Date.UTC(eventYear, eventMonth, eventDay, finishH + 7, finishM, 0, 0));
+        }
+
+        // Ambil max ID events untuk menghindari sequence primary key conflict
+        const lastEvent = await prisma.events.findFirst({
+          orderBy: { id: 'desc' },
+          select: { id: true },
+        });
+        const nextEventId = lastEvent ? BigInt(lastEvent.id) + BigInt(1) : BigInt(1);
+
+        // Judul acara diambil dari nama acara atau perihal resmi
+        const eventTitle = (
+          draft.extractedData.namaAcara &&
+          draft.extractedData.namaAcara !== '-' &&
+          draft.extractedData.namaAcara.toLowerCase() !== 'kegiatan'
+            ? draft.extractedData.namaAcara
+            : finalPerihal && finalPerihal !== '-'
+              ? finalPerihal
+              : safeSubject || 'Agenda Kegiatan Protokol'
+        ).trim();
+
+        // Siapkan data event baru
+        const eventDataPayload: Prisma.eventsCreateInput = {
+          title: eventTitle,
+          letter_id: BigInt(surat.id),
+          disposition_id: null,
+          event_time_start: eventTimeStart,
+          event_time_finish: eventTimeFinish,
+          until_finish: 0,
+          is_internal: '0',
+          is_hide_location: '0',
+          time_zone: parsedTimeZone || 'WIB',
+          status: 1n, // 1: onschedule (Terjadwal / Diagendakan)
+          location: safePlaceEvent || 'Gedung Kemnaker RI, Jakarta',
+          pic_name: safePicName && safePicName !== '-' ? safePicName : null,
+          pic_phonenumber: safePicPhone && safePicPhone !== '-' ? safePicPhone : null,
+          created_by: safeCreatorName,
+          created_at: new Date(),
+          updated_at: new Date(),
+        };
+
+        try {
+          createdEvent = await prisma.events.create({
+            data: {
+              ...eventDataPayload,
+              id: nextEventId,
+            },
+          });
+        } catch (evIdErr: any) {
+          console.warn('[SuratService] Insert event dengan nextEventId gagal, mencoba fallback autoincrement ID:', evIdErr.message);
+          createdEvent = await prisma.events.create({
+            data: eventDataPayload,
+          });
+        }
+
+        console.log(`[SuratService] Acara kegiatan berhasil dibuat otomatis untuk surat ${surat.agenda_number} (Event ID: ${createdEvent.id})`);
+
+        // Catat activity log untuk penambahan agenda acara
+        if (createdEvent) {
+          try {
+            await prisma.activity_log.create({
+              data: {
+                log_name: 'default',
+                description: `Menambah Jadwal Kegiatan Otomatis dari Surat ${surat.agenda_number} oleh ${creatorName}`,
+                subject_id: Number(createdEvent.id),
+                subject_type: 'App\\Models\\Events',
+                causer_id: Number(userId),
+                causer_type: 'App\\Models\\User',
+                properties: JSON.stringify({
+                  letterId: Number(surat.id),
+                  agendaNumber: surat.agenda_number,
+                  title: eventTitle,
+                  location: safePlaceEvent || 'Gedung Kemnaker RI, Jakarta',
+                  status: 'Diagendakan',
+                }),
+                created_at: new Date(),
+                updated_at: new Date(),
+              },
+            });
+          } catch (evLogErr) {
+            console.warn('Failed to write activity_log for event:', evLogErr);
+          }
+        }
+      } catch (eventErr: any) {
+        console.error('[SuratService] Gagal membuat jadwal kegiatan otomatis dari surat:', eventErr);
+      }
+
       return {
         success: true,
         message: 'Surat berhasil disimpan ke sistem.',
         nomorAgenda: surat.agenda_number,
         suratId: Number(surat.id),
+        eventId: createdEvent ? Number(createdEvent.id) : undefined,
         fileName: safeFileName,
         createdBy: creatorName,
         createdAt: surat.created_at || new Date(),

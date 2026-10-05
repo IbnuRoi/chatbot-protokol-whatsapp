@@ -100,6 +100,7 @@ export class DisposisiHandler {
             subject: matchedLetter.subject || '-',
             perihal: matchedLetter.note || matchedLetter.subject || '-',
             dateLetter: matchedLetter.date_letter ? String(matchedLetter.date_letter) : undefined,
+            file: matchedLetter.file || undefined,
           }
         : undefined,
     };
@@ -233,7 +234,7 @@ export class DisposisiHandler {
           `• *Nama Berkas*  : ${saveResult.fileName}\n` +
           fileLinkLine +
           `• *Status Surat* : Sudah Disposisi 🟢\n\n` +
-          `Lembar disposisi telah berhasil diarsipkan ke database sistem dan terhubung dengan surat masuk induk.\n\n` +
+          `Lembar disposisi telah digabungkan pada halaman pertama berkas surat dan berhasil diarsipkan ke database sistem.\n\n` +
           `Silakan beri tahu saya jika Anda ingin mencatat disposisi lainnya atau membutuhkan bantuan lain ya.`,
       };
     }
@@ -362,6 +363,7 @@ export class DisposisiHandler {
             subject: matched.subject || '-',
             perihal: matched.note || matched.subject || '-',
             dateLetter: matched.date_letter ? String(matched.date_letter) : undefined,
+            file: matched.file || undefined,
           };
         } else {
           draft.matchedLetter = undefined;
@@ -451,6 +453,7 @@ export class DisposisiHandler {
       subject: matched.subject || '-',
       perihal: matched.note || matched.subject || '-',
       dateLetter: matched.date_letter ? String(matched.date_letter) : undefined,
+      file: matched.file || undefined,
     };
 
     sessionService.updateDisposisiDraft(session.whatsappNumber, draft);

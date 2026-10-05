@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { PDFParse } from 'pdf-parse';
-import { createCanvas } from '@napi-rs/canvas';
+import { createCanvas, loadImage } from '@napi-rs/canvas';
+import { PDFDocument, PageSizes } from 'pdf-lib';
 import { ENV } from '../config/env';
 
 export interface PdfValidationResult {
@@ -282,6 +283,165 @@ export class PdfService {
       } catch (err) {
         console.warn(`[PdfService] Gagal menghapus file render sementara (${imgPath}):`, err);
       }
+    }
+  }
+
+  /**
+   * Menggabungkan lembar disposisi (PDF / gambar) dengan berkas surat masuk asli.
+   * Lembar disposisi diletakkan di halaman pertama (halaman 1),
+   * diikuti seluruh halaman berkas surat masuk (halaman 2 dst).
+   * Berkas hasil penggabungan disimpan ke folder storage/dispositions/.
+   *
+   * @param dispositionPath Path file lembar disposisi sementara (bisa PDF atau gambar JPG/PNG)
+   * @param letterFileName Nama berkas surat masuk di folder storage/letters
+   * @param finalDispositionFileName Nama berkas final yang akan disimpan di storage/dispositions
+   * @returns Object berisi targetPath dan finalFileName (.pdf)
+   */
+  public async mergeDispositionWithLetterPdf(
+    dispositionPath: string,
+    letterFileName: string | null | undefined,
+    finalDispositionFileName: string
+  ): Promise<{ targetPath: string; finalFileName: string }> {
+    const uploadDir = ENV.DISPOSITION_STORAGE_PATH;
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    // Pastikan berkas hasil penggabungan selalu berekstensi .pdf
+    const cleanFinalFileName = finalDispositionFileName.replace(/\.[^.]+$/, '') + '.pdf';
+    const targetPath = path.join(uploadDir, cleanFinalFileName);
+
+    try {
+      const mergedDoc = await PDFDocument.create();
+
+      // 1. Masukkan Lembar Disposisi di Halaman Pertama (halaman 1, dst jika multi-halaman)
+      if (fs.existsSync(dispositionPath)) {
+        const dispExt = path.extname(dispositionPath).toLowerCase();
+        if (dispExt === '.pdf') {
+          try {
+            const dispBuffer = fs.readFileSync(dispositionPath);
+            const dispDoc = await PDFDocument.load(dispBuffer, { ignoreEncryption: true });
+            const dispPages = await mergedDoc.copyPages(dispDoc, dispDoc.getPageIndices());
+            dispPages.forEach((p) => mergedDoc.addPage(p));
+            console.log(`[PdfService] Menambahkan ${dispPages.length} halaman lembar disposisi (PDF) di awal dokumen.`);
+          } catch (dispPdfErr) {
+            console.warn('[PdfService] Gagal membaca PDF disposisi langsung:', dispPdfErr);
+          }
+        } else {
+          // Format Gambar (JPG, PNG, JPEG, WEBP, dll.)
+          try {
+            const img = await loadImage(dispositionPath);
+            const canvas = createCanvas(img.width, img.height);
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const jpgBuffer = canvas.toBuffer('image/jpeg', 90);
+
+            const embeddedImage = await mergedDoc.embedJpg(jpgBuffer);
+            const [a4Width, a4Height] = PageSizes.A4;
+            const imgDims = embeddedImage.scaleToFit(a4Width - 20, a4Height - 20);
+
+            const page = mergedDoc.addPage(PageSizes.A4);
+            page.drawImage(embeddedImage, {
+              x: (a4Width - imgDims.width) / 2,
+              y: (a4Height - imgDims.height) / 2,
+              width: imgDims.width,
+              height: imgDims.height,
+            });
+            console.log(`[PdfService] Lembar disposisi berupa gambar berhasil dikonversi ke halaman 1 PDF A4.`);
+          } catch (imgErr) {
+            console.warn('[PdfService] Gagal me-render gambar disposisi ke PDF:', imgErr);
+          }
+        }
+      } else {
+        console.warn(`[PdfService] Berkas lembar disposisi tidak ditemukan pada path: ${dispositionPath}`);
+      }
+
+      // 2. Masukkan Seluruh Halaman Berkas Surat Masuk Asli (Halaman 2 dst)
+      let letterFilePath: string | null = null;
+      if (letterFileName && letterFileName !== '-' && letterFileName.trim().length > 0) {
+        const candidatePaths = [
+          path.join(ENV.UPLOAD_STORAGE_PATH, letterFileName),
+          path.join(ENV.PRIVATE_STORAGE_PATH, letterFileName),
+          path.join(process.cwd(), 'storage', 'letters', letterFileName),
+          path.join(process.cwd(), 'storage', 'private', letterFileName),
+        ];
+
+        for (const cp of candidatePaths) {
+          if (fs.existsSync(cp)) {
+            letterFilePath = cp;
+            break;
+          }
+        }
+      }
+
+      if (letterFilePath && fs.existsSync(letterFilePath)) {
+        const letterExt = path.extname(letterFilePath).toLowerCase();
+        if (letterExt === '.pdf') {
+          try {
+            const letterBuffer = fs.readFileSync(letterFilePath);
+            const letterDoc = await PDFDocument.load(letterBuffer, { ignoreEncryption: true });
+            const letterPages = await mergedDoc.copyPages(letterDoc, letterDoc.getPageIndices());
+            letterPages.forEach((p) => mergedDoc.addPage(p));
+            console.log(`[PdfService] Berhasil menyisipkan ${letterPages.length} halaman surat masuk ke dokumen gabungan.`);
+          } catch (letterLoadErr) {
+            console.warn(`[PdfService] Gagal memuat PDF surat (${letterFilePath}):`, letterLoadErr);
+          }
+        } else {
+          // Jika berkas surat berupa gambar
+          try {
+            const img = await loadImage(letterFilePath);
+            const canvas = createCanvas(img.width, img.height);
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const jpgBuffer = canvas.toBuffer('image/jpeg', 90);
+
+            const embeddedImage = await mergedDoc.embedJpg(jpgBuffer);
+            const [a4Width, a4Height] = PageSizes.A4;
+            const imgDims = embeddedImage.scaleToFit(a4Width - 20, a4Height - 20);
+
+            const page = mergedDoc.addPage(PageSizes.A4);
+            page.drawImage(embeddedImage, {
+              x: (a4Width - imgDims.width) / 2,
+              y: (a4Height - imgDims.height) / 2,
+              width: imgDims.width,
+              height: imgDims.height,
+            });
+            console.log(`[PdfService] Halaman gambar surat berhasil disisipkan ke PDF gabungan.`);
+          } catch (imgSuratErr) {
+            console.warn('[PdfService] Gagal menyisipkan gambar surat ke PDF:', imgSuratErr);
+          }
+        }
+      } else {
+        console.warn(`[PdfService] Berkas surat masuk (${letterFileName}) tidak ditemukan di lokal server. PDF hanya memuat lembar disposisi.`);
+      }
+
+      // Pastikan ada setidaknya 1 halaman jika kedua sumber kosong/gagal
+      if (mergedDoc.getPageCount() === 0) {
+        mergedDoc.addPage(PageSizes.A4);
+      }
+
+      // 3. Simpan PDF hasil penggabungan
+      const mergedPdfBytes = await mergedDoc.save();
+      fs.writeFileSync(targetPath, Buffer.from(mergedPdfBytes));
+      console.log(`[PdfService] Dokumen gabungan disposisi & surat berhasil disimpan di: ${targetPath} (${mergedDoc.getPageCount()} halaman).`);
+
+      // 4. Hapus file temporary lembar disposisi jika ada di temp folder
+      if (dispositionPath !== targetPath && fs.existsSync(dispositionPath)) {
+        this.deleteTempPdf(dispositionPath);
+      }
+
+      return {
+        targetPath,
+        finalFileName: cleanFinalFileName,
+      };
+    } catch (mergeErr: any) {
+      console.error('[PdfService] Terjadi kesalahan saat menggabungkan disposisi dan surat:', mergeErr);
+      // Fallback aman: jika merge gagal, pindahkan file asli disposisi menggunakan moveToDispositionStorage
+      const fallbackPath = this.moveToDispositionStorage(dispositionPath, cleanFinalFileName);
+      return {
+        targetPath: fallbackPath,
+        finalFileName: cleanFinalFileName,
+      };
     }
   }
 }

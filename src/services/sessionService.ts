@@ -116,6 +116,7 @@ export interface DisposisiDraftData {
     subject: string;
     perihal: string;
     dateLetter?: string;
+    file?: string;
   };
   fieldBeingEdited?: string;
 }

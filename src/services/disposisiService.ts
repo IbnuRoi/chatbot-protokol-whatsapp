@@ -94,13 +94,36 @@ export class DisposisiService {
     }
 
     try {
-      // 1. Tentukan nama berkas final sesuai standar Laravel / database: {timestamp}_{uniqid}.{ext}
-      const finalFileName =
-        draft.finalFileName || generateDispositionFileName(draft.tempFileName || draft.tempFilePath);
+      // 1. Dapatkan nama file surat induk dari tabel letters
+      let letterFileName = draft.matchedLetter.file;
+      if (!letterFileName) {
+        try {
+          const letterRecord = await prisma.letters.findUnique({
+            where: { id: BigInt(draft.matchedLetter.id) },
+            select: { file: true },
+          });
+          if (letterRecord?.file) {
+            letterFileName = letterRecord.file;
+          }
+        } catch (fetchErr) {
+          console.warn('[DisposisiService] Gagal mengambil kolom file dari surat induk:', fetchErr);
+        }
+      }
 
-      // 2. Pindahkan berkas dari temp ke folder storage disposisi (siap disymlink di server)
-      const permanentFilePath = pdfService.moveToDispositionStorage(draft.tempFilePath, finalFileName);
-      draft.tempFilePath = permanentFilePath;
+      // 2. Tentukan nama berkas final sesuai standar Laravel / database: {timestamp}_{uniqid}.pdf
+      const baseFinalName =
+        draft.finalFileName || generateDispositionFileName(draft.tempFileName || draft.tempFilePath);
+      const targetPdfName = baseFinalName.replace(/\.[^.]+$/, '') + '.pdf';
+
+      // 3. Gabungkan lembar disposisi (halaman 1) dengan berkas surat masuk (halaman 2 dst)
+      const mergeResult = await pdfService.mergeDispositionWithLetterPdf(
+        draft.tempFilePath,
+        letterFileName,
+        targetPdfName
+      );
+
+      const finalFileName = mergeResult.finalFileName;
+      draft.tempFilePath = mergeResult.targetPath;
       draft.finalFileName = finalFileName;
 
       // 3. Parse tanggal disposisi
@@ -219,6 +242,23 @@ export class DisposisiService {
           updated_by: userName || 'Petugas Protokol',
         },
       });
+
+      // 8. Hubungkan disposition_id ke tabel events jika kegiatan sudah ada
+      try {
+        await prisma.events.updateMany({
+          where: {
+            letter_id: BigInt(draft.matchedLetter.id),
+            deleted_at: null,
+          },
+          data: {
+            disposition_id: disp.id,
+            updated_at: new Date(),
+            updated_by: userName || 'Petugas Protokol',
+          },
+        });
+      } catch (evLinkErr) {
+        console.warn('[DisposisiService] Peringatan saat menautkan disposition_id ke events:', evLinkErr);
+      }
 
       return {
         success: true,
