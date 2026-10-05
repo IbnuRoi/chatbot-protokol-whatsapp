@@ -299,11 +299,13 @@ export class NluService {
         `Konteks Sesi/Alur Pengguna Saat Ini: "${currentState}".\n\n` +
         `Tugas utamamu adalah menganalisis pesan percakapan bahasa Indonesia dari pengguna secara mendalam di SETIAP langkah percakapan, memahami NIAT (intention) dan entitas penting meskipun pengguna menggunakan bahasa santai, gaul, atau singkatan (seperti "gajadi deh", "undangan rapat ya min", "sudah sesuai kok", "surat penting", "lanjut"), lalu menyusun balasan percakapan (conversationalReply) yang hangat, ramah, dan solutif.\n\n` +
         `PANDUAN GAYA BALASAN (conversationalReply):\n` +
-        `- Berbicaralah secara alami dan manusiawi seperti asisten AI percakapan modern.\n` +
+        `- conversationalReply HANYA berfungsi sebagai SATU kalimat sapaan/pengantar pembuka yang singkat, ramah, dan alami (maksimal 1-2 kalimat, < 20 kata). Contoh: "Halo ${userName}, ini jadwal kegiatan protokol hari ini:", "Baik ${userName}, berikut agenda yang Anda cari:", "Siap ${userName}, ini arsip surat yang ditemukan:".\n` +
+        `- DILARANG KERAS MENGARANG, MENULISKAN, ATAU MENCIPTAKAN DAFTAR ACARA, JADWAL, JAM (misal: 08.00 WIB, 10.30 WIB), NAMA PERUSAHAAN/INSTANSI, NOMOR SURAT, ATAU DATA APAPUN di conversationalReply!\n` +
+        `- Seluruh rincian data jadwal dan surat akan ditampilkan SECARA RESMI dan OTOMATIS oleh database sistem setelah balasanmu. Jika kamu mengarang data, akan terjadi duplikasi informasi palsu yang membingungkan pengguna!\n` +
+        `- JANGAN PERNAH menyertakan pertanyaan penutup (seperti "Ada yang mau ditanyakan lebih lanjut?", "Ada yang bisa dibantu?", dsb) karena sistem akan menampilkan opsi kelanjutan sendiri.\n` +
         `- JANGAN PERNAH menyertakan instruksi menu kaku/robotik di balasanmu, seperti "Ketik angka 1 - 6...", "Ketik *menu*...", dsb.\n` +
-        `- JANGAN PERNAH menyertakan placeholder dalam tanda kurung siku seperti "[insert ...]", "[sebutkan ...]", "[detail ...]", "[rincian]". Berikan kalimat pengantar alami yang hangat dan ramah tanpa placeholder.\n` +
-        `- JANGAN gunakan garis pemisah panjang (seperti "━━━━━━━━━━").\n` +
-        `- Mengalirlah seperti percakapan dengan rekan kerja yang profesional dan ramah.\n\n` +
+        `- JANGAN PERNAH menyertakan placeholder dalam tanda kurung siku seperti "[insert ...]", "[sebutkan ...]", "[detail ...]", "[rincian]".\n` +
+        `- JANGAN gunakan garis pemisah panjang (seperti "━━━━━━━━━━").\n\n` +
         `=== PANDUAN 6 FITUR UTAMA SISTEM (KLASIFIKASI SEIMBANG & TEPAT SASARAN) ===\n` +
         `1. REGISTRASI SURAT MASUK (Intent: "SURAT_MASUK"):\n` +
         `   - Pengguna ingin mendaftarkan, membuat, menginput, atau mengunggah surat masuk baru.\n` +
@@ -348,7 +350,7 @@ export class NluService {
         `WAJIB menjawab HANYA dalam format JSON valid berikut tanpa teks pendahuluan atau penutup apapun:\n` +
         `{\n` +
         `  "intent": "GREETING | SURAT_MASUK | JADWAL_HARI_INI | JADWAL_BESOK | JADWAL_BERIKUTNYA | JADWAL_MENDATANG | JADWAL_RENTANG | JADWAL_CARI | DISPOSISI | RIWAYAT | CARI_SURAT | CARI_UMUM | BANTUAN | BATAL | SELESAI | CHITCHAT | SUBMIT_STEP",\n` +
-        `  "conversationalReply": "Balasan ramah & sopan bahasa Indonesia (sapa dengan ${userName})",\n` +
+        `  "conversationalReply": "HANYA 1 kalimat sapaan/pengantar singkat (contoh: 'Halo ${userName}, ini jadwal kegiatan protokol hari ini:'). DILARANG MENULIS DAFTAR JADWAL/JAM/SURAT APAPUN!",\n` +
         `  "entities": {\n` +
         `    "keyword": "kata kunci pencarian jika ada",\n` +
         `    "tanggal": "YYYY-MM-DD jika pengguna menanyakan jadwal tanggal tertentu",\n` +

@@ -611,8 +611,46 @@ export class MessageRouter {
 
     const nlu = precalculatedNlu || (await nluService.processNaturalLanguage(textInput, session.userName, session.state));
 
+    const sanitizeIntro = (intro: string): string => {
+      if (!intro) return '';
+      let text = intro.replace(/\[[\s\S]*?\]/g, '').replace(/\s{2,}/g, ' ').trim();
+
+      // Deteksi jika AI berhalusinasi membuat daftar jadwal / rincian acara / jam fiktif sendiri:
+      // misal: "• 08.00 WIB - ...", "10.30 WIB", ada bullet point, atau rincian item
+      const hasBulletOrList =
+        /[•\*\-]\s*\d{1,2}[:.]\d{2}/i.test(text) ||
+        /\b\d{1,2}[:.]\d{2}\s*(?:WIB|WITA|WIT)?\b/i.test(text) ||
+        /[•\*\-]\s+[A-Za-z]/i.test(text) ||
+        text.includes('\n•') ||
+        text.includes('\n-') ||
+        text.includes('\n*');
+
+      if (hasBulletOrList) {
+        // Ambil HANYA kalimat pembuka sebelum daftar dimulai (sebelum bullet point atau waktu pertama)
+        const cutIndex = text.search(/[•\*\-]|(?:\b\d{1,2}[:.]\d{2})/);
+        if (cutIndex > 0) {
+          text = text.substring(0, cutIndex).trim();
+        } else {
+          return ''; // Buang seluruhnya jika langsung berisi daftar
+        }
+      }
+
+      // Hapus pertanyaan penutup palsu
+      text = text.replace(/(?:Ada yang mau ditanyakan|Ada yang bisa dibantu|Butuh bantuan|Silakan beri tahu saya|Ada yang ingin ditanyakan).*$/i, '').trim();
+
+      // Hapus karakter tanda baca menggantung di akhir
+      text = text.replace(/[:.,\s]+$/, '').trim();
+
+      // Jika teks intro kosong atau terlalu panjang (> 90 karakter) atau memiliki banyak baris, buang agar tampilan bersih
+      if (!text || text.length > 90 || text.split('\n').length > 2) {
+        return '';
+      }
+
+      return `${text}:`;
+    };
+
     const prependIntro = (response: BotResponse, intro: string): BotResponse => {
-      const cleanIntro = (intro || '').replace(/\[[\s\S]*?\]/g, '').replace(/\s{2,}/g, ' ').trim();
+      const cleanIntro = sanitizeIntro(intro);
       if (!cleanIntro) {
         return response;
       }
