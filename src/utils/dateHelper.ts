@@ -269,6 +269,77 @@ export function parseIndonesianDateToDate(input: string | null | undefined): Dat
 }
 
 /**
+ * Mem-parsing string tanggal pelaksanaan acara (termasuk kemungkinan rentang tanggal)
+ * menjadi startDate dan endDate dalam objek Date UTC.
+ * Contoh input:
+ * - "20 Oktober 2026" -> startDate: 2026-10-20, endDate: null
+ * - "25 - 27 November 2026" -> startDate: 2026-11-25, endDate: 2026-11-27
+ * - "25 s.d. 27 November 2026" -> startDate: 2026-11-25, endDate: 2026-11-27
+ * - "28 Oktober - 2 November 2026" -> startDate: 2026-10-28, endDate: 2026-11-02
+ */
+export function parseIndonesianDateEventRange(input?: string | null): {
+  startDate: Date | null;
+  endDate: Date | null;
+} {
+  const result = {
+    startDate: null as Date | null,
+    endDate: null as Date | null,
+  };
+
+  if (!input || input.trim() === '-' || /^(?:tidak\s+ada|belum\s+ada|null|undefined|-)$/i.test(input.trim())) {
+    return result;
+  }
+
+  const clean = input.trim();
+  const monthWords = Object.keys(MONTH_MAP).join('|');
+
+  // Format 1: "25 - 27 November 2026" atau "25 s.d. 27 November 2026" (bulan yang sama)
+  const sameMonthRangeRegex = new RegExp(
+    `\\b(3[01]|[12][0-9]|0?[1-9])\\s*(?:-|s\\.?d\\.?|sampai|hingga|\\/)\\s*(3[01]|[12][0-9]|0?[1-9])\\s+(${monthWords})(?:\\s+(\\d{4}))?\\b`,
+    'i'
+  );
+  const m1 = clean.match(sameMonthRangeRegex);
+  if (m1) {
+    const d1 = parseInt(m1[1], 10);
+    const d2 = parseInt(m1[2], 10);
+    const mon = MONTH_MAP[m1[3].toLowerCase()];
+    const y = m1[4] ? parseInt(m1[4], 10) : new Date().getFullYear();
+    if (mon) {
+      result.startDate = new Date(Date.UTC(y, mon - 1, d1));
+      result.endDate = new Date(Date.UTC(y, mon - 1, d2));
+      return result;
+    }
+  }
+
+  // Format 2: "28 Oktober - 2 November 2026" (beda bulan)
+  const diffMonthRangeRegex = new RegExp(
+    `\\b(3[01]|[12][0-9]|0?[1-9])\\s+(${monthWords})\\s*(?:-|s\\.?d\\.?|sampai|hingga|\\/)\\s*(3[01]|[12][0-9]|0?[1-9])\\s+(${monthWords})(?:\\s+(\\d{4}))?\\b`,
+    'i'
+  );
+  const m2 = clean.match(diffMonthRangeRegex);
+  if (m2) {
+    const d1 = parseInt(m2[1], 10);
+    const mon1 = MONTH_MAP[m2[2].toLowerCase()];
+    const d2 = parseInt(m2[3], 10);
+    const mon2 = MONTH_MAP[m2[4].toLowerCase()];
+    const y = m2[5] ? parseInt(m2[5], 10) : new Date().getFullYear();
+    if (mon1 && mon2) {
+      result.startDate = new Date(Date.UTC(y, mon1 - 1, d1));
+      result.endDate = new Date(Date.UTC(y, mon2 - 1, d2));
+      return result;
+    }
+  }
+
+  // Single date fallback
+  const single = parseIndonesianDateToDate(clean);
+  if (single) {
+    result.startDate = single;
+  }
+
+  return result;
+}
+
+/**
  * Mem-parsing string jam/waktu pelaksanaan acara dalam bahasa Indonesia
  * menjadi objek Date UTC untuk kolom time_event dan time_event_finish (@db.Time(6)) pada tabel letters.
  * Contoh input:

@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { pdfService } from './pdfService';
 import { SuratDraftData } from './sessionService';
 import { cleanHtml, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone } from '../utils/textHelper';
-import { parseIndonesianDateToDate, formatTanggalIndo, parseIndonesianTimeToDates } from '../utils/dateHelper';
+import { parseIndonesianDateToDate, formatTanggalIndo, parseIndonesianTimeToDates, parseIndonesianDateEventRange } from '../utils/dateHelper';
 import { ENV } from '../config/env';
 import path from 'path';
 
@@ -285,8 +285,11 @@ export class SuratService {
         }
       }
 
-      // Parse tanggal acara/event jika ada
-      let parsedDateEvent: Date | null = parseIndonesianDateToDate(draft.extractedData.dateEvent);
+      // Parse tanggal acara/event jika ada (termasuk kemungkinan rentang tanggal)
+      const dateEventRange = parseIndonesianDateEventRange(draft.extractedData.dateEvent);
+      let parsedDateEvent: Date | null = dateEventRange.startDate;
+      let parsedDateEventEnd: Date | null = dateEventRange.endDate;
+
       if (!parsedDateEvent && draft.extractedData.dateEvent) {
         const parsed = new Date(draft.extractedData.dateEvent);
         if (!isNaN(parsed.getTime())) {
@@ -359,6 +362,7 @@ export class SuratService {
             number_or_date: safeNomorSurat,
             date_letter: parsedDate,
             date_event: parsedDateEvent,
+            date_event_end: parsedDateEventEnd,
             time_event: parsedTimeEvent,
             time_event_finish: parsedTimeFinish,
             time_zone: parsedTimeZone,
@@ -393,6 +397,7 @@ export class SuratService {
               number_or_date: safeNomorSurat,
               date_letter: parsedDate,
               date_event: parsedDateEvent,
+              date_event_end: parsedDateEventEnd,
               time_event: parsedTimeEvent,
               time_event_finish: parsedTimeFinish,
               time_zone: parsedTimeZone,
@@ -444,7 +449,7 @@ export class SuratService {
       // Otomatis masukkan ke jadwal kegiatan (tabel events) walaupun belum ada lembar disposisi
       let createdEvent: any = null;
       try {
-        // Tentukan tanggal kegiatan (prioritas: parsedDateEvent -> parsedDate -> hari ini waktu WIB)
+        // 1. Tanggal kegiatan (prioritas: parsedDateEvent -> parsedDate -> hari ini waktu WIB)
         let eventYear: number, eventMonth: number, eventDay: number;
         if (parsedDateEvent || parsedDate) {
           const targetDate = (parsedDateEvent || parsedDate)!;
@@ -460,7 +465,8 @@ export class SuratService {
           eventDay = wibDate.getDate();
         }
 
-        // Tentukan jam mulai (default 09:00 WIB jika tidak ada jam spesifik pada surat)
+        // 2. Jam mulai: date_event & time_event ke kolom event_time_start
+        // (default 09:00 WIB jika tidak ada jam spesifik pada surat)
         let startH = 9;
         let startM = 0;
         if (parsedTimeEvent) {
@@ -472,11 +478,21 @@ export class SuratService {
         // (misal jam 09:00 WIB tersimpan sebagai 16:00:00 UTC)
         const eventTimeStart = new Date(Date.UTC(eventYear, eventMonth, eventDay, startH + 7, startM, 0, 0));
 
+        // 3. Jam selesai: date_event & time_event_finish ke kolom event_time_finish jika ada, jika tidak masukkan ke until_finish
         let eventTimeFinish: Date | null = null;
+        let untilFinish = 0;
         if (parsedTimeFinish) {
           const finishH = parsedTimeFinish.getUTCHours();
           const finishM = parsedTimeFinish.getUTCMinutes();
-          eventTimeFinish = new Date(Date.UTC(eventYear, eventMonth, eventDay, finishH + 7, finishM, 0, 0));
+          const endYear = parsedDateEventEnd ? parsedDateEventEnd.getUTCFullYear() : eventYear;
+          const endMonth = parsedDateEventEnd ? parsedDateEventEnd.getUTCMonth() : eventMonth;
+          const endDay = parsedDateEventEnd ? parsedDateEventEnd.getUTCDate() : eventDay;
+
+          eventTimeFinish = new Date(Date.UTC(endYear, endMonth, endDay, finishH + 7, finishM, 0, 0));
+          untilFinish = 0;
+        } else {
+          eventTimeFinish = null;
+          untilFinish = 1; // Jika tidak ada jam selesai, tandai acara berlangsung sampai selesai
         }
 
         // Ambil max ID events untuk menghindari sequence primary key conflict
@@ -486,16 +502,35 @@ export class SuratService {
         });
         const nextEventId = lastEvent ? BigInt(lastEvent.id) + BigInt(1) : BigInt(1);
 
-        // Judul acara diambil dari nama acara atau perihal resmi
+        // 4. Judul acara: perihal ke kolom title
+        const rawPerihal = draft.finalPerihal || draft.extractedData.perihal || finalPerihal || '';
+        const cleanPerihalText = cleanHtml(rawPerihal).trim();
         const eventTitle = (
-          draft.extractedData.namaAcara &&
-          draft.extractedData.namaAcara !== '-' &&
-          draft.extractedData.namaAcara.toLowerCase() !== 'kegiatan'
-            ? draft.extractedData.namaAcara
-            : finalPerihal && finalPerihal !== '-'
-              ? finalPerihal
-              : safeSubject || 'Agenda Kegiatan Protokol'
+          cleanPerihalText && cleanPerihalText !== '-'
+            ? cleanPerihalText
+            : (draft.extractedData.namaAcara &&
+               draft.extractedData.namaAcara !== '-' &&
+               draft.extractedData.namaAcara.toLowerCase() !== 'kegiatan'
+                ? draft.extractedData.namaAcara
+                : safeSubject || 'Agenda Kegiatan Protokol')
         ).trim();
+
+        // 5. Lokasi acara: place_event ke location
+        const cleanLocation = cleanHtml(safePlaceEvent || '').trim();
+        const eventLocation = cleanLocation && cleanLocation !== '-' ? cleanLocation : 'Gedung Kemnaker RI, Jakarta';
+
+        // 6. Kelengkapan kolom lainnya pada tabel events
+        let eventPicJson: string | null = null;
+        if (safePicName && safePicName !== '-') {
+          eventPicJson = JSON.stringify([
+            {
+              name: safePicName,
+              phone: safePicPhone && safePicPhone !== '-' ? safePicPhone : '',
+            },
+          ]);
+        }
+
+        const eventNotes = `Asal Surat: ${safeAsalSurat} | No. Surat: ${safeNomorSurat} | No. Agenda: ${safeAgendaNumber}`;
 
         // Siapkan data event baru
         const eventDataPayload: Prisma.eventsCreateInput = {
@@ -504,14 +539,16 @@ export class SuratService {
           disposition_id: null,
           event_time_start: eventTimeStart,
           event_time_finish: eventTimeFinish,
-          until_finish: 0,
+          until_finish: untilFinish,
           is_internal: '0',
           is_hide_location: '0',
           time_zone: parsedTimeZone || 'WIB',
           status: 1n, // 1: onschedule (Terjadwal / Diagendakan)
-          location: safePlaceEvent || 'Gedung Kemnaker RI, Jakarta',
+          location: eventLocation,
           pic_name: safePicName && safePicName !== '-' ? safePicName : null,
           pic_phonenumber: safePicPhone && safePicPhone !== '-' ? safePicPhone : null,
+          pic_json: eventPicJson,
+          notes: eventNotes,
           created_by: safeCreatorName,
           created_at: new Date(),
           updated_at: new Date(),
@@ -533,8 +570,25 @@ export class SuratService {
 
         console.log(`[SuratService] Acara kegiatan berhasil dibuat otomatis untuk surat ${surat.agenda_number} (Event ID: ${createdEvent.id})`);
 
-        // Catat activity log untuk penambahan agenda acara
         if (createdEvent) {
+          // Hubungkan ke tabel pivot event_letters untuk relasi many-to-many Laravel
+          try {
+            await prisma.event_letters.create({
+              data: {
+                event_id: createdEvent.id.toString(),
+                letter_id: surat.id.toString(),
+                disposition_id: null,
+                created_by: safeCreatorName,
+                created_at: new Date(),
+                updated_at: new Date(),
+              },
+            });
+            console.log(`[SuratService] Menautkan event ID ${createdEvent.id} dan letter ID ${surat.id} di tabel event_letters`);
+          } catch (elErr) {
+            console.warn('[SuratService] Gagal membuat relasi event_letters:', elErr);
+          }
+
+          // Catat activity log untuk penambahan agenda acara
           try {
             await prisma.activity_log.create({
               data: {
@@ -548,7 +602,10 @@ export class SuratService {
                   letterId: Number(surat.id),
                   agendaNumber: surat.agenda_number,
                   title: eventTitle,
-                  location: safePlaceEvent || 'Gedung Kemnaker RI, Jakarta',
+                  location: eventLocation,
+                  eventTimeStart: eventTimeStart.toISOString(),
+                  eventTimeFinish: eventTimeFinish ? eventTimeFinish.toISOString() : null,
+                  untilFinish,
                   status: 'Diagendakan',
                 }),
                 created_at: new Date(),

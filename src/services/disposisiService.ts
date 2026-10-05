@@ -302,7 +302,7 @@ export class DisposisiService {
         },
       });
 
-      // 8. Hubungkan disposition_id ke tabel events jika kegiatan sudah ada
+      // 8. Hubungkan disposition_id ke tabel events dan event_letters jika kegiatan sudah ada
       try {
         await prisma.events.updateMany({
           where: {
@@ -315,8 +315,20 @@ export class DisposisiService {
             updated_by: userName || 'Petugas Protokol',
           },
         });
+
+        await prisma.event_letters.updateMany({
+          where: {
+            letter_id: draft.matchedLetter.id.toString(),
+            deleted_at: null,
+          },
+          data: {
+            disposition_id: disp.id,
+            updated_at: new Date(),
+            updated_by: userName || 'Petugas Protokol',
+          },
+        });
       } catch (evLinkErr) {
-        console.warn('[DisposisiService] Peringatan saat menautkan disposition_id ke events:', evLinkErr);
+        console.warn('[DisposisiService] Peringatan saat menautkan disposition_id ke events/event_letters:', evLinkErr);
       }
 
       return {
