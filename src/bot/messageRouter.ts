@@ -301,7 +301,8 @@ export class MessageRouter {
     } else if (isDisposisiState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
-        nlu.intent === 'INPUT_DISPOSISI' ||
+        (session.state === BotState.DISPOSISI_INPUT_NOMOR && nlu.intent === 'INPUT_DISPOSISI') ||
+        (session.state === BotState.DISPOSISI_UPLOAD_BERKAS && nlu.intent === 'DISPOSISI') ||
         nlu.intent.startsWith('JADWAL_') ||
         nlu.intent === 'CARI_SURAT' ||
         nlu.intent === 'RIWAYAT' ||
@@ -602,6 +603,8 @@ export class MessageRouter {
     } else if (isDisposisiState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
+        (session.state === BotState.DISPOSISI_INPUT_NOMOR && nlu.intent === 'INPUT_DISPOSISI') ||
+        (session.state === BotState.DISPOSISI_UPLOAD_BERKAS && nlu.intent === 'DISPOSISI') ||
         nlu.intent.startsWith('JADWAL_') ||
         nlu.intent === 'CARI_SURAT' ||
         nlu.intent === 'RIWAYAT' ||

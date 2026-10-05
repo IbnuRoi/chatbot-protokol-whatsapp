@@ -284,17 +284,36 @@ export class NluService {
       }
     }
 
-    // 0c. Shortcut langsung untuk Input / Catat Lembar Disposisi
-    if (
-      /\b(?:input|catat|rekam|tambah|unggah|upload)\s+(?:lembar\s+)?disposisi\b/i.test(cleanText) ||
-      /\bdisposisi\s+(?:baru|surat\s+masuk)\b/i.test(cleanText)
-    ) {
-      return {
-        intent: 'INPUT_DISPOSISI',
-        confidence: 1.0,
-        conversationalReply: `Baik ${userName}, silakan kirimkan dokumen atau foto lembar disposisinya:`,
-        entities: {},
-      };
+    // 0c. Shortcut langsung untuk Disposisi (Input/Upload vs Pelacakan Status)
+    const isDisposisiInquiry = /\bdisposisi\b/i.test(cleanText) || /\blembar\s+disposisi\b/i.test(cleanText);
+
+    if (isDisposisiInquiry) {
+      const isDisposisiSearch = /\b(?:cari|carikan|temukan)\b/i.test(cleanText);
+      const isDisposisiTracking =
+        /\b(?:cek|lacak|status|pantau|lihat|progress|posisi|sudah.*(?:belum|kah))\b/i.test(cleanText) ||
+        /\b(?:nomor|no\.?)\s*(?:agenda|surat)\b/i.test(cleanText) ||
+        /\b\d+\/[A-Za-z0-9\-\/]+\/\d{4}\b/.test(cleanText);
+
+      if (!isDisposisiSearch) {
+        if (isDisposisiTracking) {
+          const matches = cleanText.match(/([A-Z0-9\-\/]{4,})/i);
+          const nomor = matches && !matches[1].toLowerCase().includes('disposisi') ? matches[1] : undefined;
+          return {
+            intent: 'DISPOSISI',
+            confidence: 1.0,
+            conversationalReply: `Baik ${userName}, saya bantu pelacakan status disposisi suratnya:`,
+            entities: { nomorSurat: nomor },
+          };
+        }
+
+        // Jika bukan pelacakan dan bukan pencarian (misal user mengetik "disposisi", "lembar disposisi", "mau disposisi", "upload disposisi", "kirim disposisi", dll.)
+        return {
+          intent: 'INPUT_DISPOSISI',
+          confidence: 1.0,
+          conversationalReply: `Siap ${userName}, silakan unggah lembar disposisinya:`,
+          entities: {},
+        };
+      }
     }
 
     if (currentState === 'DISPOSISI_REVIEW_DATA') {
@@ -357,8 +376,9 @@ export class NluService {
         `   - Pengguna ingin mendaftarkan, membuat, menginput, atau mengunggah surat masuk baru.\n` +
         `   - Contoh: "input surat baru", "registrasi surat masuk", "mau daftar surat", "bikin surat", "upload dokumen surat", "tambah surat masuk".\n\n` +
         `2. PENCATATAN LEMBAR DISPOSISI (Intent: "INPUT_DISPOSISI"):\n` +
-        `   - Pengguna ingin mencatat, menginput, mengunggah, atau merekam berkas lembar disposisi baru dari pimpinan.\n` +
-        `   - Contoh: "input disposisi", "catat disposisi", "upload lembar disposisi", "unggah disposisi", "rekam disposisi", "tambah disposisi".\n\n` +
+        `   - Pengguna ingin mencatat, menginput, mengunggah, merekam, atau mengirim berkas lembar disposisi baru dari pimpinan.\n` +
+        `   - PENTING: Jika pengguna hanya mengetikkan "disposisi", "lembar disposisi", "mau disposisi", "upload disposisi", "kirim disposisi" (tanpa kata cek/lacak/status), WAJIB diklasifikasikan sebagai "INPUT_DISPOSISI" agar bot meminta berkas disposisi.\n` +
+        `   - Contoh: "disposisi", "lembar disposisi", "input disposisi", "catat disposisi", "upload lembar disposisi", "unggah disposisi", "kirim disposisi", "rekam disposisi", "tambah disposisi", "mau upload disposisi".\n\n` +
         `3. PENCARIAN ARSIP SURAT (Intent: "CARI_SURAT"):\n` +
         `   - Pengguna ingin mencari dokumen / arsip surat masuk berdasarkan perihal, topik, instansi, pengirim, atau kata kunci tertentu.\n` +
         `   - Contoh: "carikan surat tentang vokasi", "cari surat rakor", "dokumen k3", "surat dari kemenkeu", "cek surat audiensi", "surat permohonan".\n` +
@@ -368,8 +388,9 @@ export class NluService {
         `   - Pengguna ingin melihat daftar / log riwayat surat masuk terkini atau terbaru.\n` +
         `   - Contoh: "carikan surat terbaru", "surat terbaru", "surat masuk terbaru", "lihat surat masuk", "daftar surat", "riwayat surat masuk", "surat terakhir", "arsip surat terkini".\n\n` +
         `5. PELACAKAN STATUS DISPOSISI (Intent: "DISPOSISI"):\n` +
-        `   - Pengguna ingin melacak atau mengecek status disposisi surat / nomor agenda.\n` +
-        `   - Contoh: "lacak disposisi", "cek status disposisi", "status surat 320/M/PH/IX/2026", "surat nomor 123 sudah disposisi belum?", "disposisi surat rakor".\n` +
+        `   - Pengguna HANYA ingin melacak, melihat, atau mengecek status disposisi surat / nomor agenda yang sudah ada.\n` +
+        `   - CIRI KHAS: Memuat kata "cek", "lacak", "status", "pantau", "sudah disposisi belum", atau menyebutkan nomor agenda spesifik.\n` +
+        `   - Contoh: "lacak disposisi", "cek status disposisi", "cek disposisi", "status surat 320/M/PH/IX/2026", "surat nomor 123 sudah disposisi belum?", "pantau disposisi".\n` +
         `   - WAJIB ekstrak entities.nomorSurat (nomor agenda atau nomor surat jika disebutkan).\n\n` +
         `6. JADWAL & KEGIATAN PROTOKOL (Intent: "JADWAL_*"):\n` +
         `   - HANYA gunakan jika pengguna menanyakan kegiatan, agenda pimpinan, rapat, atau acara protokol:\n` +
@@ -1272,31 +1293,42 @@ export class NluService {
 
     // 7. Disposisi
     if (lower.includes('disposisi')) {
-      if (
-        lower.includes('input') ||
-        lower.includes('catat') ||
-        lower.includes('unggah') ||
-        lower.includes('upload') ||
-        lower.includes('rekam') ||
-        lower.includes('tambah') ||
-        lower.includes('masukkan')
-      ) {
-        return {
-          intent: 'INPUT_DISPOSISI',
-          confidence: 0.9,
-          conversationalReply: `Baik ${userName}, silakan kirimkan dokumen atau foto lembar disposisinya:`,
-          entities: {},
-        };
-      }
+      const isTracking =
+        lower.includes('cek') ||
+        lower.includes('lacak') ||
+        lower.includes('status') ||
+        lower.includes('pantau') ||
+        lower.includes('lihat') ||
+        lower.includes('posisi') ||
+        lower.includes('progress') ||
+        lower.includes('sudah') ||
+        lower.includes('belum');
+
+      const isCari =
+        lower.includes('cari') ||
+        lower.includes('carikan') ||
+        lower.includes('temukan');
 
       const matches = text.match(/([A-Z0-9\-\/]{4,})/i);
       const nomor = matches && !matches[1].toLowerCase().includes('disposisi') ? matches[1] : undefined;
-      return {
-        intent: 'DISPOSISI',
-        confidence: 0.85,
-        conversationalReply: `Baik ${userName}, saya bantu pelacakan status disposisi suratnya:`,
-        entities: { nomorSurat: nomor },
-      };
+
+      if (!isCari && (isTracking || nomor)) {
+        return {
+          intent: 'DISPOSISI',
+          confidence: 0.85,
+          conversationalReply: `Baik ${userName}, saya bantu pelacakan status disposisi suratnya:`,
+          entities: { nomorSurat: nomor },
+        };
+      }
+
+      if (!isCari) {
+        return {
+          intent: 'INPUT_DISPOSISI',
+          confidence: 0.95,
+          conversationalReply: `Siap ${userName}, silakan unggah lembar disposisinya:`,
+          entities: {},
+        };
+      }
     }
 
     // 8. Riwayat Surat
