@@ -79,9 +79,13 @@ export class DisposisiHandler {
     // 3. Cari surat induk berdasarkan nomor agenda hasil ekstraksi
     const cleanAgenda = (extracted.nomorAgenda || '').trim();
     let matchedLetter: any = null;
+    let existingDisposition: any = null;
 
     if (cleanAgenda && cleanAgenda !== '-') {
       matchedLetter = await disposisiService.findLetterByAgenda(cleanAgenda);
+      if (matchedLetter) {
+        existingDisposition = await disposisiService.findExistingDispositionByLetterId(matchedLetter.id);
+      }
     }
 
     // 4. Simpan ke draft sesi
@@ -92,6 +96,7 @@ export class DisposisiHandler {
       fileSize: stats?.size || 0,
       isImage,
       extractedData: extracted,
+      existingDispositionId: existingDisposition ? Number(existingDisposition.id) : undefined,
       matchedLetter: matchedLetter
         ? {
             id: Number(matchedLetter.id),
@@ -158,8 +163,20 @@ export class DisposisiHandler {
     const pengirimDisplay = letter ? letter.from : (ext.asalSurat || '-');
     const perihalDisplay = letter ? letter.perihal : (ext.perihal || '-');
 
+    const isUpdate = Boolean(draft.existingDispositionId);
+    const headerTitle = isUpdate
+      ? `📋 *KONFIRMASI PEMBARUAN DISPOSISI*`
+      : `📋 *KONFIRMASI PENCATATAN DISPOSISI*`;
+
+    const updateNote = isUpdate
+      ? `ℹ️ _Surat dengan Nomor Agenda ini sudah memiliki data disposisi di sistem. Menyimpan berkas ini akan **memperbarui** detail disposisi di database._\n\n`
+      : '';
+
+    const confirmAction = isUpdate ? 'Perbarui Data di Database' : 'Simpan ke Database';
+
     const text =
-      `📋 *KONFIRMASI PENCATATAN DISPOSISI*\n\n` +
+      `${headerTitle}\n\n` +
+      updateNote +
       `📄 *Informasi Surat Induk:*\n` +
       `• *Nomor Agenda* : ${agendaDisplay}\n` +
       `• *Pengirim*     : ${pengirimDisplay}\n` +
@@ -173,7 +190,7 @@ export class DisposisiHandler {
       `• *Nama Berkas*       : ${draft.finalFileName || draft.tempFileName}\n\n` +
       `──────────────────────────────\n` +
       `Apakah data disposisi di atas sudah sesuai?\n\n` +
-      `1️⃣ Ketik *1* atau *Ya* : Simpan ke Database\n` +
+      `1️⃣ Ketik *1* atau *Ya* : ${confirmAction}\n` +
       `2️⃣ Ketik *2* atau *Koreksi* : Ubah/Koreksi Data\n` +
       `❌ Ketik *Batal* : Batalkan proses ini`;
 
@@ -226,15 +243,22 @@ export class DisposisiHandler {
         ? `• *Link Berkas Disposisi* : ${saveResult.fileUrl}\n`
         : '';
 
+      const successTitle = saveResult.isUpdate
+        ? `✅ *DATA DISPOSISI BERHASIL DIPERBARUI!*`
+        : `✅ *DISPOSISI SURAT BERHASIL DISIMPAN!*`;
+
+      const statusNote = saveResult.isUpdate
+        ? `• *Status Surat* : Sudah Disposisi 🟢 (Diperbarui)\n\nDetail data disposisi dan berkas fisik telah berhasil diperbarui di database sistem.`
+        : `• *Status Surat* : Sudah Disposisi 🟢\n\nLembar disposisi telah digabungkan pada halaman pertama berkas surat dan berhasil diarsipkan ke database sistem.`;
+
       return {
         text:
-          `✅ *DISPOSISI SURAT BERHASIL DISIMPAN!*\n\n` +
+          `${successTitle}\n\n` +
           `• *Nomor Agenda* : ${saveResult.nomorAgenda}\n` +
           `• *Perihal*      : ${saveResult.perihal}\n` +
           `• *Nama Berkas*  : ${saveResult.fileName}\n` +
           fileLinkLine +
-          `• *Status Surat* : Sudah Disposisi 🟢\n\n` +
-          `Lembar disposisi telah digabungkan pada halaman pertama berkas surat dan berhasil diarsipkan ke database sistem.\n\n` +
+          `${statusNote}\n\n` +
           `Silakan beri tahu saya jika Anda ingin mencatat disposisi lainnya atau membutuhkan bantuan lain ya.`,
       };
     }
@@ -365,8 +389,11 @@ export class DisposisiHandler {
             dateLetter: matched.date_letter ? String(matched.date_letter) : undefined,
             file: matched.file || undefined,
           };
+          const existingDisp = await disposisiService.findExistingDispositionByLetterId(matched.id);
+          draft.existingDispositionId = existingDisp ? Number(existingDisp.id) : undefined;
         } else {
           draft.matchedLetter = undefined;
+          draft.existingDispositionId = undefined;
         }
         break;
       }
@@ -439,6 +466,8 @@ export class DisposisiHandler {
       };
     }
 
+    const existingDisp = await disposisiService.findExistingDispositionByLetterId(matched.id);
+
     const draft = session.draftDisposisi || {};
     draft.extractedData = draft.extractedData || {
       nomorAgenda: matched.agenda_number,
@@ -446,6 +475,7 @@ export class DisposisiHandler {
       arahanDisposisi: ['Agendakan'],
     };
     draft.extractedData.nomorAgenda = matched.agenda_number;
+    draft.existingDispositionId = existingDisp ? Number(existingDisp.id) : undefined;
     draft.matchedLetter = {
       id: Number(matched.id),
       agendaNumber: matched.agenda_number,

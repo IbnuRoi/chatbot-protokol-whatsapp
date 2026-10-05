@@ -119,6 +119,7 @@ export interface DisposisiDraftData {
     file?: string;
   };
   fieldBeingEdited?: string;
+  existingDispositionId?: number;
 }
 
 export interface UserSession {

@@ -1,4 +1,7 @@
+import fs from 'fs';
+import path from 'path';
 import { prisma } from '../database/prisma';
+import { ENV } from '../config/env';
 import { suratService, NormalizedSurat } from './suratService';
 import { DisposisiDraftData } from './sessionService';
 import { pdfService } from './pdfService';
@@ -13,6 +16,7 @@ export interface SaveDisposisiResult {
   fileUrl?: string | null;
   nomorAgenda?: string;
   perihal?: string;
+  isUpdate?: boolean;
 }
 
 export class DisposisiService {
@@ -76,6 +80,24 @@ export class DisposisiService {
     });
 
     return letter;
+  }
+
+  /**
+   * Mencari data disposisi yang sudah ada untuk letter_id tertentu
+   */
+  public async findExistingDispositionByLetterId(letterId: number | bigint): Promise<any | null> {
+    try {
+      return await prisma.dispositions.findFirst({
+        where: {
+          letter_id: BigInt(letterId),
+          deleted_at: null,
+        },
+        orderBy: { id: 'desc' },
+      });
+    } catch (err) {
+      console.warn('[DisposisiService] Gagal memeriksa data disposisi eksisting:', err);
+      return null;
+    }
   }
 
   /**
@@ -146,19 +168,72 @@ export class DisposisiService {
               ? draft.extractedData.arahanDisposisi.join(', ')
               : 'Disposisi Pimpinan');
 
-      // 4. Insert ke tabel dispositions
-      const disp = await prisma.dispositions.create({
-        data: {
-          letter_id: BigInt(draft.matchedLetter.id),
-          date: parsedDate,
-          note: cleanNote,
-          file: finalFileName,
-          send_by: draft.extractedData.pemberiDisposisi || 'Menteri Ketenagakerjaan',
-          created_by: userName || 'Petugas Protokol',
-          created_at: new Date(),
-          updated_at: new Date(),
-        },
-      });
+      // 4. Periksa apakah surat ini sudah memiliki disposisi di database (nomor agenda yang sama)
+      const existingDisp =
+        (draft.existingDispositionId
+          ? await prisma.dispositions.findUnique({ where: { id: BigInt(draft.existingDispositionId) } })
+          : null) ||
+        (await this.findExistingDispositionByLetterId(draft.matchedLetter.id));
+
+      let disp: any;
+      let isUpdate = false;
+
+      if (existingDisp) {
+        // UPDATE record disposisi yang sudah ada
+        disp = await prisma.dispositions.update({
+          where: { id: existingDisp.id },
+          data: {
+            date: parsedDate,
+            note: cleanNote,
+            file: finalFileName,
+            send_by: draft.extractedData.pemberiDisposisi || 'Menteri Ketenagakerjaan',
+            updated_by: userName || 'Petugas Protokol',
+            updated_at: new Date(),
+          },
+        });
+        isUpdate = true;
+        console.log(`[DisposisiService] Berhasil memperbarui data disposisi ID: ${disp.id} untuk nomor agenda: ${draft.matchedLetter.agendaNumber || draft.extractedData.nomorAgenda}`);
+
+        // Bersihkan berkas fisik disposisi lama jika berbeda nama
+        if (existingDisp.file && existingDisp.file !== finalFileName) {
+          try {
+            const oldFilePath = path.join(ENV.DISPOSITION_STORAGE_PATH, existingDisp.file);
+            if (fs.existsSync(oldFilePath)) {
+              fs.unlinkSync(oldFilePath);
+              console.log(`[DisposisiService] Berkas disposisi lama (${existingDisp.file}) berhasil dibersihkan dari storage.`);
+            }
+          } catch (cleanErr) {
+            console.warn('[DisposisiService] Gagal membersihkan berkas disposisi lama:', cleanErr);
+          }
+        }
+
+        // Hapus relasi posisi & tindakan lama agar disinkronkan dengan data terbaru
+        try {
+          await prisma.disposition_positions.deleteMany({
+            where: { disposition_id: disp.id },
+          });
+          await prisma.disposition_actions.deleteMany({
+            where: { disposition_id: disp.id },
+          });
+        } catch (delRelErr) {
+          console.warn('[DisposisiService] Gagal mereset relasi lama posisi/tindakan:', delRelErr);
+        }
+      } else {
+        // INSERT disposisi baru jika belum pernah ada
+        disp = await prisma.dispositions.create({
+          data: {
+            letter_id: BigInt(draft.matchedLetter.id),
+            date: parsedDate,
+            note: cleanNote,
+            file: finalFileName,
+            send_by: draft.extractedData.pemberiDisposisi || 'Menteri Ketenagakerjaan',
+            created_by: userName || 'Petugas Protokol',
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+        });
+        console.log(`[DisposisiService] Berhasil membuat data disposisi baru ID: ${disp.id} untuk nomor agenda: ${draft.matchedLetter.agendaNumber || draft.extractedData.nomorAgenda}`);
+      }
 
       // 5. Hubungkan ke disposition_positions jika ada jabatan yang cocok
       if (draft.extractedData.diteruskanKepada && draft.extractedData.diteruskanKepada.length > 0) {
@@ -267,6 +342,7 @@ export class DisposisiService {
         fileUrl: getDispositionFileUrl(finalFileName),
         nomorAgenda: draft.matchedLetter.agendaNumber || draft.extractedData.nomorAgenda,
         perihal: draft.matchedLetter.subject || draft.matchedLetter.perihal || draft.extractedData.perihal,
+        isUpdate,
       };
     } catch (err: any) {
       console.error('[DisposisiService] Gagal menyimpan data disposisi:', err);
