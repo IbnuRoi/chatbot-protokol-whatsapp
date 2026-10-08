@@ -14,7 +14,7 @@ import {
   isPureGreeting,
   cleanHtml,
 } from '../../utils/textHelper';
-import { formatWaktuInputIndo } from '../../utils/dateHelper';
+import { formatWaktuInputIndo, formatTanggalIndo } from '../../utils/dateHelper';
 
 export class DisposisiHandler {
   /**
@@ -87,6 +87,11 @@ export class DisposisiHandler {
       if (matchedLetter) {
         existingDisposition = await disposisiService.findExistingDispositionByLetterId(matchedLetter.id);
       }
+    }
+
+    // Jika tanggal disposisi belum ditemukan dari berkas disposisi, gunakan tanggal surat masuk
+    if ((!extracted.tanggalDisposisi || extracted.tanggalDisposisi === '-') && matchedLetter?.date_letter) {
+      extracted.tanggalDisposisi = formatTanggalIndo(matchedLetter.date_letter, false);
     }
 
     // 4. Simpan ke draft sesi
@@ -258,11 +263,22 @@ export class DisposisiHandler {
         ? `• *Status Surat* : Sudah Disposisi 🟢 (Diperbarui)\n\nDetail data disposisi dan berkas fisik telah berhasil diperbarui di database sistem.`
         : `• *Status Surat* : Sudah Disposisi 🟢\n\nLembar disposisi telah digabungkan pada halaman pertama berkas surat dan berhasil diarsipkan ke database sistem.`;
 
+      const tanggalDispDisplay =
+        saveResult.tanggalDisposisi ||
+        (draft.extractedData?.tanggalDisposisi && draft.extractedData.tanggalDisposisi !== '-'
+          ? draft.extractedData.tanggalDisposisi
+          : null);
+
+      const tanggalDispLine = tanggalDispDisplay
+        ? `• *Tanggal Disposisi* : ${tanggalDispDisplay}\n`
+        : '';
+
       return {
         text:
           `${successTitle}\n\n` +
           `• *Nomor Agenda* : ${saveResult.nomorAgenda}\n` +
           `• *Perihal*      : ${saveResult.perihal}\n` +
+          tanggalDispLine +
           `• *Nama Berkas*  : ${saveResult.fileName}\n` +
           fileLinkLine +
           eventStatusLine +
@@ -399,6 +415,9 @@ export class DisposisiHandler {
           };
           const existingDisp = await disposisiService.findExistingDispositionByLetterId(matched.id);
           draft.existingDispositionId = existingDisp ? Number(existingDisp.id) : undefined;
+          if ((!draft.extractedData.tanggalDisposisi || draft.extractedData.tanggalDisposisi === '-') && matched.date_letter) {
+            draft.extractedData.tanggalDisposisi = formatTanggalIndo(matched.date_letter, false);
+          }
         } else {
           draft.matchedLetter = undefined;
           draft.existingDispositionId = undefined;
@@ -484,6 +503,9 @@ export class DisposisiHandler {
     };
     draft.extractedData.nomorAgenda = matched.agenda_number;
     draft.existingDispositionId = existingDisp ? Number(existingDisp.id) : undefined;
+    if ((!draft.extractedData.tanggalDisposisi || draft.extractedData.tanggalDisposisi === '-') && matched.date_letter) {
+      draft.extractedData.tanggalDisposisi = formatTanggalIndo(matched.date_letter, false);
+    }
     draft.matchedLetter = {
       id: Number(matched.id),
       agendaNumber: matched.agenda_number,

@@ -5,6 +5,7 @@ import OpenAI from 'openai';
 import { ENV } from '../config/env';
 import { ExtractedSuratData, ExtractedDisposisiData } from './sessionService';
 import { splitPicNameAndPhone, sanitizePlaceEvent } from '../utils/textHelper';
+import { parseIndonesianDateToDate, formatTanggalIndo, isValidDate } from '../utils/dateHelper';
 import { imageService } from './imageService';
 import { pdfService } from './pdfService';
 
@@ -1435,6 +1436,60 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
   }
 
   /**
+   * Ekstraksi tanggal lembar disposisi menggunakan regex pattern dari teks dokumen fisik
+   */
+  public extractTanggalDisposisiFromText(docText: string): string | null {
+    if (!docText || typeof docText !== 'string') return null;
+
+    const clean = docText.replace(/\r/g, '');
+
+    // 1. Pola berlabel khusus: Tanggal Disposisi / Tgl Disposisi / Jakarta, [Tgl] / Diterima [Tgl]
+    const explicitPatterns = [
+      /(?:tgl\.?|tanggal)\s*(?:pemberian\s+)?disposisi\s*[:.]?\s*([0-9]{1,2}\s+[a-zA-Z]+\s+[0-9]{4}|[0-9]{1,2}[-/.][0-9]{1,2}[-/.][0-9]{2,4})/i,
+      /(?:jakarta|ditetapkan\s+di\s+jakarta|pada\s+tanggal)\s*[,:]?\s*([0-9]{1,2}\s+[a-zA-Z]+\s+[0-9]{4}|[0-9]{1,2}[-/.][0-9]{1,2}[-/.][0-9]{2,4})/i,
+      /(?:tgl\.?|tanggal)\s*(?:penerimaan|diterima)\s*[:.]?\s*([0-9]{1,2}\s+[a-zA-Z]+\s+[0-9]{4}|[0-9]{1,2}[-/.][0-9]{1,2}[-/.][0-9]{2,4})/i,
+      /(?:tgl\.?|tanggal)\s*surat\s*[:.]?\s*([0-9]{1,2}\s+[a-zA-Z]+\s+[0-9]{4}|[0-9]{1,2}[-/.][0-9]{1,2}[-/.][0-9]{2,4})/i,
+      /(?:tgl\.?|tanggal)\s*[:.]?\s*([0-9]{1,2}\s+[a-zA-Z]+\s+[0-9]{4}|[0-9]{1,2}[-/.][0-9]{1,2}[-/.][0-9]{2,4})/i,
+    ];
+
+    for (const pattern of explicitPatterns) {
+      const m = clean.match(pattern);
+      if (m && m[1]) {
+        const parsed = parseIndonesianDateToDate(m[1].trim());
+        if (parsed && isValidDate(parsed)) {
+          return formatTanggalIndo(parsed, false);
+        }
+      }
+    }
+
+    // 2. Pola tanggal bahasa Indonesia umum yang ditemukan di lembar disposisi
+    const monthWords = 'januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember|jan|feb|mar|apr|mei|jun|jul|ags|agu|sep|sept|okt|nov|des';
+    const generalTextDateRegex = new RegExp(
+      `\\b(3[01]|[12][0-9]|0?[1-9])\\s+(?:${monthWords})\\s+(20\\d{2})\\b`,
+      'i'
+    );
+    const genMatch = clean.match(generalTextDateRegex);
+    if (genMatch) {
+      const parsed = parseIndonesianDateToDate(genMatch[0].trim());
+      if (parsed && isValidDate(parsed)) {
+        return formatTanggalIndo(parsed, false);
+      }
+    }
+
+    // 3. Pola tanggal numerik: DD/MM/YYYY atau DD-MM-YYYY
+    const numRegex = /\b(3[01]|[12][0-9]|0?[1-9])[/.-](1[0-2]|0?[1-9])[/.-](20\d{2})\b/;
+    const numMatch = clean.match(numRegex);
+    if (numMatch) {
+      const parsed = parseIndonesianDateToDate(numMatch[0].trim());
+      if (parsed && isValidDate(parsed)) {
+        return formatTanggalIndo(parsed, false);
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Ekstraksi metadata dan isi Lembar Disposisi dari berkas PDF (baik PDF digital maupun scan fisik)
    */
   public async extractDisposisiFromPdf(
@@ -1451,7 +1506,7 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       const renderedPages = await pdfService.renderPdfPagesToImages(pdfFilePath, 3);
       if (renderedPages.length > 0) {
         try {
-          return await this.extractDisposisiFromImages(renderedPages, originalFileName);
+          return await this.extractDisposisiFromImages(renderedPages, originalFileName, pdfText);
         } finally {
           pdfService.cleanupRenderedPages(renderedPages);
         }
@@ -1465,7 +1520,7 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
     const renderedPages = await pdfService.renderPdfPagesToImages(pdfFilePath, 3);
     if (renderedPages.length > 0) {
       try {
-        return await this.extractDisposisiFromImages(renderedPages, originalFileName);
+        return await this.extractDisposisiFromImages(renderedPages, originalFileName, pdfText);
       } finally {
         pdfService.cleanupRenderedPages(renderedPages);
       }
@@ -1507,7 +1562,15 @@ Bacalah teks dokumen di atas dan ekstrak data disposisi secara akurat:
 3. "nomorSurat": nomor surat dinas pengirim yang dicantumkan di lembar disposisi (jika ada).
 4. "asalSurat": instansi / pengirim surat (jika ada).
 5. "perihal": perihal atau hal surat yang tertera.
-6. "tanggalDisposisi": tanggal lembar disposisi (format: "DD MMMM YYYY", misal "5 Oktober 2026" atau tanggal hari ini).
+6. "tanggalDisposisi": tanggal lembar disposisi yang tertera pada dokumen fisik/lembar disposisi (format: "DD MMMM YYYY", misal "24 September 2026").
+   PANDUAN EKSTRAKSI TANGGAL DISPOSISI:
+   - Cari tanggal yang tercantum pada lembar disposisi:
+     * Kolom "Tanggal Disposisi", "Tgl. Disposisi", "Tanggal", "Tgl"
+     * Tanggal di dekat tanda tangan/paraf pejabat pemberi disposisi (misal: "Jakarta, 24 September 2026" atau "24/09/2026")
+     * Kolom "Tanggal Penerimaan" / "Tgl. Diterima" / "Tanggal Diterima" pada formulir lembar disposisi
+     * Kolom "Tanggal Surat" / "Tgl. Surat" pada lembar disposisi jika tidak ada tanggal disposisi terpisah
+   - SANGAT PENTING: JANGAN PERNAH MENGGUNAKAN TANGGAL HARI INI JIKA TERDAPAT TANGGAL YANG TERCANTUM PADA LEMBAR DISPOSISI!
+   - Kembalikan "-" hanya jika lembar disposisi benar-benar tidak memuat tanggal apapun.
 7. "pemberiDisposisi": pejabat pemberi disposisi (default: "Menteri Ketenagakerjaan").
 8. "diteruskanKepada": array string nama-nama pejabat yang dituju/dicentang (misal: ["Wakil Menteri", "Sekretaris Jenderal", "Dirjen PHI & Jamsos TK"]).
 9. "arahanDisposisi": array string instruksi/tindakan yang dicentang (misal: ["Agendakan", "Hadiri", "Wakili", "Tindak Lanjuti", "Pelajari / Telaah", "Siapkan Bahan"]).
@@ -1540,7 +1603,7 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       console.warn('[AiService] Ekstraksi disposisi dari teks gagal:', e);
     }
 
-    return this.parseDisposisiResponse(rawText, originalFileName);
+    return this.parseDisposisiResponse(rawText, originalFileName, text);
   }
 
   /**
@@ -1548,7 +1611,8 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
    */
   public async extractDisposisiFromImages(
     imagePaths: string[],
-    originalFileName?: string
+    originalFileName?: string,
+    fallbackDocText?: string
   ): Promise<ExtractedDisposisiData> {
     const isUsingOpenRouter = Boolean(this.openAiClient);
     let model = 'openrouter/free';
@@ -1587,7 +1651,15 @@ Ekstrak entitas data berikut:
 3. "nomorSurat": nomor surat pengirim jika tercantum pada lembar disposisi.
 4. "asalSurat": instansi / pengirim surat yang tertulis pada kolom Surat Dari / Asal Surat.
 5. "perihal": perihal atau ringkasan isi surat yang tertera.
-6. "tanggalDisposisi": tanggal pemberian disposisi (misal: "5 Oktober 2026").
+6. "tanggalDisposisi": tanggal lembar disposisi yang tertera pada lembar disposisi (format: "DD MMMM YYYY", misal "24 September 2026").
+   PANDUAN PENTING:
+   - Baca tanggal yang tertulis pada lembar disposisi:
+     * Kolom "Tanggal Disposisi", "Tanggal", "Tgl"
+     * Tanggal di dekat tanda tangan atau paraf pejabat pimpinan (misal: "Jakarta, 24 September 2026" atau "24/09/2026")
+     * Kolom "Tanggal Penerimaan" / "Tgl. Diterima" pada formulir lembar disposisi
+     * Kolom "Tanggal Surat" pada lembar disposisi
+   - SANGAT PENTING: JANGAN PERNAH MENGGUNAKAN TANGGAL HARI INI JIKA TERDAPAT TANGGAL PADA LEMBAR DISPOSISI! Ambil tanggal yang benar-benar tertulis di dokumen.
+   - Kembalikan "-" hanya jika lembar disposisi benar-benar tidak memuat tanggal apapun.
 7. "pemberiDisposisi": pejabat yang mendisposisikan surat (default: "Menteri Ketenagakerjaan").
 8. "diteruskanKepada": daftar pejabat yang dicentang / ditandai / ditulis pada bagian 'Diteruskan Kepada' (CONTOH: ["Wakil Menteri", "Sekretaris Jenderal", "Dirjen Binapenta & PKK", "Dirjen PHI & Jamsos TK", "Dirjen Binalavotas", "Dirjen Binwasnaker & K3", "Inspektur Jenderal", "Kepala Barenbang", "Kepala Biro Protokol", "Kepala Biro Humas", "Kepala Biro Hukum"]). HANYA sertakan yang benar-benar dicentang / dipilih!
 9. "arahanDisposisi": daftar petunjuk / tindakan yang dicentang atau ditandai pada lembar disposisi (CONTOH: ["Agendakan", "Hadiri", "Wakili", "Tindak Lanjuti", "Pelajari / Telaah", "Siapkan Bahan / Tanggapan", "Koordinasikan", "Untuk Diketahui / Arsip"]).
@@ -1636,20 +1708,24 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
           rawText = res.text || '';
         }
 
-        const parsed = this.parseDisposisiResponse(rawText, originalFileName);
+        const parsed = this.parseDisposisiResponse(rawText, originalFileName, fallbackDocText);
         if (parsed) return parsed;
       } catch (err) {
         console.warn(`[AiService] Ekstraksi Vision AI disposisi (${model}) gagal:`, err);
       }
     }
 
-    return this.parseDisposisiResponse('', originalFileName);
+    return this.parseDisposisiResponse('', originalFileName, fallbackDocText);
   }
 
   /**
    * Helper parsing JSON output disposisi
    */
-  private parseDisposisiResponse(rawText: string, originalFileName?: string): ExtractedDisposisiData {
+  private parseDisposisiResponse(
+    rawText: string,
+    originalFileName?: string,
+    sourceDocumentText?: string
+  ): ExtractedDisposisiData {
     let cleanJson = (rawText || '')
       .replace(/<think>[\s\S]*?<\/think>/gi, '')
       .replace(/```(?:json)?/gi, '')
@@ -1677,14 +1753,56 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
           : []);
 
     const cleanAgenda = String(parsed.nomorAgenda || '').trim();
-    const cleanFileName = originalFileName || 'disposisi.pdf';
+
+    // Ekstrak tanggal lembar disposisi secara akurat
+    let rawTgl = String(parsed.tanggalDisposisi || '').trim();
+    if (
+      !rawTgl ||
+      rawTgl === '-' ||
+      /^(?:tidak\s+ada|belum\s+ada|null|undefined|kosong|-)$/i.test(rawTgl)
+    ) {
+      rawTgl = '';
+    }
+
+    // Jika sourceDocumentText tersedia, cari tanggal di dokumen menggunakan regex jika rawTgl kosong
+    // atau jika rawTgl bernilai tanggal hari ini saat upload padahal dokumen fisik memuat tanggal lain
+    if (sourceDocumentText) {
+      const extractedFromDoc = this.extractTanggalDisposisiFromText(sourceDocumentText);
+      if (extractedFromDoc) {
+        if (!rawTgl) {
+          rawTgl = extractedFromDoc;
+        } else {
+          const todayFormatted = this.getTodayFormatted();
+          if (
+            rawTgl.toLowerCase() === todayFormatted.toLowerCase() &&
+            extractedFromDoc.toLowerCase() !== todayFormatted.toLowerCase()
+          ) {
+            console.log(
+              `[AiService] Tanggal AI (${rawTgl}) sama dengan tanggal hari ini saat upload, mengutamakan tanggal dari lembar disposisi: ${extractedFromDoc}`
+            );
+            rawTgl = extractedFromDoc;
+          }
+        }
+      }
+    }
+
+    // Format tanggal disposisi ke format standar bahasa Indonesia
+    let finalTanggalDisposisi = '-';
+    if (rawTgl && rawTgl !== '-') {
+      const parsedDateObj = parseIndonesianDateToDate(rawTgl);
+      if (parsedDateObj && isValidDate(parsedDateObj)) {
+        finalTanggalDisposisi = formatTanggalIndo(parsedDateObj, false);
+      } else {
+        finalTanggalDisposisi = rawTgl;
+      }
+    }
 
     return {
       nomorAgenda: cleanAgenda && cleanAgenda !== '-' ? cleanAgenda : '',
       nomorSurat: String(parsed.nomorSurat || '').trim() || '-',
       asalSurat: String(parsed.asalSurat || '').trim() || '-',
       perihal: String(parsed.perihal || '').trim() || '-',
-      tanggalDisposisi: String(parsed.tanggalDisposisi || '').trim() || this.getTodayFormatted(),
+      tanggalDisposisi: finalTanggalDisposisi,
       pemberiDisposisi: String(parsed.pemberiDisposisi || '').trim() || 'Menteri Ketenagakerjaan',
       diteruskanKepada: diteruskan.length > 0 ? diteruskan : ['Sekretaris Jenderal'],
       arahanDisposisi: arahan.length > 0 ? arahan : ['Agendakan'],

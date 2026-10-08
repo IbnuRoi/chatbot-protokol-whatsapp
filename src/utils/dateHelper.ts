@@ -234,12 +234,15 @@ export function parseIndonesianDateToDate(input: string | null | undefined): Dat
     return new Date(Date.UTC(y, m - 1, d));
   }
 
-  // 2. Format DD/MM/YYYY atau DD-MM-YYYY
-  const numMatch = clean.match(/\b(3[01]|[12][0-9]|0?[1-9])[/.-](\d{1,2})[/.-](\d{4})\b/);
+  // 2. Format DD/MM/YYYY atau DD-MM-YYYY (mendukung tahun 2 digit atau 4 digit)
+  const numMatch = clean.match(/\b(3[01]|[12][0-9]|0?[1-9])[/.-](\d{1,2})[/.-](\d{2}|\d{4})\b/);
   if (numMatch) {
     const d = parseInt(numMatch[1], 10);
     const m = parseInt(numMatch[2], 10);
-    const y = parseInt(numMatch[3], 10);
+    let y = parseInt(numMatch[3], 10);
+    if (y < 100) {
+      y = 2000 + y;
+    }
     return new Date(Date.UTC(y, m - 1, d));
   }
 

@@ -6,13 +6,14 @@ import { ENV } from '../config/env';
 import { suratService, NormalizedSurat } from './suratService';
 import { DisposisiDraftData } from './sessionService';
 import { pdfService } from './pdfService';
+import { aiService } from './aiService';
 import {
   generateDispositionFileName,
   getDispositionFileUrl,
   formatEventTitleFromDisposition,
   resolvePejabatDitunjuk,
 } from '../utils/textHelper';
-import { parseIndonesianDateToDate } from '../utils/dateHelper';
+import { parseIndonesianDateToDate, formatTanggalIndo } from '../utils/dateHelper';
 import {
   matchPositionsList,
   matchActionsList,
@@ -27,6 +28,7 @@ export interface SaveDisposisiResult {
   fileUrl?: string | null;
   nomorAgenda?: string;
   perihal?: string;
+  tanggalDisposisi?: string;
   isUpdate?: boolean;
   eventUpdated?: boolean;
   eventStatusText?: string;
@@ -130,20 +132,19 @@ export class DisposisiService {
     }
 
     try {
-      // 1. Dapatkan nama file surat induk dari tabel letters
+      // 1. Dapatkan nama file surat induk dan data terkait dari tabel letters
       let letterFileName = draft.matchedLetter.file;
-      if (!letterFileName) {
-        try {
-          const letterRecord = await prisma.letters.findUnique({
-            where: { id: BigInt(draft.matchedLetter.id) },
-            select: { file: true },
-          });
-          if (letterRecord?.file) {
-            letterFileName = letterRecord.file;
-          }
-        } catch (fetchErr) {
-          console.warn('[DisposisiService] Gagal mengambil kolom file dari surat induk:', fetchErr);
+      let letterRecord: any = null;
+      try {
+        letterRecord = await prisma.letters.findUnique({
+          where: { id: BigInt(draft.matchedLetter.id) },
+          select: { id: true, file: true, date_letter: true },
+        });
+        if (letterRecord?.file) {
+          letterFileName = letterRecord.file;
         }
+      } catch (fetchErr) {
+        console.warn('[DisposisiService] Gagal mengambil kolom file/date_letter dari surat induk:', fetchErr);
       }
 
       // 2. Tentukan nama berkas final sesuai standar Laravel / database: {timestamp}_{uniqid}.pdf
@@ -162,17 +163,47 @@ export class DisposisiService {
       draft.tempFilePath = mergeResult.targetPath;
       draft.finalFileName = finalFileName;
 
-      // 3. Parse tanggal disposisi
+      // 4. Parse tanggal disposisi (prioritaskan tanggal dari lembar disposisi fisik, BUKAN tanggal saat upload)
       let parsedDate: Date | null = parseIndonesianDateToDate(draft.extractedData.tanggalDisposisi);
-      if (!parsedDate && draft.extractedData.tanggalDisposisi) {
+      if (!parsedDate && draft.extractedData.tanggalDisposisi && draft.extractedData.tanggalDisposisi !== '-') {
         const parsed = new Date(draft.extractedData.tanggalDisposisi);
         if (!isNaN(parsed.getTime())) {
           parsedDate = parsed;
         }
       }
-      if (!parsedDate) {
-        parsedDate = new Date();
+
+      // Jika belum ditemukan dari extractedData, coba ekstrak langsung dari teks lembar disposisi fisik
+      if (!parsedDate && draft.tempFilePath && fs.existsSync(draft.tempFilePath)) {
+        try {
+          let textDoc = '';
+          if (draft.tempFilePath.toLowerCase().endsWith('.pdf')) {
+            textDoc = await pdfService.extractText(draft.tempFilePath);
+          }
+          if (textDoc) {
+            const rawDateFromDoc = aiService.extractTanggalDisposisiFromText(textDoc);
+            if (rawDateFromDoc) {
+              parsedDate = parseIndonesianDateToDate(rawDateFromDoc);
+              if (parsedDate) {
+                draft.extractedData.tanggalDisposisi = rawDateFromDoc;
+              }
+            }
+          }
+        } catch (extractErr) {
+          console.warn('[DisposisiService] Gagal ekstraksi teks dari berkas disposisi untuk tanggal:', extractErr);
+        }
       }
+
+      // Jika lembar disposisi tidak mencantumkan tanggal tersendiri, coba fallback ke tanggal surat masuk induk dari database
+      if (!parsedDate && draft.matchedLetter) {
+        if (draft.matchedLetter.dateLetter) {
+          parsedDate = parseIndonesianDateToDate(draft.matchedLetter.dateLetter);
+        } else if (letterRecord?.date_letter) {
+          parsedDate = new Date(letterRecord.date_letter);
+        }
+      }
+
+      // CATATAN PENTING: Jika tidak tercantum tanggal pada lembar disposisi maupun di database surat,
+      // jangan pernah fallback ke new Date() (tanggal saat upload). Tetap biarkan null sesuai skema PostgreSQL.
 
       // Catatan disposisi gabungan dari instruksi dan catatan khusus
       const cleanNote =
@@ -434,6 +465,12 @@ export class DisposisiService {
         console.warn('[DisposisiService] Peringatan saat memperbarui events/event_letters:', evLinkErr);
       }
 
+      const formattedTanggalDisposisi = parsedDate
+        ? formatTanggalIndo(parsedDate, false)
+        : (draft.extractedData.tanggalDisposisi && draft.extractedData.tanggalDisposisi !== '-'
+            ? draft.extractedData.tanggalDisposisi
+            : undefined);
+
       return {
         success: true,
         dispositionId: Number(disp.id),
@@ -441,6 +478,7 @@ export class DisposisiService {
         fileUrl: getDispositionFileUrl(finalFileName),
         nomorAgenda: draft.matchedLetter.agendaNumber || draft.extractedData.nomorAgenda,
         perihal: draft.matchedLetter.subject || draft.matchedLetter.perihal || draft.extractedData.perihal,
+        tanggalDisposisi: formattedTanggalDisposisi,
         isUpdate,
         eventUpdated,
         eventStatusText,
