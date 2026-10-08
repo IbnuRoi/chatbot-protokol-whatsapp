@@ -493,5 +493,72 @@ export function formatEventTitleFromDisposition(
   return `<p>${cleanedTitle}<br />\r\n<strong>(Arahan Menaker: ${suffix})</strong></p>`;
 }
 
+/**
+ * Memvalidasi dan membersihkan nilai tempat/lokasi acara (placeEvent).
+ * Mencegah teks perihal, permohonan, atau judul acara yang tidak sengaja terinput ke kolom lokasi.
+ * Mengembalikan null jika kandidat tidak valid atau bukan lokasi fisik/daring yang sebenarnya.
+ */
+export function sanitizePlaceEvent(
+  candidate?: string | null,
+  perihal?: string | null,
+  subject?: string | null,
+  namaAcara?: string | null
+): string | null {
+  if (!candidate || typeof candidate !== 'string') return null;
+
+  const trimmed = candidate.trim().replace(/^[\*•\-\s]+|[\*•\-\s]+$/g, '');
+  if (
+    !trimmed ||
+    trimmed === '-' ||
+    /^(?:tidak\s+ada|belum\s+ada|null|undefined|kosong|nihil|-|di\s+tempat|tempat|lokasi|tempat\s+masing-masing|tempat\s+kerja\s+masing-masing|kedudukan\s+masing-masing)$/i.test(trimmed)
+  ) {
+    return null;
+  }
+
+  // Jika teks terlalu panjang seperti paragraf perihal/isi surat
+  if (trimmed.length > 180) {
+    return null;
+  }
+
+  const lowerCandidate = trimmed.toLowerCase();
+
+  // Kata kunci tempat/lokasi nyata
+  const hasVenueKeyword = /\b(?:hotel|gedung|ruang(?:an)?|ballroom|auditorium|aula|graha|hall|istana|kantor|lantai|lt\.?|zoom|daring|online|virtual|plaza|menara|kompleks|kav(?:ling)?|jl\.?|jalan|kemnaker|kementerian|resort|villa|stadion|lapangan|mesjid|masjid|gereja)\b/i.test(lowerCandidate);
+
+  // Periksa apakah kandidat sama persis atau merupakan bagian dari perihal / subject / namaAcara
+  const compareTargets = [perihal, subject, namaAcara]
+    .filter((t): t is string => Boolean(t && t.trim() && t.trim() !== '-'))
+    .map((t) => t.trim().toLowerCase());
+
+  for (const target of compareTargets) {
+    if (lowerCandidate === target) {
+      return null; // Duplikasi 100% perihal / subject
+    }
+    // Jika kandidat merupakan kalimat panjang yang terkandung dalam perihal tanpa kata kunci venue
+    if (!hasVenueKeyword && target.includes(lowerCandidate) && lowerCandidate.length > 15) {
+      return null;
+    }
+  }
+
+  // Jika kandidat diawali kata-kata perihal / judul surat dan tidak mengandung kata kunci tempat
+  if (!hasVenueKeyword) {
+    if (
+      /^(?:undangan|permohonan|pemberitahuan|penyampaian|laporan|pengantar|konfirmasi|audiensi|wawancara|rapat\s+koordinasi|agenda)\b/i.test(lowerCandidate)
+    ) {
+      return null;
+    }
+  }
+
+  // Jika memuat awalan kalimat seperti "bertempat di" atau "Undangan rapat di <venue>", bersihkan agar murni nama lokasi
+  let cleanResult = trimmed.replace(/^(?:bertempat\s+(?:di|pada)|tempat\s*:|lokasi\s*:|venue\s*:)\s*/i, '');
+  const prefixMatch = cleanResult.match(/^(?:undangan|acara|kegiatan|rapat|pertemuan|sosialisasi)\b.*?\s+(?:di|bertempat di)\s+(.+)$/i);
+  if (prefixMatch && prefixMatch[1]) {
+    cleanResult = prefixMatch[1].trim();
+  }
+
+  return cleanResult;
+}
+
+
 
 

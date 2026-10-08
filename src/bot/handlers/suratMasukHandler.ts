@@ -6,7 +6,7 @@ import { aiService, formatPerihalByTemplate, generateSubjectSummary, formatAsalS
 import { NluResult } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
-import { formatNomorAgendaLink, getLetterFileUrl, generateLetterFileName, splitPicNameAndPhone, formatCombinedPic } from '../../utils/textHelper';
+import { formatNomorAgendaLink, getLetterFileUrl, generateLetterFileName, splitPicNameAndPhone, formatCombinedPic, sanitizePlaceEvent } from '../../utils/textHelper';
 import { formatWaktuInputIndo, parseIndonesianDateEventRange, parseIndonesianTimeToDates, cleanDateStringFromTime } from '../../utils/dateHelper';
 
 export const KATEGORI_LABEL_MAP: Record<string, string> = {
@@ -688,10 +688,15 @@ export class SuratMasukHandler {
       updatedKeys.push('Jam Acara');
     }
     if (parsed.placeEvent !== undefined) {
-      if (parsed.placeEvent === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(parsed.placeEvent)) {
+      const sanitizedPlace = sanitizePlaceEvent(
+        parsed.placeEvent,
+        session.draftSurat.finalPerihal || session.draftSurat.extractedData.perihal,
+        session.draftSurat.extractedData.namaAcara
+      );
+      if (!sanitizedPlace || sanitizedPlace === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(sanitizedPlace)) {
         session.draftSurat.extractedData.placeEvent = undefined;
       } else {
-        session.draftSurat.extractedData.placeEvent = parsed.placeEvent.trim().slice(0, 220);
+        session.draftSurat.extractedData.placeEvent = sanitizedPlace.slice(0, 220);
       }
       updatedKeys.push('Tempat Acara');
     }
@@ -1284,10 +1289,15 @@ export class SuratMasukHandler {
           }
         }
       } else if (field === 'placeEvent') {
-        if (val === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(val)) {
+        const sanitizedPlace = sanitizePlaceEvent(
+          val,
+          session.draftSurat.finalPerihal || session.draftSurat.extractedData.perihal,
+          session.draftSurat.extractedData.namaAcara
+        );
+        if (!sanitizedPlace || sanitizedPlace === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(sanitizedPlace)) {
           session.draftSurat.extractedData.placeEvent = undefined;
         } else {
-          session.draftSurat.extractedData.placeEvent = val.slice(0, 220);
+          session.draftSurat.extractedData.placeEvent = sanitizedPlace.slice(0, 220);
         }
       } else if (field === 'picName') {
         const splitted = splitPicNameAndPhone(val);

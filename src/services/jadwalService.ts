@@ -260,7 +260,7 @@ export class JadwalService {
     let tglKegiatan = '';
     let waktuMulai = '09:00';
     let waktuSelesai: string | null = null;
-    let lokasi = cleanHtml(event.location) || 'Gedung Kemnaker RI, Jakarta';
+    let lokasi = cleanHtml(event.location) || '-';
 
     let hasRescheduledDate = false;
     if (event.event_time_start) {
@@ -312,7 +312,7 @@ export class JadwalService {
         const mm = String(letter.time_event_finish.getUTCMinutes()).padStart(2, '0');
         waktuSelesai = `${hh}:${mm}`;
       }
-      if (letter.place_event && (!event.location || event.location === 'Gedung Kemnaker RI, Jakarta')) {
+      if (letter.place_event && (!event.location || event.location === '-')) {
         lokasi = cleanHtml(letter.place_event);
       }
     }
@@ -340,7 +340,7 @@ export class JadwalService {
       tanggalKegiatan: tglKegiatan || this.getTodayString(),
       waktuMulai,
       waktuSelesai,
-      lokasi: lokasi || 'Gedung Kemnaker RI, Jakarta',
+      lokasi: lokasi || '-',
       pejabatHadir: '-',
       pic: picInfo,
       statusDisposisi,

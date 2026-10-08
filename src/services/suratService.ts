@@ -2,7 +2,7 @@ import { prisma } from '../database/prisma';
 import { Prisma } from '@prisma/client';
 import { pdfService } from './pdfService';
 import { SuratDraftData } from './sessionService';
-import { cleanHtml, formatCombinedPic, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone } from '../utils/textHelper';
+import { cleanHtml, formatCombinedPic, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone, sanitizePlaceEvent } from '../utils/textHelper';
 import { parseIndonesianDateToDate, formatTanggalIndo, parseIndonesianTimeToDates, parseIndonesianDateEventRange, isValidDate } from '../utils/dateHelper';
 import { ENV } from '../config/env';
 import path from 'path';
@@ -393,10 +393,20 @@ export class SuratService {
       const safeNomorSurat = (draft.extractedData.nomorSurat || '-').trim().slice(0, 100);
       const safeAsalSurat = (draft.extractedData.asalSurat || '-').trim().slice(0, 225);
       const safeSubject = finalSubject.trim().slice(0, 200);
-      const rawPlaceEvent = draft.extractedData.placeEvent;
-      const safePlaceEvent = (rawPlaceEvent && rawPlaceEvent !== '-' && rawPlaceEvent.trim().length > 0)
-        ? rawPlaceEvent.trim().slice(0, 220)
+
+      // Bersihkan dan validasi tempat/lokasi acara (cegah teks perihal/acara masuk ke lokasi)
+      const cleanSanitizedPlace = sanitizePlaceEvent(
+        draft.extractedData.placeEvent,
+        finalPerihal,
+        draft.extractedData.namaAcara
+      );
+      const safePlaceEvent = (cleanSanitizedPlace && cleanSanitizedPlace !== '-' && cleanSanitizedPlace.trim().length > 0)
+        ? cleanSanitizedPlace.trim().slice(0, 220)
         : null;
+
+      // Zona waktu untuk surat hanya disimpan jika memang ada tanggal atau jam acara
+      const safeLettersTimeZone = (isValidDate(parsedDateEvent) || isValidDate(parsedTimeEvent)) ? parsedTimeZone : null;
+
       const safeFileName = finalFileName.trim().slice(0, 225);
       const safeInstansi = (draft.asalInstansi || 'Lainnya').trim().slice(0, 50);
       const safeCreatorName = creatorName.trim().slice(0, 191);
@@ -411,11 +421,11 @@ export class SuratService {
             agenda_number: safeAgendaNumber,
             number_or_date: safeNomorSurat,
             date_letter: parsedDate,
-            date_event: parsedDateEvent,
-            date_event_end: parsedDateEventEnd,
-            time_event: parsedTimeEvent,
-            time_event_finish: parsedTimeFinish,
-            time_zone: parsedTimeZone,
+            date_event: isValidDate(parsedDateEvent) ? parsedDateEvent : null,
+            date_event_end: isValidDate(parsedDateEventEnd) ? parsedDateEventEnd : null,
+            time_event: isValidDate(parsedTimeEvent) ? parsedTimeEvent : null,
+            time_event_finish: isValidDate(parsedTimeFinish) ? parsedTimeFinish : null,
+            time_zone: safeLettersTimeZone,
             from: safeAsalSurat,
             subject: safeSubject,
             place_event: safePlaceEvent,
@@ -447,11 +457,11 @@ export class SuratService {
               agenda_number: safeAgendaNumber,
               number_or_date: safeNomorSurat,
               date_letter: parsedDate,
-              date_event: parsedDateEvent,
-              date_event_end: parsedDateEventEnd,
-              time_event: parsedTimeEvent,
-              time_event_finish: parsedTimeFinish,
-              time_zone: parsedTimeZone,
+              date_event: isValidDate(parsedDateEvent) ? parsedDateEvent : null,
+              date_event_end: isValidDate(parsedDateEventEnd) ? parsedDateEventEnd : null,
+              time_event: isValidDate(parsedTimeEvent) ? parsedTimeEvent : null,
+              time_event_finish: isValidDate(parsedTimeFinish) ? parsedTimeFinish : null,
+              time_zone: safeLettersTimeZone,
               from: safeAsalSurat,
               subject: safeSubject,
               place_event: safePlaceEvent,
@@ -501,74 +511,70 @@ export class SuratService {
       // Otomatis masukkan ke jadwal kegiatan (tabel events) walaupun belum ada lembar disposisi
       let createdEvent: any = null;
       try {
-        // 1. Tanggal acuan kegiatan (prioritas: parsedDateEvent -> parsedDate -> hari ini waktu WIB)
-        let eventYear: number, eventMonth: number, eventDay: number;
-        if (isValidDate(parsedDateEvent)) {
-          eventYear = parsedDateEvent.getUTCFullYear();
-          eventMonth = parsedDateEvent.getUTCMonth();
-          eventDay = parsedDateEvent.getUTCDate();
-        } else if (isValidDate(parsedDate)) {
-          eventYear = parsedDate.getUTCFullYear();
-          eventMonth = parsedDate.getUTCMonth();
-          eventDay = parsedDate.getUTCDate();
-        } else {
-          const now = new Date();
-          const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
-          const wibDate = new Date(utcMs + 7 * 3600000);
-          eventYear = wibDate.getFullYear();
-          eventMonth = wibDate.getMonth();
-          eventDay = wibDate.getDate();
-        }
-
-        // Tentukan pergeseran zona waktu untuk database events (default WIB: +7)
-        let tzOffsetHours = 7;
-        if (parsedTimeZone === 'WITA') tzOffsetHours = 8;
-        else if (parsedTimeZone === 'WIT') tzOffsetHours = 9;
-
-        // 2. Jam mulai: date_event & time_event ke kolom event_time_start
-        // (default 09:00 jika tidak ada jam spesifik pada surat)
-        let startH = 9;
-        let startM = 0;
-        if (isValidDate(parsedTimeEvent)) {
-          startH = parsedTimeEvent.getUTCHours();
-          startM = parsedTimeEvent.getUTCMinutes();
-        }
-
-        // Kolom events.event_time_start di PostgreSQL tersimpan dengan pergeseran zona waktu
-        let eventTimeStart = new Date(Date.UTC(eventYear, eventMonth, eventDay, startH + tzOffsetHours, startM, 0, 0));
-        if (!isValidDate(eventTimeStart)) {
-          eventTimeStart = new Date();
-        }
-
-        // 3. Jam selesai: date_event & time_event_finish ke kolom event_time_finish jika ada
+        // 1. Waktu kegiatan (hanya diisi jika memang ada tanggal kegiatan pada surat/hasil ekstraksi)
+        let eventTimeStart: Date | null = null;
         let eventTimeFinish: Date | null = null;
         let untilFinish = 0;
+        let safeEventTimeZone: string | null = null;
 
-        if (isValidDate(parsedTimeFinish)) {
-          const finishH = parsedTimeFinish.getUTCHours();
-          const finishM = parsedTimeFinish.getUTCMinutes();
-          const endYear = isValidDate(parsedDateEventEnd) ? parsedDateEventEnd.getUTCFullYear() : eventYear;
-          const endMonth = isValidDate(parsedDateEventEnd) ? parsedDateEventEnd.getUTCMonth() : eventMonth;
-          const endDay = isValidDate(parsedDateEventEnd) ? parsedDateEventEnd.getUTCDate() : eventDay;
+        if (isValidDate(parsedDateEvent)) {
+          const eventYear = parsedDateEvent.getUTCFullYear();
+          const eventMonth = parsedDateEvent.getUTCMonth();
+          const eventDay = parsedDateEvent.getUTCDate();
 
-          eventTimeFinish = new Date(Date.UTC(endYear, endMonth, endDay, finishH + tzOffsetHours, finishM, 0, 0));
-          if (!isValidDate(eventTimeFinish)) {
-            eventTimeFinish = null;
+          // Tentukan pergeseran zona waktu untuk database events (default WIB: +7)
+          let tzOffsetHours = 7;
+          if (parsedTimeZone === 'WITA') tzOffsetHours = 8;
+          else if (parsedTimeZone === 'WIT') tzOffsetHours = 9;
+
+          // 2. Jam mulai: jika ada jam spesifik gunakan itu, jika tidak ada jam spesifik gunakan default 09:00 WIB
+          let startH = 9;
+          let startM = 0;
+          if (isValidDate(parsedTimeEvent)) {
+            startH = parsedTimeEvent.getUTCHours();
+            startM = parsedTimeEvent.getUTCMinutes();
+          }
+
+          const calculatedStart = new Date(Date.UTC(eventYear, eventMonth, eventDay, startH + tzOffsetHours, startM, 0, 0));
+          eventTimeStart = isValidDate(calculatedStart) ? calculatedStart : null;
+
+          // 3. Jam selesai: date_event & time_event_finish ke kolom event_time_finish jika ada
+          if (isValidDate(parsedTimeFinish)) {
+            const finishH = parsedTimeFinish.getUTCHours();
+            const finishM = parsedTimeFinish.getUTCMinutes();
+            const endYear = isValidDate(parsedDateEventEnd) ? parsedDateEventEnd.getUTCFullYear() : eventYear;
+            const endMonth = isValidDate(parsedDateEventEnd) ? parsedDateEventEnd.getUTCMonth() : eventMonth;
+            const endDay = isValidDate(parsedDateEventEnd) ? parsedDateEventEnd.getUTCDate() : eventDay;
+
+            const calculatedFinish = new Date(Date.UTC(endYear, endMonth, endDay, finishH + tzOffsetHours, finishM, 0, 0));
+            if (isValidDate(calculatedFinish)) {
+              eventTimeFinish = calculatedFinish;
+              untilFinish = 0;
+            } else {
+              eventTimeFinish = null;
+              untilFinish = 1;
+            }
+          } else if (isValidDate(parsedDateEventEnd) && parsedDateEventEnd.getTime() !== parsedDateEvent.getTime()) {
+            // Acara multi-hari tanpa jam selesai spesifik -> simpan waktu selesai hari terakhir pukul 17:00
+            const endYear = parsedDateEventEnd.getUTCFullYear();
+            const endMonth = parsedDateEventEnd.getUTCMonth();
+            const endDay = parsedDateEventEnd.getUTCDate();
+            eventTimeFinish = new Date(Date.UTC(endYear, endMonth, endDay, 17 + tzOffsetHours, 0, 0, 0));
             untilFinish = 1;
           } else {
-            untilFinish = 0;
+            // Acara 1 hari tanpa jam selesai spesifik (atau berlangsung sampai selesai)
+            eventTimeFinish = null;
+            untilFinish = 1;
           }
-        } else if (isValidDate(parsedDateEventEnd) && parsedDateEventEnd.getTime() !== parsedDateEvent?.getTime()) {
-          // Acara multi-hari tanpa jam selesai spesifik -> simpan waktu selesai hari terakhir pukul 17:00
-          const endYear = parsedDateEventEnd.getUTCFullYear();
-          const endMonth = parsedDateEventEnd.getUTCMonth();
-          const endDay = parsedDateEventEnd.getUTCDate();
-          eventTimeFinish = new Date(Date.UTC(endYear, endMonth, endDay, 17 + tzOffsetHours, 0, 0, 0));
-          untilFinish = 1;
+
+          safeEventTimeZone = (parsedTimeZone || 'WIB').slice(0, 10);
         } else {
-          // Acara 1 hari tanpa jam selesai spesifik (atau berlangsung sampai selesai)
+          // Surat TIDAK menyebutkan tanggal/waktu event atau tidak ada pada hasil ekstraksi:
+          // Kosongkan kolom waktu event (null) di tabel database
+          eventTimeStart = null;
           eventTimeFinish = null;
-          untilFinish = 1;
+          untilFinish = 0;
+          safeEventTimeZone = null;
         }
 
         // Ambil max ID events untuk menghindari sequence primary key conflict
@@ -591,9 +597,8 @@ export class SuratService {
                 : safeSubject || 'Agenda Kegiatan Protokol')
         ).trim();
 
-        // 5. Lokasi acara: place_event ke location
-        const cleanLocation = cleanHtml(safePlaceEvent || '').trim();
-        const eventLocation = cleanLocation && cleanLocation !== '-' ? cleanLocation : 'Gedung Kemnaker RI, Jakarta';
+        // 5. Lokasi acara: place_event ke location (kosongkan / null jika tidak ada pada surat)
+        const eventLocation = safePlaceEvent || null;
 
         // 6. Kelengkapan kolom lainnya pada tabel events
         let eventPicJson: string | null = null;
@@ -609,7 +614,6 @@ export class SuratService {
         const eventNotes = `Asal Surat: ${safeAsalSurat} | No. Surat: ${safeNomorSurat} | No. Agenda: ${safeAgendaNumber}`;
 
         // Siapkan data event baru (pastikan time_zone maksimal 10 karakter sesuai skema DB)
-        const safeEventTimeZone = (parsedTimeZone || 'WIB').slice(0, 10);
         const eventDataPayload: Prisma.eventsCreateInput = {
           title: eventTitle,
           letter_id: BigInt(surat.id),

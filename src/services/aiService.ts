@@ -4,7 +4,7 @@ import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
 import { ENV } from '../config/env';
 import { ExtractedSuratData, ExtractedDisposisiData } from './sessionService';
-import { splitPicNameAndPhone } from '../utils/textHelper';
+import { splitPicNameAndPhone, sanitizePlaceEvent } from '../utils/textHelper';
 import { imageService } from './imageService';
 import { pdfService } from './pdfService';
 
@@ -782,7 +782,7 @@ TUGAS UTAMA:
    - "picPengirim": "gabungan nama PIC dan nomor telepon (CONTOH: 'Ahmad Fauzi (081234567890)'). Jika tidak ada, isi '-'"
    - "dateEvent": "hari/tanggal pelaksanaan acara/kegiatan/event yang disebutkan di dalam isi surat (CONTOH: 'Senin, 20 Oktober 2026' atau '20 Oktober 2026' atau '25 - 27 November 2026'). BUKAN tanggal pembuatan surat! Jika surat TIDAK memiliki tanggal event/acara (misalnya surat laporan biasa, pemberitahuan tanpa acara, dll), isi '-'"
    - "timeEvent": "jam/waktu mulai dan/atau selesai pelaksanaan acara/kegiatan yang tercantum di dalam surat (CONTOH: '09.00 WIB' atau '08.30 - 12.00 WIB' atau '13.00 WIB s.d. selesai' atau '10.00 WITA'). Jika surat TIDAK memuat jam acara, isi '-'"
-   - "placeEvent": "lokasi/tempat diselenggarakannya acara/kegiatan/event yang tercantum di dalam isi surat (CONTOH: 'Hotel Bidakara Jakarta' atau 'Ruang Rapat Tridharma Lantai 2' atau 'Grand Ballroom Hotel Indonesia Kempinski' atau 'Aplikasi Zoom Meeting / Daring' atau 'Bandung'). HANYA nama tempat/lokasi acara! Jika surat TIDAK memuat tempat/lokasi acara, isi '-'"
+   - "placeEvent": "lokasi/tempat diselenggarakannya acara/kegiatan/event yang tercantum di dalam isi surat (CONTOH: 'Hotel Bidakara Jakarta' atau 'Ruang Rapat Tridharma Lantai 2' atau 'Grand Ballroom Hotel Indonesia Kempinski' atau 'Aplikasi Zoom Meeting / Daring' atau 'Bandung'). SANGAT PENTING: JANGAN PERNAH mengisi placeEvent dengan teks perihal, permohonan, atau nama acara! HANYA nama tempat/lokasi fisik/daring acara! Jika surat TIDAK memuat tempat/lokasi acara, WAJIB ISI '-'"
 
 KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN TANPA PENJELASAN LAIN:
 
@@ -892,7 +892,7 @@ Bacalah seluruh isi dokumen surat dinas terlampir secara teliti dan menyeluruh d
    - "picPengirim": "gabungan nama PIC dan nomor telepon (CONTOH: 'Ahmad Fauzi (081234567890)'). Jika tidak ada, isi '-'"
    - "dateEvent": "hari/tanggal pelaksanaan acara/kegiatan yang disebutkan di dalam isi surat pada gambar (CONTOH: 'Senin, 20 Oktober 2026' atau '20 Oktober 2026'). BUKAN tanggal pembuatan surat! Jika surat TIDAK memiliki tanggal event/acara, isi '-'"
    - "timeEvent": "jam/waktu mulai dan/atau selesai pelaksanaan acara/kegiatan yang tercantum di dalam gambar surat (CONTOH: '09.00 WIB' atau '08.30 - 12.00 WIB' atau '13.00 WIB s.d. selesai'). Jika surat TIDAK memuat jam acara, isi '-'"
-   - "placeEvent": "lokasi/tempat diselenggarakannya acara/kegiatan yang tercantum di dalam gambar surat (CONTOH: 'Hotel Bidakara Jakarta' atau 'Ruang Rapat Tridharma Lantai 2' atau 'Grand Ballroom Hotel Indonesia Kempinski' atau 'Aplikasi Zoom Meeting / Daring'). HANYA nama tempat/lokasi acara! Jika tidak ada, isi '-'"
+   - "placeEvent": "lokasi/tempat diselenggarakannya acara/kegiatan yang tercantum di dalam gambar surat (CONTOH: 'Hotel Bidakara Jakarta' atau 'Ruang Rapat Tridharma Lantai 2' atau 'Grand Ballroom Hotel Indonesia Kempinski' atau 'Aplikasi Zoom Meeting / Daring'). SANGAT PENTING: JANGAN PERNAH mengisi placeEvent dengan teks perihal, permohonan, atau nama acara! HANYA nama tempat/lokasi fisik/daring acara! Jika tidak ada tempat acara, WAJIB ISI '-'"
 
 KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN TANPA PENJELASAN LAIN:
 `;
@@ -1072,9 +1072,8 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
         : undefined;
 
       const rawPlaceEvent = (parsed.placeEvent || '').trim();
-      let cleanPlaceEvent = (rawPlaceEvent && rawPlaceEvent !== '-' && !/^(?:tidak\s+ada|belum\s+ada|null|undefined|-)$/i.test(rawPlaceEvent))
-        ? rawPlaceEvent.replace(/^[\*•\-\s]+/, '').slice(0, 220)
-        : undefined;
+      const sanitizedPlace = sanitizePlaceEvent(rawPlaceEvent, parsed.perihal, parsed.subject, cleanAcara);
+      let cleanPlaceEvent = sanitizedPlace ? sanitizedPlace.slice(0, 220) : undefined;
 
       // Jika cleanTimeEvent belum ada tetapi cleanDateEvent memuat pola jam (misal: "20 Oktober 2026, Pukul 09.00 WIB")
       if (!cleanTimeEvent && cleanDateEvent) {
@@ -1391,8 +1390,9 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
     );
     if (placeEventMatch && placeEventMatch[1]) {
       const candidate = placeEventMatch[1].trim().replace(/^[\*•\-\s]+/, '');
-      if (candidate.length >= 3 && !/^(?:pukul|jam|hari|tanggal|-)$/i.test(candidate)) {
-        placeEvent = candidate.slice(0, 220);
+      const sanitized = sanitizePlaceEvent(candidate, cleanEventName, cleanEventName, cleanEventName);
+      if (sanitized && sanitized.length >= 3 && !/^(?:pukul|jam|hari|tanggal|-)$/i.test(sanitized)) {
+        placeEvent = sanitized.slice(0, 220);
       }
     }
 
