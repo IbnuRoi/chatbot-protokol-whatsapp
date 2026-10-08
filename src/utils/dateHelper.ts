@@ -347,6 +347,22 @@ export function parseIndonesianDateEventRange(input?: string | null): {
  * - "08.30 - 12.00 WIB" -> startTime: 08:30:00 UTC, finishTime: 12:00:00 UTC, timeZone: "WIB"
  * - "13.00 s.d. selesai" -> startTime: 13:00:00 UTC, finishTime: null, timeZone: "WIB"
  */
+/**
+ * Mengecek apakah sebuah nilai adalah objek Date yang valid (bukan NaN)
+ */
+export function isValidDate(d: any): d is Date {
+  return d instanceof Date && !isNaN(d.getTime());
+}
+
+/**
+ * Mem-parsing string jam/waktu pelaksanaan acara dalam bahasa Indonesia
+ * menjadi objek Date UTC untuk kolom time_event dan time_event_finish (@db.Time(6)) pada tabel letters.
+ * Contoh input:
+ * - "09.00 WIB" -> startTime: 09:00:00 UTC, finishTime: null, timeZone: "WIB"
+ * - "08.30 - 12.00 WIB" -> startTime: 08:30:00 UTC, finishTime: 12:00:00 UTC, timeZone: "WIB"
+ * - "13.00 s.d. selesai" -> startTime: 13:00:00 UTC, finishTime: null, timeZone: "WIB"
+ * - "09:00:00" -> startTime: 09:00:00 UTC, finishTime: null, timeZone: "WIB"
+ */
 export function parseIndonesianTimeToDates(timeStr?: string): {
   startTime: Date | null;
   finishTime: Date | null;
@@ -370,8 +386,8 @@ export function parseIndonesianTimeToDates(timeStr?: string): {
     result.timeZone = tzMatch[1].toUpperCase();
   }
 
-  // 2. Cari format jam HH:mm atau HH.mm
-  const timeMatches = Array.from(clean.matchAll(/\b(\d{1,2})[:.](\d{2})\b/g));
+  // 2. Cari format jam HH:mm atau HH.mm atau HH:mm:ss
+  const timeMatches = Array.from(clean.matchAll(/\b(\d{1,2})[:.](\d{2})(?:[:.]\d{2})?\b/g));
   if (timeMatches.length > 0) {
     const h1 = parseInt(timeMatches[0][1], 10);
     const m1 = parseInt(timeMatches[0][2], 10);
@@ -379,7 +395,8 @@ export function parseIndonesianTimeToDates(timeStr?: string): {
       result.startTime = new Date(Date.UTC(1970, 0, 1, h1, m1, 0, 0));
     }
 
-    if (timeMatches.length > 1) {
+    // Jika ada jam kedua dan bukan bagian dari kata 'selesai'
+    if (timeMatches.length > 1 && !/(?:s\.?d\.?|sampai|hingga|\/|-)\s*selesai/i.test(clean)) {
       const h2 = parseInt(timeMatches[1][1], 10);
       const m2 = parseInt(timeMatches[1][2], 10);
       if (h2 >= 0 && h2 < 24 && m2 >= 0 && m2 < 60) {
@@ -578,4 +595,21 @@ function toResult(year: number, month: number, day: number): ParsedDateResult {
     day,
   };
 }
+
+/**
+ * Membersihkan format waktu/jam dari teks tanggal agar hanya tersisa bagian tanggal
+ * Contoh: "20 Oktober 2026, pukul 13.30 s.d. selesai WIB" -> "20 Oktober 2026"
+ */
+export function cleanDateStringFromTime(raw: string): string {
+  if (!raw || typeof raw !== 'string') return '';
+  return raw
+    .replace(/(?:pukul|jam)\s*\d{1,2}(?:[:.]\d{2})?(?:[:.]\d{2})?/gi, '')
+    .replace(/\b\d{1,2}[:.]\d{2}(?:[:.]\d{2})?(?:\s*(?:-|s\.?d\.?|sampai|hingga)\s*\d{1,2}[:.]\d{2}(?:[:.]\d{2})?)?\b/gi, '')
+    .replace(/\b(?:WIB|WITA|WIT)\b/gi, '')
+    .replace(/\b(?:s\.?d\.?|sampai|hingga|\/|-)\s*selesai\b/gi, '')
+    .trim()
+    .replace(/^[,;\s-]+|[,;\s-]+$/g, '')
+    .trim();
+}
+
 

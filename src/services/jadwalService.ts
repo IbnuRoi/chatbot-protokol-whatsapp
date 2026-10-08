@@ -45,7 +45,7 @@ export function formatStatusDisposisi(status: number | bigint | null | undefined
     case 2:
       return 'Dijadwalkan Ulang (Reschedule)';
     case 3:
-      return 'Diizinkan / Disetujui';
+      return 'Diwakilkan';
     case 4:
       return 'Dibatalkan (Cancel)';
     case 5:
@@ -318,7 +318,10 @@ export class JadwalService {
     }
 
     const cleanTitle = cleanHtml(event.title) || 'Agenda Kegiatan Protokol';
-    const picInfo = event.pic_name || event.pic_phonenumber || '-';
+    const picInfo =
+      event.pic_name && event.pic_phonenumber && !event.pic_name.includes(event.pic_phonenumber)
+        ? `${event.pic_name} (${event.pic_phonenumber})`
+        : (event.pic_name || event.pic_phonenumber || '-');
 
     const letterInfo = letter
       ? {

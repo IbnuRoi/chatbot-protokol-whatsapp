@@ -6,8 +6,8 @@ import { aiService, formatPerihalByTemplate, generateSubjectSummary, formatAsalS
 import { NluResult } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
-import { formatNomorAgendaLink, getLetterFileUrl, generateLetterFileName, splitPicNameAndPhone } from '../../utils/textHelper';
-import { formatWaktuInputIndo } from '../../utils/dateHelper';
+import { formatNomorAgendaLink, getLetterFileUrl, generateLetterFileName, splitPicNameAndPhone, formatCombinedPic } from '../../utils/textHelper';
+import { formatWaktuInputIndo, parseIndonesianDateEventRange, parseIndonesianTimeToDates, cleanDateStringFromTime } from '../../utils/dateHelper';
 
 export const KATEGORI_LABEL_MAP: Record<string, string> = {
   UND: 'UND',
@@ -712,7 +712,7 @@ export class SuratMasukHandler {
     } else if (parsed.picName || parsed.picPhoneNumber) {
       const curN = session.draftSurat.extractedData.picName || '';
       const curP = session.draftSurat.extractedData.picPhoneNumber || '';
-      session.draftSurat.extractedData.picPengirim = [curN, curP].filter(Boolean).join(' - ').slice(0, 100);
+      session.draftSurat.extractedData.picPengirim = formatCombinedPic(curN, curP);
     }
 
     // Jika pengguna tidak menggunakan format key-value sama sekali:
@@ -970,14 +970,34 @@ export class SuratMasukHandler {
         rawKey === 'jam'
       ) {
         result.timeEvent = rawVal;
+        // Jika ada format tanggal di dalam rawVal, pisahkan juga ke dateEvent bila belum terisi
+        const rangeCheck = parseIndonesianDateEventRange(rawVal);
+        if (rangeCheck.startDate && !result.dateEvent) {
+          result.dateEvent = cleanDateStringFromTime(rawVal);
+        }
       }
-      // 7c. Waktu Acara / Waktu Kegiatan (bisa tanggal atau jam tergantung format nilai)
+      // 7c. Waktu Acara / Waktu Kegiatan / Jadwal (bisa tanggal atau jam tergantung format nilai)
       else if (
         rawKey === 'waktu acara' ||
         rawKey === 'waktu kegiatan' ||
-        rawKey === 'waktu'
+        rawKey === 'waktu' ||
+        rawKey === 'jadwal acara' ||
+        rawKey === 'jadwal kegiatan' ||
+        rawKey === 'jadwal'
       ) {
-        if (/\b(?:pukul|\d{1,2}[:.]\d{2}|wib|wita|wit)\b/i.test(rawVal)) {
+        const hasTime = /\b(?:pukul|\d{1,2}[:.]\d{2}|wib|wita|wit)\b/i.test(rawVal);
+        const dateCheck = parseIndonesianDateEventRange(rawVal);
+
+        if (hasTime && dateCheck.startDate) {
+          // Mengandung tanggal DAN jam sekaligus (misal: "15 Oktober 2026, 09.00 WIB")
+          if (!result.dateEvent) {
+            result.dateEvent = cleanDateStringFromTime(rawVal);
+          }
+          if (!result.timeEvent) {
+            const timeMatch = rawVal.match(/\b(?:\d{1,2}[:.]\d{2}(?:[:.]\d{2})?(?:\s*(?:-|s\.?d\.?|sampai)\s*\d{1,2}[:.]\d{2})?\s*(?:WIB|WITA|WIT)?|pukul\s*\d{1,2}[:.]\d{2}|jam\s*\d{1,2}[:.]\d{2})\b/i);
+            result.timeEvent = timeMatch ? timeMatch[0].trim() : rawVal;
+          }
+        } else if (hasTime) {
           result.timeEvent = rawVal;
         } else {
           result.dateEvent = rawVal;
@@ -1017,7 +1037,13 @@ export class SuratMasukHandler {
         rawKey === 'nama kontak' ||
         rawKey === 'nama narahubung'
       ) {
-        result.picName = rawVal;
+        const splitted = splitPicNameAndPhone(rawVal);
+        if (splitted.phone !== '-' && !result.picPhoneNumber) {
+          result.picPhoneNumber = splitted.phone;
+          result.picName = splitted.name !== '-' ? splitted.name : rawVal;
+        } else {
+          result.picName = rawVal;
+        }
       }
       // 10. Nomor PIC
       else if (
@@ -1097,8 +1123,21 @@ export class SuratMasukHandler {
       else if (lower.includes('subject') || lower.includes('subjek') || lower.includes('judul')) target = fieldMap['3'];
       else if (lower.includes('perihal') || lower.includes('hal')) target = fieldMap['4'];
       else if (lower.includes('asal') || lower.includes('pengirim') || lower.includes('penandatangan') || lower.includes('ttd') || lower.includes('instansi')) target = fieldMap['5'];
-      else if (lower.includes('tanggal acara') || lower.includes('tgl acara') || lower.includes('date event') || lower.includes('tanggal kegiatan')) target = fieldMap['6'];
-      else if (lower.includes('jam acara') || lower.includes('jam event') || lower.includes('jam kegiatan') || lower.includes('time event') || lower.includes('pukul') || lower.includes('jam')) target = fieldMap['7'];
+      else if (lower.includes('tanggal acara') || lower.includes('tgl acara') || lower.includes('date event') || lower.includes('tanggal kegiatan') || lower.includes('tgl kegiatan')) target = fieldMap['6'];
+      else if (
+        lower.includes('jam acara') ||
+        lower.includes('jam event') ||
+        lower.includes('jam kegiatan') ||
+        lower.includes('time event') ||
+        lower.includes('pukul') ||
+        lower.includes('jam') ||
+        lower.includes('waktu acara') ||
+        lower.includes('waktu kegiatan') ||
+        lower.includes('waktu pelaksanaan') ||
+        lower.includes('jam pelaksanaan') ||
+        lower.includes('waktu') ||
+        lower.includes('jadwal')
+      ) target = fieldMap['7'];
       else if (lower.includes('tempat acara') || lower.includes('lokasi acara') || lower.includes('tempat') || lower.includes('lokasi') || lower.includes('venue') || lower.includes('place event')) target = fieldMap['8'];
       else if (lower.includes('nama pic') || lower === 'nama') target = fieldMap['9'];
       else if (lower.includes('nomor pic') || lower.includes('no pic') || lower.includes('hp pic') || lower.includes('wa pic') || lower.includes('telepon pic') || lower.includes('kontak pic') || lower.includes('telepon') || lower.includes('nomor hp') || lower.includes('no hp')) target = fieldMap['10'];
@@ -1220,12 +1259,29 @@ export class SuratMasukHandler {
           session.draftSurat.extractedData.dateEvent = undefined;
         } else {
           session.draftSurat.extractedData.dateEvent = val.slice(0, 100);
+
+          // Jika user menginput format waktu di field Tanggal Acara (misal: "15 Oktober 2026 pukul 09.00 WIB"),
+          // otomatis ekstrak jamnya ke timeEvent jika timeEvent masih kosong atau "-"
+          const timeExtracted = parseIndonesianTimeToDates(val);
+          if (timeExtracted.startTime && (!session.draftSurat.extractedData.timeEvent || session.draftSurat.extractedData.timeEvent === '-')) {
+            const timeMatch = val.match(/\b(?:\d{1,2}[:.]\d{2}(?:[:.]\d{2})?(?:\s*(?:-|s\.?d\.?|sampai)\s*\d{1,2}[:.]\d{2})?\s*(?:WIB|WITA|WIT)?|pukul\s*\d{1,2}[:.]\d{2}|jam\s*\d{1,2}[:.]\d{2})\b/i);
+            if (timeMatch) {
+              session.draftSurat.extractedData.timeEvent = timeMatch[0].trim();
+            }
+          }
         }
       } else if (field === 'timeEvent') {
         if (val === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(val)) {
           session.draftSurat.extractedData.timeEvent = undefined;
         } else {
           session.draftSurat.extractedData.timeEvent = val.slice(0, 100);
+
+          // Jika user menginput tanggal di field Jam Acara (misal: "15 Oktober 2026, 09.00 WIB"),
+          // otomatis update dateEvent juga jika dateEvent masih kosong atau "-"
+          const rangeCheck = parseIndonesianDateEventRange(val);
+          if (rangeCheck.startDate && (!session.draftSurat.extractedData.dateEvent || session.draftSurat.extractedData.dateEvent === '-')) {
+            session.draftSurat.extractedData.dateEvent = cleanDateStringFromTime(val);
+          }
         }
       } else if (field === 'placeEvent') {
         if (val === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(val)) {
@@ -1234,20 +1290,27 @@ export class SuratMasukHandler {
           session.draftSurat.extractedData.placeEvent = val.slice(0, 220);
         }
       } else if (field === 'picName') {
-        const cleanPicName = val.slice(0, 100);
-        session.draftSurat.extractedData.picName = cleanPicName;
-        const curPhone = session.draftSurat.extractedData.picPhoneNumber || '';
-        session.draftSurat.extractedData.picPengirim = [cleanPicName, curPhone].filter(Boolean).join(' - ').slice(0, 100);
+        const splitted = splitPicNameAndPhone(val);
+        if (splitted.phone !== '-' && (!session.draftSurat.extractedData.picPhoneNumber || session.draftSurat.extractedData.picPhoneNumber === '-')) {
+          session.draftSurat.extractedData.picName = splitted.name.slice(0, 100);
+          session.draftSurat.extractedData.picPhoneNumber = splitted.phone.slice(0, 50);
+          session.draftSurat.extractedData.picPengirim = formatCombinedPic(splitted.name, splitted.phone);
+        } else {
+          const cleanPicName = val.slice(0, 100);
+          session.draftSurat.extractedData.picName = cleanPicName;
+          const curPhone = session.draftSurat.extractedData.picPhoneNumber || '';
+          session.draftSurat.extractedData.picPengirim = formatCombinedPic(cleanPicName, curPhone);
+        }
       } else if (field === 'picPhoneNumber') {
         const cleanPicPhone = val.slice(0, 50);
         session.draftSurat.extractedData.picPhoneNumber = cleanPicPhone;
         const curName = session.draftSurat.extractedData.picName || '';
-        session.draftSurat.extractedData.picPengirim = [curName, cleanPicPhone].filter(Boolean).join(' - ').slice(0, 100);
+        session.draftSurat.extractedData.picPengirim = formatCombinedPic(curName, cleanPicPhone);
       } else if (field === 'picPengirim') {
         const splitted = splitPicNameAndPhone(val);
         session.draftSurat.extractedData.picName = splitted.name.slice(0, 100);
         session.draftSurat.extractedData.picPhoneNumber = splitted.phone.slice(0, 50);
-        session.draftSurat.extractedData.picPengirim = val.slice(0, 100);
+        session.draftSurat.extractedData.picPengirim = formatCombinedPic(splitted.name, splitted.phone);
       } else {
         (session.draftSurat.extractedData as any)[field] = val;
       }

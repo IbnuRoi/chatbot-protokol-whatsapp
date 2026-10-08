@@ -339,4 +339,159 @@ export function splitPicNameAndPhone(raw: string | null | undefined): { name: st
   };
 }
 
+/**
+ * Menggabungkan nama PIC dan nomor telepon menjadi format standar PIC
+ * yang tersimpan pada tabel letters (format: "Nama PIC (Nomor PIC)" atau "Nama PIC")
+ *
+ * Contoh:
+ * - formatCombinedPic("Budi Santoso", "081234567890") -> "Budi Santoso (081234567890)"
+ * - formatCombinedPic("Ahmad Fauzi (081234567890)", "081234567890") -> "Ahmad Fauzi (081234567890)"
+ * - formatCombinedPic("Budi Santoso", "-") -> "Budi Santoso"
+ * - formatCombinedPic("-", "081234567890") -> "081234567890"
+ * - formatCombinedPic("-", "-") -> "-"
+ */
+export function formatCombinedPic(name: string | null | undefined, phone: string | null | undefined): string {
+  const cleanName = (name || '').trim();
+  const cleanPhone = (phone || '').trim();
+  const hasName = cleanName && cleanName !== '-' && cleanName.length >= 2;
+  const hasPhone = cleanPhone && cleanPhone !== '-' && cleanPhone.replace(/\D/g, '').length >= 7;
+
+  if (hasName && hasPhone) {
+    // Jika nama sudah memuat nomor telepon, tidak perlu digabungkan lagi
+    if (cleanName.includes(cleanPhone)) {
+      return cleanName.slice(0, 100);
+    }
+    return `${cleanName} (${cleanPhone})`.slice(0, 100);
+  }
+  if (hasName) {
+    return cleanName.slice(0, 100);
+  }
+  if (hasPhone) {
+    return cleanPhone.slice(0, 50);
+  }
+  return '-';
+}
+
+/**
+ * Membersihkan template awalan permohonan/undangan surat masuk
+ * menjadi kalimat aktif judul kegiatan protokol (sebagaimana pola judul di database).
+ *
+ * Contoh:
+ * - "Permohonan Memberikan Sambutan dan Arahan pada kegiatan..." -> "Memberikan Sambutan dan Arahan pada kegiatan..."
+ * - "Permohonan Menjadi Narasumber dalam talkshow..." -> "Menjadi Narasumber dalam talkshow..."
+ * - "Permohonan Memberikan Video Ucapan..." -> "Memberikan Video Ucapan..."
+ * - "Undangan Menghadiri Resepsi Pernikahan..." -> "Menghadiri Resepsi Pernikahan..."
+ * - "Permohonan Audiensi dari..." -> "Audiensi dari..."
+ */
+export function cleanTemplatePrefix(title: string | null | undefined): string {
+  if (!title) return '';
+  let text = cleanHtml(title).trim();
+  if (!text) return '';
+
+  // 1. Hapus suffix arahan atau catatan lama di akhir jika sudah pernah ditambahkan sebelumnya
+  text = text
+    .replace(/\s*\(?\s*(?:arahan|disposisi)\s+menaker\s*:[^\)]*\)?\s*$/i, '')
+    .trim();
+
+  // 2. Daftar pola spesifik yang umum di perihal surat masuk
+  const specificReplacements: [RegExp, string][] = [
+    [/^permohonan\s+memberikan\s+sambutan\s+dan\s+arahan\b/i, 'Memberikan Sambutan dan Arahan'],
+    [/^permohonan\s+memberikan\s+sambutan\b/i, 'Memberikan Sambutan'],
+    [/^permohonan\s+memberikan\s+kata\s+sambutan\b/i, 'Memberikan Kata Sambutan'],
+    [/^permohonan\s+memberikan\s+video\s+ucapan\b/i, 'Memberikan Video Ucapan'],
+    [/^permohonan\s+memberikan\s+keynote\s+speech\b/i, 'Memberikan Keynote Speech'],
+    [/^permohonan\s+memberikan\s+kuliah\s+umum\b/i, 'Memberikan Kuliah Umum'],
+    [/^permohonan\s+memberikan\s+orasi\s+ilmiah\b/i, 'Memberikan Orasi Ilmiah'],
+    [/^permohonan\s+memberikan\s+materi\b/i, 'Memberikan Materi'],
+    [/^permohonan\s+memberikan\s+paparan\b/i, 'Memberikan Paparan'],
+    [/^permohonan\s+memberikan\s+arahan\b/i, 'Memberikan Arahan'],
+    [/^permohonan\s+memberikan\b/i, 'Memberikan'],
+    [/^permohonan\s+menjadi\s+narasumber\b/i, 'Menjadi Narasumber'],
+    [/^permohonan\s+menjadi\s+keynote\s+speaker\b/i, 'Menjadi Keynote Speaker'],
+    [/^permohonan\s+menjadi\s+pembicara\b/i, 'Menjadi Pembicara'],
+    [/^permohonan\s+menjadi\s+pemateri\b/i, 'Menjadi Pemateri'],
+    [/^permohonan\s+menjadi\s+saksi\b/i, 'Menjadi Saksi'],
+    [/^permohonan\s+menjadi\s+juri\b/i, 'Menjadi Juri'],
+    [/^permohonan\s+menjadi\s+pembina\b/i, 'Menjadi Pembina'],
+    [/^permohonan\s+menjadi\b/i, 'Menjadi'],
+    [/^permohonan\s+membuka\s+(?:secara\s+resmi\s+)?acara\b/i, 'Membuka Acara'],
+    [/^permohonan\s+membuka\s+kegiatan\b/i, 'Membuka Kegiatan'],
+    [/^permohonan\s+membuka\b/i, 'Membuka'],
+    [/^permohonan\s+menghadiri\b/i, 'Menghadiri'],
+    [/^undangan\s+menghadiri\b/i, 'Menghadiri'],
+    [/^permohonan\s+kehadiran\s+pada\b/i, 'Menghadiri'],
+    [/^permohonan\s+kehadiran\s+dan\s+sambutan\b/i, 'Menghadiri dan Memberikan Sambutan'],
+    [/^permohonan\s+kehadiran\b/i, 'Kehadiran'],
+    [/^undangan\s+kehadiran\s+pada\b/i, 'Menghadiri'],
+    [/^undangan\s+kehadiran\b/i, 'Kehadiran'],
+    [/^permohonan\s+audiensi\b/i, 'Audiensi'],
+    [/^permohonan\s+wawancara\b/i, 'Wawancara'],
+    [/^permohonan\s+kunjungan\b/i, 'Kunjungan'],
+    [/^permohonan\s+fasilitasi\b/i, 'Fasilitasi'],
+  ];
+
+  for (const [regex, replacement] of specificReplacements) {
+    if (regex.test(text)) {
+      text = text.replace(regex, replacement);
+      return text.trim();
+    }
+  }
+
+  // 3. Fallback pembersihan umum untuk kata 'Permohonan' atau 'Undangan' di awal kalimat
+  if (/^permohonan\s+/i.test(text)) {
+    text = text.replace(/^permohonan\s+/i, '');
+    text = text.charAt(0).toUpperCase() + text.slice(1);
+  } else if (/^undangan\s+/i.test(text)) {
+    text = text.replace(/^undangan\s+/i, '');
+    text = text.charAt(0).toUpperCase() + text.slice(1);
+  }
+
+  return text.trim();
+}
+
+/**
+ * Menentukan nama pejabat yang ditunjuk dari kolom "Diteruskan Kepada" lembar disposisi.
+ * Mendukung string tunggal, koma, atau array string.
+ */
+export function resolvePejabatDitunjuk(diteruskanKepada: string | string[] | undefined | null): string {
+  if (!diteruskanKepada) return 'Pejabat Terkait';
+
+  let list: string[] = [];
+  if (Array.isArray(diteruskanKepada)) {
+    list = diteruskanKepada;
+  } else if (typeof diteruskanKepada === 'string') {
+    list = diteruskanKepada.split(/[,;\n\r]+/).map((s) => s.trim()).filter(Boolean);
+  }
+
+  const cleanedList = list
+    .map((item) => item.replace(/^\s*(?:\d+[\.\)]|[-•*])\s*/, '').trim())
+    .filter((item) => item && item !== '-');
+
+  if (cleanedList.length === 0) return 'Pejabat Terkait';
+  if (cleanedList.length === 1) return cleanedList[0];
+  if (cleanedList.length === 2) return `${cleanedList[0]} & ${cleanedList[1]}`;
+
+  return cleanedList.join(', ');
+}
+
+/**
+ * Memformat judul event di database sesuai arahan disposisi pimpinan (Agendakan vs Mewakili Menteri)
+ * dengan template bold di akhir kalimat:
+ * - Agendakan: <p>Judul Acara<br />\r\n<strong>(Arahan Menaker: Agendakan)</strong></p>
+ * - Mewakili Menteri: <p>Judul Acara<br />\r\n<strong>(Arahan Menaker: PEJABAT_DITUNJUK)</strong></p>
+ */
+export function formatEventTitleFromDisposition(
+  originalTitle: string | null | undefined,
+  arahanType: 'agendakan' | 'diwakilkan',
+  pejabatDitunjuk?: string | string[] | null
+): string {
+  const cleanedTitle = cleanTemplatePrefix(originalTitle) || 'Agenda Kegiatan Protokol';
+  const resolvedOfficial = resolvePejabatDitunjuk(pejabatDitunjuk);
+
+  const suffix = arahanType === 'agendakan' ? 'Agendakan' : resolvedOfficial;
+
+  return `<p>${cleanedTitle}<br />\r\n<strong>(Arahan Menaker: ${suffix})</strong></p>`;
+}
+
+
 

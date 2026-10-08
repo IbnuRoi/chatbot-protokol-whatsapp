@@ -245,6 +245,11 @@ export class DisposisiHandler {
         ? `• *Link Berkas Disposisi* : ${saveResult.fileUrl}\n`
         : '';
 
+      const eventStatusLine =
+        saveResult.eventUpdated && saveResult.eventStatusText
+          ? `• *Status Jadwal* : *${saveResult.eventStatusText}* (Judul & arahan diperbarui)\n`
+          : '';
+
       const successTitle = saveResult.isUpdate
         ? `✅ *DATA DISPOSISI BERHASIL DIPERBARUI!*`
         : `✅ *DISPOSISI SURAT BERHASIL DISIMPAN!*`;
@@ -260,6 +265,7 @@ export class DisposisiHandler {
           `• *Perihal*      : ${saveResult.perihal}\n` +
           `• *Nama Berkas*  : ${saveResult.fileName}\n` +
           fileLinkLine +
+          eventStatusLine +
           `${statusNote}\n\n` +
           `Silakan beri tahu saya jika Anda ingin mencatat disposisi lainnya atau membutuhkan bantuan lain ya.`,
       };

@@ -2,8 +2,8 @@ import { prisma } from '../database/prisma';
 import { Prisma } from '@prisma/client';
 import { pdfService } from './pdfService';
 import { SuratDraftData } from './sessionService';
-import { cleanHtml, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone } from '../utils/textHelper';
-import { parseIndonesianDateToDate, formatTanggalIndo, parseIndonesianTimeToDates, parseIndonesianDateEventRange } from '../utils/dateHelper';
+import { cleanHtml, formatCombinedPic, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone } from '../utils/textHelper';
+import { parseIndonesianDateToDate, formatTanggalIndo, parseIndonesianTimeToDates, parseIndonesianDateEventRange, isValidDate } from '../utils/dateHelper';
 import { ENV } from '../config/env';
 import path from 'path';
 
@@ -152,11 +152,35 @@ export class SuratService {
       timeEvent: letter.time_event
         ? `${String(letter.time_event.getUTCHours()).padStart(2, '0')}:${String(letter.time_event.getUTCMinutes()).padStart(2, '0')} ${letter.time_zone || 'WIB'}`
         : null,
-      picPengirim: letter.pic_phone_number && letter.pic_phone_number !== '-'
-        ? (letter.pic_name && letter.pic_name !== '-' ? `${letter.pic_name} (${letter.pic_phone_number})` : letter.pic_phone_number)
-        : (letter.pic_name || '-'),
-      picName: letter.pic_name || '-',
-      picPhoneNumber: letter.pic_phone_number || '-',
+      picPengirim: (() => {
+        let n = letter.pic_name || '-';
+        let p = letter.pic_phone_number || '-';
+        if ((p === '-' || !p) && n !== '-') {
+          const s = splitPicNameAndPhone(n);
+          if (s.phone !== '-') { n = s.name; p = s.phone; }
+        }
+        const comb = formatCombinedPic(n, p);
+        return comb !== '-' ? comb : (letter.pic_name || '-');
+      })(),
+      picName: (() => {
+        const n = letter.pic_name || '-';
+        const p = letter.pic_phone_number || '-';
+        if ((p === '-' || !p) && n !== '-') {
+          const s = splitPicNameAndPhone(n);
+          return s.name !== '-' ? s.name : n;
+        }
+        return n;
+      })(),
+      picPhoneNumber: (() => {
+        const p = letter.pic_phone_number || '-';
+        if (p && p !== '-') return p;
+        const n = letter.pic_name || '-';
+        if (n !== '-') {
+          const s = splitPicNameAndPhone(n);
+          if (s.phone !== '-') return s.phone;
+        }
+        return '-';
+      })(),
       perihal: cleanPerihal,
       filePath: letter.file || '',
       fileName: letter.file || '',
@@ -278,32 +302,39 @@ export class SuratService {
 
       // Parse tanggal surat jika ada
       let parsedDate: Date | null = parseIndonesianDateToDate(draft.extractedData.tanggalSurat);
-      if (!parsedDate && draft.extractedData.tanggalSurat) {
+      if (!isValidDate(parsedDate) && draft.extractedData.tanggalSurat) {
         const parsed = new Date(draft.extractedData.tanggalSurat);
-        if (!isNaN(parsed.getTime())) {
+        if (isValidDate(parsed)) {
           parsedDate = parsed;
         }
       }
 
       // Parse tanggal acara/event jika ada (termasuk kemungkinan rentang tanggal)
       const dateEventRange = parseIndonesianDateEventRange(draft.extractedData.dateEvent);
-      let parsedDateEvent: Date | null = dateEventRange.startDate;
-      let parsedDateEventEnd: Date | null = dateEventRange.endDate;
+      let parsedDateEvent: Date | null = isValidDate(dateEventRange.startDate) ? dateEventRange.startDate : null;
+      let parsedDateEventEnd: Date | null = isValidDate(dateEventRange.endDate) ? dateEventRange.endDate : null;
 
       if (!parsedDateEvent && draft.extractedData.dateEvent) {
         const parsed = new Date(draft.extractedData.dateEvent);
-        if (!isNaN(parsed.getTime())) {
+        if (isValidDate(parsed)) {
           parsedDateEvent = parsed;
         }
       }
 
+      // Ekstrak string jam acara (prioritaskan timeEvent, jika kosong atau strip ambil dari dateEvent)
+      let rawTimeStr = (draft.extractedData.timeEvent || '').trim();
+      if (rawTimeStr === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|null|undefined)$/i.test(rawTimeStr)) {
+        rawTimeStr = '';
+      }
+      if (!rawTimeStr && draft.extractedData.dateEvent) {
+        rawTimeStr = draft.extractedData.dateEvent;
+      }
+
       // Parse jam acara/event jika ada
-      const parsedTimeInfo = parseIndonesianTimeToDates(
-        draft.extractedData.timeEvent || draft.extractedData.dateEvent
-      );
-      const parsedTimeEvent: Date | null = parsedTimeInfo.startTime;
-      const parsedTimeFinish: Date | null = parsedTimeInfo.finishTime;
-      const parsedTimeZone: string = parsedTimeInfo.timeZone || 'WIB';
+      const parsedTimeInfo = parseIndonesianTimeToDates(rawTimeStr);
+      const parsedTimeEvent: Date | null = isValidDate(parsedTimeInfo.startTime) ? parsedTimeInfo.startTime : null;
+      const parsedTimeFinish: Date | null = isValidDate(parsedTimeInfo.finishTime) ? parsedTimeInfo.finishTime : null;
+      const parsedTimeZone: string = (parsedTimeInfo.timeZone || 'WIB').toUpperCase().slice(0, 10);
 
       // Get max ID to avoid sequence primary key conflict
       const lastLetter = await prisma.letters.findFirst({
@@ -336,6 +367,25 @@ export class SuratService {
 
       const safePicName = (rawPicName && rawPicName !== '-' ? rawPicName : '-').slice(0, 100);
       const safePicPhone = (rawPicPhone && rawPicPhone !== '-' ? rawPicPhone : '-').slice(0, 50);
+
+      // Format kolom PIC yang disimpan ke tabel letters
+      // Pada tabel letters, kolom PIC (pic_name) memuat nama dan nomor kontak sesuai format tabel letters: "Nama PIC (Nomor PIC)" atau "Nama PIC"
+      const safePicCombined = formatCombinedPic(
+        safePicName !== '-' ? safePicName : (draft.extractedData.picPengirim || safePicPhone),
+        safePicPhone
+      ).slice(0, 100);
+
+      const safeLettersPicPhone = safePicPhone && safePicPhone !== '-' ? safePicPhone : null;
+
+      let picJson: string | null = null;
+      if (safePicName !== '-' || safePicPhone !== '-') {
+        picJson = JSON.stringify([
+          {
+            name: safePicName !== '-' ? safePicName : '',
+            phone: safePicPhone !== '-' ? safePicPhone : '',
+          },
+        ]);
+      }
 
       // Sanitisasi dan batasi panjang setiap kolom secara ketat sesuai skema database PostgreSQL
       // agar tidak pernah terjadi error 22001 (value too long for type character varying)
@@ -372,8 +422,9 @@ export class SuratService {
             type_letter: typeId,
             note: formattedNote,
             file: safeFileName,
-            pic_name: safePicName,
-            pic_phone_number: safePicPhone,
+            pic_name: safePicCombined,
+            pic_phone_number: safeLettersPicPhone,
+            pic_json: picJson,
             institution_origin: safeInstansi,
             created_by: safeCreatorName,
             created_at: new Date(),
@@ -407,8 +458,9 @@ export class SuratService {
               type_letter: typeId,
               note: truncatedNote,
               file: safeFileName,
-              pic_name: safePicName,
-              pic_phone_number: safePicPhone,
+              pic_name: safePicCombined,
+              pic_phone_number: safeLettersPicPhone,
+              pic_json: picJson,
               institution_origin: safeInstansi,
               created_by: safeCreatorName,
               created_at: new Date(),
@@ -449,13 +501,16 @@ export class SuratService {
       // Otomatis masukkan ke jadwal kegiatan (tabel events) walaupun belum ada lembar disposisi
       let createdEvent: any = null;
       try {
-        // 1. Tanggal kegiatan (prioritas: parsedDateEvent -> parsedDate -> hari ini waktu WIB)
+        // 1. Tanggal acuan kegiatan (prioritas: parsedDateEvent -> parsedDate -> hari ini waktu WIB)
         let eventYear: number, eventMonth: number, eventDay: number;
-        if (parsedDateEvent || parsedDate) {
-          const targetDate = (parsedDateEvent || parsedDate)!;
-          eventYear = targetDate.getUTCFullYear();
-          eventMonth = targetDate.getUTCMonth();
-          eventDay = targetDate.getUTCDate();
+        if (isValidDate(parsedDateEvent)) {
+          eventYear = parsedDateEvent.getUTCFullYear();
+          eventMonth = parsedDateEvent.getUTCMonth();
+          eventDay = parsedDateEvent.getUTCDate();
+        } else if (isValidDate(parsedDate)) {
+          eventYear = parsedDate.getUTCFullYear();
+          eventMonth = parsedDate.getUTCMonth();
+          eventDay = parsedDate.getUTCDate();
         } else {
           const now = new Date();
           const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
@@ -465,34 +520,55 @@ export class SuratService {
           eventDay = wibDate.getDate();
         }
 
+        // Tentukan pergeseran zona waktu untuk database events (default WIB: +7)
+        let tzOffsetHours = 7;
+        if (parsedTimeZone === 'WITA') tzOffsetHours = 8;
+        else if (parsedTimeZone === 'WIT') tzOffsetHours = 9;
+
         // 2. Jam mulai: date_event & time_event ke kolom event_time_start
-        // (default 09:00 WIB jika tidak ada jam spesifik pada surat)
+        // (default 09:00 jika tidak ada jam spesifik pada surat)
         let startH = 9;
         let startM = 0;
-        if (parsedTimeEvent) {
+        if (isValidDate(parsedTimeEvent)) {
           startH = parsedTimeEvent.getUTCHours();
           startM = parsedTimeEvent.getUTCMinutes();
         }
 
-        // Kolom events.event_time_start di PostgreSQL tersimpan dengan pergeseran +7 jam
-        // (misal jam 09:00 WIB tersimpan sebagai 16:00:00 UTC)
-        const eventTimeStart = new Date(Date.UTC(eventYear, eventMonth, eventDay, startH + 7, startM, 0, 0));
+        // Kolom events.event_time_start di PostgreSQL tersimpan dengan pergeseran zona waktu
+        let eventTimeStart = new Date(Date.UTC(eventYear, eventMonth, eventDay, startH + tzOffsetHours, startM, 0, 0));
+        if (!isValidDate(eventTimeStart)) {
+          eventTimeStart = new Date();
+        }
 
-        // 3. Jam selesai: date_event & time_event_finish ke kolom event_time_finish jika ada, jika tidak masukkan ke until_finish
+        // 3. Jam selesai: date_event & time_event_finish ke kolom event_time_finish jika ada
         let eventTimeFinish: Date | null = null;
         let untilFinish = 0;
-        if (parsedTimeFinish) {
+
+        if (isValidDate(parsedTimeFinish)) {
           const finishH = parsedTimeFinish.getUTCHours();
           const finishM = parsedTimeFinish.getUTCMinutes();
-          const endYear = parsedDateEventEnd ? parsedDateEventEnd.getUTCFullYear() : eventYear;
-          const endMonth = parsedDateEventEnd ? parsedDateEventEnd.getUTCMonth() : eventMonth;
-          const endDay = parsedDateEventEnd ? parsedDateEventEnd.getUTCDate() : eventDay;
+          const endYear = isValidDate(parsedDateEventEnd) ? parsedDateEventEnd.getUTCFullYear() : eventYear;
+          const endMonth = isValidDate(parsedDateEventEnd) ? parsedDateEventEnd.getUTCMonth() : eventMonth;
+          const endDay = isValidDate(parsedDateEventEnd) ? parsedDateEventEnd.getUTCDate() : eventDay;
 
-          eventTimeFinish = new Date(Date.UTC(endYear, endMonth, endDay, finishH + 7, finishM, 0, 0));
-          untilFinish = 0;
+          eventTimeFinish = new Date(Date.UTC(endYear, endMonth, endDay, finishH + tzOffsetHours, finishM, 0, 0));
+          if (!isValidDate(eventTimeFinish)) {
+            eventTimeFinish = null;
+            untilFinish = 1;
+          } else {
+            untilFinish = 0;
+          }
+        } else if (isValidDate(parsedDateEventEnd) && parsedDateEventEnd.getTime() !== parsedDateEvent?.getTime()) {
+          // Acara multi-hari tanpa jam selesai spesifik -> simpan waktu selesai hari terakhir pukul 17:00
+          const endYear = parsedDateEventEnd.getUTCFullYear();
+          const endMonth = parsedDateEventEnd.getUTCMonth();
+          const endDay = parsedDateEventEnd.getUTCDate();
+          eventTimeFinish = new Date(Date.UTC(endYear, endMonth, endDay, 17 + tzOffsetHours, 0, 0, 0));
+          untilFinish = 1;
         } else {
+          // Acara 1 hari tanpa jam selesai spesifik (atau berlangsung sampai selesai)
           eventTimeFinish = null;
-          untilFinish = 1; // Jika tidak ada jam selesai, tandai acara berlangsung sampai selesai
+          untilFinish = 1;
         }
 
         // Ambil max ID events untuk menghindari sequence primary key conflict
@@ -532,7 +608,8 @@ export class SuratService {
 
         const eventNotes = `Asal Surat: ${safeAsalSurat} | No. Surat: ${safeNomorSurat} | No. Agenda: ${safeAgendaNumber}`;
 
-        // Siapkan data event baru
+        // Siapkan data event baru (pastikan time_zone maksimal 10 karakter sesuai skema DB)
+        const safeEventTimeZone = (parsedTimeZone || 'WIB').slice(0, 10);
         const eventDataPayload: Prisma.eventsCreateInput = {
           title: eventTitle,
           letter_id: BigInt(surat.id),
@@ -542,12 +619,12 @@ export class SuratService {
           until_finish: untilFinish,
           is_internal: '0',
           is_hide_location: '0',
-          time_zone: parsedTimeZone || 'WIB',
+          time_zone: safeEventTimeZone,
           status: 1n, // 1: onschedule (Terjadwal / Diagendakan)
           location: eventLocation,
-          pic_name: safePicName && safePicName !== '-' ? safePicName : null,
-          pic_phonenumber: safePicPhone && safePicPhone !== '-' ? safePicPhone : null,
-          pic_json: eventPicJson,
+          pic_name: safePicCombined && safePicCombined !== '-' ? safePicCombined : (safePicName && safePicName !== '-' ? safePicName : null),
+          pic_phonenumber: safeLettersPicPhone,
+          pic_json: picJson || eventPicJson,
           notes: eventNotes,
           created_by: safeCreatorName,
           created_at: new Date(),
@@ -603,8 +680,8 @@ export class SuratService {
                   agendaNumber: surat.agenda_number,
                   title: eventTitle,
                   location: eventLocation,
-                  eventTimeStart: eventTimeStart.toISOString(),
-                  eventTimeFinish: eventTimeFinish ? eventTimeFinish.toISOString() : null,
+                  eventTimeStart: isValidDate(eventTimeStart) ? eventTimeStart.toISOString() : null,
+                  eventTimeFinish: isValidDate(eventTimeFinish) ? eventTimeFinish.toISOString() : null,
                   untilFinish,
                   status: 'Diagendakan',
                 }),

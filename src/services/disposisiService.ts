@@ -1,13 +1,23 @@
 import fs from 'fs';
 import path from 'path';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../database/prisma';
 import { ENV } from '../config/env';
 import { suratService, NormalizedSurat } from './suratService';
 import { DisposisiDraftData } from './sessionService';
 import { pdfService } from './pdfService';
-import { generateDispositionFileName, getDispositionFileUrl } from '../utils/textHelper';
+import {
+  generateDispositionFileName,
+  getDispositionFileUrl,
+  formatEventTitleFromDisposition,
+  resolvePejabatDitunjuk,
+} from '../utils/textHelper';
 import { parseIndonesianDateToDate } from '../utils/dateHelper';
-import { matchPositionsList, matchActionsList } from '../utils/dispositionMatcher';
+import {
+  matchPositionsList,
+  matchActionsList,
+  ActionCandidate,
+} from '../utils/dispositionMatcher';
 
 export interface SaveDisposisiResult {
   success: boolean;
@@ -18,6 +28,9 @@ export interface SaveDisposisiResult {
   nomorAgenda?: string;
   perihal?: string;
   isUpdate?: boolean;
+  eventUpdated?: boolean;
+  eventStatusText?: string;
+  eventTitleText?: string;
 }
 
 export class DisposisiService {
@@ -265,6 +278,7 @@ export class DisposisiService {
       }
 
       // 6. Hubungkan ke disposition_actions jika ada tindakan yang cocok
+      let matchedActions: ActionCandidate[] = [];
       if (draft.extractedData.arahanDisposisi && draft.extractedData.arahanDisposisi.length > 0) {
         try {
           const allActions = await prisma.actions.findMany({
@@ -272,7 +286,7 @@ export class DisposisiService {
             select: { id: true, name: true },
           });
 
-          const matchedActions = matchActionsList(draft.extractedData.arahanDisposisi, allActions);
+          matchedActions = matchActionsList(draft.extractedData.arahanDisposisi, allActions);
 
           for (const act of matchedActions) {
             await prisma.disposition_actions.create({
@@ -292,29 +306,118 @@ export class DisposisiService {
         }
       }
 
+      // Deteksi instruksi arahan pimpinan: Agendakan/Acarakan vs Mewakili Menteri
+      const rawArahanText = (
+        Array.isArray(draft.extractedData.arahanDisposisi)
+          ? draft.extractedData.arahanDisposisi.join(' ')
+          : (draft.extractedData.arahanDisposisi || '')
+      ).toLowerCase();
+
+      const isMewakili =
+        matchedActions.some((a) => Number(a.id) === 18 || /mewakili|wakili/i.test(a.name)) ||
+        /\b(mewakili|wakili|perwakilan)\b/i.test(rawArahanText);
+
+      const isAgendakan =
+        !isMewakili &&
+        (matchedActions.some((a) => Number(a.id) === 16 || Number(a.id) === 10 || /agendakan|acarakan/i.test(a.name)) ||
+         /\b(agendakan|acarakan|jadwalkan|acara)\b/i.test(rawArahanText));
+
       // 7. Update status pada tabel letters
+      const letterUpdatePayload: Prisma.lettersUpdateInput = {
+        disposition_printed_at: new Date(),
+        updated_at: new Date(),
+        updated_by: userName || 'Petugas Protokol',
+      };
+      if (isMewakili) {
+        letterUpdatePayload.status = 2; // 2: diwakilkan
+      } else if (isAgendakan) {
+        letterUpdatePayload.status = 1; // 1: normal
+      }
+
       await prisma.letters.update({
         where: { id: BigInt(draft.matchedLetter.id) },
-        data: {
-          disposition_printed_at: new Date(),
-          updated_at: new Date(),
-          updated_by: userName || 'Petugas Protokol',
-        },
+        data: letterUpdatePayload,
       });
 
-      // 8. Hubungkan disposition_id ke tabel events dan event_letters jika kegiatan sudah ada
+      // 8. Hubungkan disposition_id ke tabel events dan event_letters,
+      // serta perbarui status dan judul jadwal kegiatan di database sesuai arahan pimpinan
+      let eventUpdated = false;
+      let eventStatusText: string | undefined = undefined;
+      let eventTitleText: string | undefined = undefined;
+
       try {
-        await prisma.events.updateMany({
+        const linkedEvents = await prisma.events.findMany({
           where: {
             letter_id: BigInt(draft.matchedLetter.id),
             deleted_at: null,
           },
-          data: {
+        });
+
+        const pivotEntries = await prisma.event_letters.findMany({
+          where: {
+            letter_id: draft.matchedLetter.id.toString(),
+            deleted_at: null,
+          },
+        });
+
+        const pivotEventIds = pivotEntries
+          .map((p) => {
+            try {
+              return BigInt(p.event_id.toString());
+            } catch {
+              return null;
+            }
+          })
+          .filter((id): id is bigint => id !== null);
+
+        const allEventIds = Array.from(
+          new Set([...linkedEvents.map((e) => e.id), ...pivotEventIds])
+        );
+
+        const targetOfficial = resolvePejabatDitunjuk(draft.extractedData.diteruskanKepada);
+
+        for (const evId of allEventIds) {
+          const ev = await prisma.events.findUnique({ where: { id: evId } });
+          if (!ev || ev.deleted_at !== null) continue;
+
+          const baseTitle =
+            ev.title ||
+            draft.matchedLetter.subject ||
+            draft.matchedLetter.perihal ||
+            draft.extractedData.perihal ||
+            'Agenda Kegiatan Protokol';
+
+          const eventPayload: Prisma.eventsUpdateInput = {
             disposition_id: disp.id,
             updated_at: new Date(),
             updated_by: userName || 'Petugas Protokol',
-          },
-        });
+          };
+
+          if (isMewakili) {
+            eventPayload.status = 3n; // 3: Diwakilkan
+            eventPayload.title = formatEventTitleFromDisposition(baseTitle, 'diwakilkan', targetOfficial);
+            eventUpdated = true;
+            eventStatusText = 'Diwakilkan';
+            eventTitleText = eventPayload.title as string;
+            console.log(
+              `[DisposisiService] Berhasil memperbarui event ID ${ev.id}: status -> 3 (Diwakilkan), title -> "${eventPayload.title}"`
+            );
+          } else if (isAgendakan) {
+            eventPayload.status = 1n; // 1: onschedule (Diagendakan)
+            eventPayload.title = formatEventTitleFromDisposition(baseTitle, 'agendakan');
+            eventUpdated = true;
+            eventStatusText = 'onschedule';
+            eventTitleText = eventPayload.title as string;
+            console.log(
+              `[DisposisiService] Berhasil memperbarui event ID ${ev.id}: status -> 1 (onschedule), title -> "${eventPayload.title}"`
+            );
+          }
+
+          await prisma.events.update({
+            where: { id: ev.id },
+            data: eventPayload,
+          });
+        }
 
         await prisma.event_letters.updateMany({
           where: {
@@ -328,7 +431,7 @@ export class DisposisiService {
           },
         });
       } catch (evLinkErr) {
-        console.warn('[DisposisiService] Peringatan saat menautkan disposition_id ke events/event_letters:', evLinkErr);
+        console.warn('[DisposisiService] Peringatan saat memperbarui events/event_letters:', evLinkErr);
       }
 
       return {
@@ -339,6 +442,9 @@ export class DisposisiService {
         nomorAgenda: draft.matchedLetter.agendaNumber || draft.extractedData.nomorAgenda,
         perihal: draft.matchedLetter.subject || draft.matchedLetter.perihal || draft.extractedData.perihal,
         isUpdate,
+        eventUpdated,
+        eventStatusText,
+        eventTitleText,
       };
     } catch (err: any) {
       console.error('[DisposisiService] Gagal menyimpan data disposisi:', err);
