@@ -69,10 +69,8 @@ export interface JadwalSearchOptions {
 export class JadwalService {
   /**
    * Mengembalikan rentang waktu query basis data untuk tanggal tertentu (offset hari dari hari ini)
-   * Catatan Database: Kolom events.event_time_start di PostgreSQL tersimpan dalam UTC murni.
-   * WIB adalah UTC+7 (UTC = WIB - 7 jam).
-   * Oleh karena itu, 00:00:00 WIB tersimpan sebagai 17:00:00 UTC pada hari kemarin (d - 1),
-   * dan 23:59:59.999 WIB tersimpan sebagai 16:59:59.999 UTC pada hari berjalan (d).
+   * Kolom events.event_time_start di PostgreSQL menyimpan waktu kegiatan secara langsung.
+   * Rentang query mencakup 00:00:00.000 s.d. 23:59:59.999 pada hari tersebut.
    */
   public getWibDayRange(daysOffset: number = 0) {
     const nowWibMs = Date.now() + 7 * 3600000;
@@ -83,10 +81,9 @@ export class JadwalService {
     const m = wibDate.getUTCMonth();
     const d = wibDate.getUTCDate();
 
-    // 00:00:00 WIB tersimpan di DB sebagai 17:00:00 UTC hari kemarin (d - 1)
-    const startOfDay = new Date(Date.UTC(y, m, d - 1, 17, 0, 0, 0));
-    // 23:59:59.999 WIB tersimpan di DB sebagai 16:59:59.999 UTC hari berjalan (d)
-    const endOfDay = new Date(Date.UTC(y, m, d, 16, 59, 59, 999));
+    // 00:00:00 s.d. 23:59:59.999 pada hari tersebut
+    const startOfDay = new Date(Date.UTC(y, m, d, 0, 0, 0, 0));
+    const endOfDay = new Date(Date.UTC(y, m, d, 23, 59, 59, 999));
     const dateStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
     return { startOfDay, endOfDay, dateStr, year: y, month: m + 1, day: d };
@@ -118,10 +115,9 @@ export class JadwalService {
       d = dateInput.getUTCDate();
     }
 
-    // 00:00:00 WIB tersimpan di DB sebagai 17:00:00 UTC hari kemarin (d - 1)
-    const startOfDay = new Date(Date.UTC(y, m, d - 1, 17, 0, 0, 0));
-    // 23:59:59.999 WIB tersimpan di DB sebagai 16:59:59.999 UTC hari berjalan (d)
-    const endOfDay = new Date(Date.UTC(y, m, d, 16, 59, 59, 999));
+    // 00:00:00 s.d. 23:59:59.999 pada hari tersebut
+    const startOfDay = new Date(Date.UTC(y, m, d, 0, 0, 0, 0));
+    const endOfDay = new Date(Date.UTC(y, m, d, 23, 59, 59, 999));
     const dateStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
     return { startOfDay, endOfDay, dateStr, year: y, month: m + 1, day: d };
@@ -259,31 +255,20 @@ export class JadwalService {
     let waktuSelesai: string | null = null;
     let lokasi = cleanHtml(event.location) || '-';
 
-    // Tentukan pergeseran zona waktu (default WIB: UTC+7)
-    let tzOffsetMs = 7 * 3600000;
-    const tzStr = (event.time_zone || (letter && letter.time_zone) || 'WIB').toUpperCase();
-    if (tzStr === 'WITA') tzOffsetMs = 8 * 3600000;
-    else if (tzStr === 'WIT') tzOffsetMs = 9 * 3600000;
-
     let hasRescheduledDate = false;
     if (event.event_time_start) {
-      // Nilai timestamp di DB adalah UTC murni. Tambahkan offset zona waktu untuk kembali ke waktu riil WIB
-      const realWibMs = event.event_time_start.getTime() + tzOffsetMs;
-      const realWibDate = new Date(realWibMs);
-      const y = realWibDate.getUTCFullYear();
-      const m = String(realWibDate.getUTCMonth() + 1).padStart(2, '0');
-      const d = String(realWibDate.getUTCDate()).padStart(2, '0');
+      const y = event.event_time_start.getUTCFullYear();
+      const m = String(event.event_time_start.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(event.event_time_start.getUTCDate()).padStart(2, '0');
       tglKegiatan = `${y}-${m}-${d}`;
 
-      const hh = String(realWibDate.getUTCHours()).padStart(2, '0');
-      const mm = String(realWibDate.getUTCMinutes()).padStart(2, '0');
+      const hh = String(event.event_time_start.getUTCHours()).padStart(2, '0');
+      const mm = String(event.event_time_start.getUTCMinutes()).padStart(2, '0');
       waktuMulai = `${hh}:${mm}`;
 
       if (event.event_time_finish) {
-        const finishWibMs = event.event_time_finish.getTime() + tzOffsetMs;
-        const finishWibDate = new Date(finishWibMs);
-        const fHh = String(finishWibDate.getUTCHours()).padStart(2, '0');
-        const fMm = String(finishWibDate.getUTCMinutes()).padStart(2, '0');
+        const fHh = String(event.event_time_finish.getUTCHours()).padStart(2, '0');
+        const fMm = String(event.event_time_finish.getUTCMinutes()).padStart(2, '0');
         waktuSelesai = `${fHh}:${fMm}`;
       }
 
@@ -307,17 +292,13 @@ export class JadwalService {
 
       // Jika waktu mulai belum ada di event_time_start
       if (!event.event_time_start && letter.time_event) {
-        const letterWibMs = letter.time_event.getTime() + tzOffsetMs;
-        const letterWibDate = new Date(letterWibMs);
-        const hh = String(letterWibDate.getUTCHours()).padStart(2, '0');
-        const mm = String(letterWibDate.getUTCMinutes()).padStart(2, '0');
+        const hh = String(letter.time_event.getUTCHours()).padStart(2, '0');
+        const mm = String(letter.time_event.getUTCMinutes()).padStart(2, '0');
         waktuMulai = `${hh}:${mm}`;
       }
       if (!event.event_time_finish && letter.time_event_finish) {
-        const letterFinishWibMs = letter.time_event_finish.getTime() + tzOffsetMs;
-        const letterFinishWibDate = new Date(letterFinishWibMs);
-        const hh = String(letterFinishWibDate.getUTCHours()).padStart(2, '0');
-        const mm = String(letterFinishWibDate.getUTCMinutes()).padStart(2, '0');
+        const hh = String(letter.time_event_finish.getUTCHours()).padStart(2, '0');
+        const mm = String(letter.time_event_finish.getUTCMinutes()).padStart(2, '0');
         waktuSelesai = `${hh}:${mm}`;
       }
       if (letter.place_event && (!event.location || event.location === '-')) {
@@ -390,7 +371,16 @@ export class JadwalService {
     onlyDiagendakan: boolean = true
   ): Promise<NormalizedJadwal[]> {
     const { startOfDay, endOfDay } = this.getWibDayRange(0);
-    const dbNow = new Date();
+    const nowWibMs = Date.now() + 7 * 3600000;
+    const nowWib = new Date(nowWibMs);
+    const dbNow = new Date(Date.UTC(
+      nowWib.getUTCFullYear(),
+      nowWib.getUTCMonth(),
+      nowWib.getUTCDate(),
+      nowWib.getUTCHours(),
+      nowWib.getUTCMinutes(),
+      nowWib.getUTCSeconds()
+    ));
 
     const whereClause: Prisma.eventsWhereInput = {
       deleted_at: null,
@@ -419,7 +409,16 @@ export class JadwalService {
    * Mengambil 1 kegiatan terdekat berikutnya hari ini atau di hari-hari mendatang
    */
   public async getJadwalBerikutnyaTerdekat(): Promise<{ item: NormalizedJadwal; isToday: boolean } | null> {
-    const dbNow = new Date();
+    const nowWibMs = Date.now() + 7 * 3600000;
+    const nowWib = new Date(nowWibMs);
+    const dbNow = new Date(Date.UTC(
+      nowWib.getUTCFullYear(),
+      nowWib.getUTCMonth(),
+      nowWib.getUTCDate(),
+      nowWib.getUTCHours(),
+      nowWib.getUTCMinutes(),
+      nowWib.getUTCSeconds()
+    ));
     const { endOfDay, dateStr } = this.getWibDayRange(0);
 
     // 1. Cari kegiatan hari ini yang waktu mulainya belum lewat
@@ -525,11 +524,11 @@ export class JadwalService {
 
     const nowWibMs = Date.now() + 7 * 3600000;
     const wibToday = new Date(nowWibMs);
-    wibToday.setUTCHours(0, 0, 0, 0);
+    const todayEpoch = Date.UTC(wibToday.getUTCFullYear(), wibToday.getUTCMonth(), wibToday.getUTCDate());
 
-    // Waktu event dalam skala WIB (+7 jam)
-    const evWibMs = new Date(eventDate).getTime() + 7 * 3600000;
-    const diffDays = (evWibMs - wibToday.getTime()) / (1000 * 60 * 60 * 24);
+    const evDate = new Date(eventDate);
+    const evEpoch = Date.UTC(evDate.getUTCFullYear(), evDate.getUTCMonth(), evDate.getUTCDate());
+    const diffDays = (evEpoch - todayEpoch) / (1000 * 60 * 60 * 24);
 
     if (diffDays >= 0) {
       // Agenda Hari Ini atau Mendatang (Prioritas Utama)

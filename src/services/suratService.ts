@@ -339,27 +339,19 @@ export class SuratService {
       const parsedTimeFinish: Date | null = isValidDate(parsedTimeInfo.finishTime) ? parsedTimeInfo.finishTime : null;
       const parsedTimeZone: string = (parsedTimeInfo.timeZone || 'WIB').toUpperCase().slice(0, 10);
 
-      // Tentukan pergeseran zona waktu ke UTC murni:
-      // WIB (UTC+7) -> UTC = WIB - 7 jam
-      // WITA (UTC+8) -> UTC = WITA - 8 jam
-      // WIT (UTC+9) -> UTC = WIT - 9 jam
-      let tzOffsetHours = 7;
-      if (parsedTimeZone === 'WITA') tzOffsetHours = 8;
-      else if (parsedTimeZone === 'WIT') tzOffsetHours = 9;
-
-      // Konversi waktu acara untuk kolom letters.time_event dan time_event_finish (@db.Time(6)) ke standar UTC
+      // Waktu acara untuk kolom letters.time_event dan time_event_finish (@db.Time(6)) disimpan sesuai jam hasil ekstraksi surat
       let letterTimeEvent: Date | null = null;
       if (isValidDate(parsedTimeEvent)) {
         const startH = parsedTimeEvent.getUTCHours();
         const startM = parsedTimeEvent.getUTCMinutes();
-        letterTimeEvent = new Date(Date.UTC(1970, 0, 2, startH - tzOffsetHours, startM, 0, 0));
+        letterTimeEvent = new Date(Date.UTC(1970, 0, 1, startH, startM, 0, 0));
       }
 
       let letterTimeFinish: Date | null = null;
       if (isValidDate(parsedTimeFinish)) {
         const finishH = parsedTimeFinish.getUTCHours();
         const finishM = parsedTimeFinish.getUTCMinutes();
-        letterTimeFinish = new Date(Date.UTC(1970, 0, 2, finishH - tzOffsetHours, finishM, 0, 0));
+        letterTimeFinish = new Date(Date.UTC(1970, 0, 1, finishH, finishM, 0, 0));
       }
 
       // Get max ID to avoid sequence primary key conflict
@@ -548,15 +540,7 @@ export class SuratService {
           const eventMonth = parsedDateEvent.getUTCMonth();
           const eventDay = parsedDateEvent.getUTCDate();
 
-          // Tentukan pergeseran zona waktu untuk database events:
-          // WIB (UTC+7) -> UTC = WIB - 7 jam
-          // WITA (UTC+8) -> UTC = WITA - 8 jam
-          // WIT (UTC+9) -> UTC = WIT - 9 jam
-          let tzOffsetHours = 7;
-          if (parsedTimeZone === 'WITA') tzOffsetHours = 8;
-          else if (parsedTimeZone === 'WIT') tzOffsetHours = 9;
-
-          // 2. Jam mulai: jika ada jam spesifik gunakan itu, jika tidak ada jam spesifik gunakan default 09:00 WIB
+          // 2. Jam mulai: jika ada jam spesifik gunakan itu, jika tidak ada jam spesifik gunakan default 09:00
           let startH = 9;
           let startM = 0;
           if (isValidDate(parsedTimeEvent)) {
@@ -564,8 +548,8 @@ export class SuratService {
             startM = parsedTimeEvent.getUTCMinutes();
           }
 
-          // Waktu di DB disimpan dalam format UTC murni (WIB - 7 jam):
-          const calculatedStart = new Date(Date.UTC(eventYear, eventMonth, eventDay, startH - tzOffsetHours, startM, 0, 0));
+          // Waktu di DB disimpan persis sesuai jam hasil ekstraksi surat:
+          const calculatedStart = new Date(Date.UTC(eventYear, eventMonth, eventDay, startH, startM, 0, 0));
           eventTimeStart = isValidDate(calculatedStart) ? calculatedStart : null;
 
           // 3. Jam selesai: date_event & time_event_finish ke kolom event_time_finish jika ada
@@ -576,7 +560,7 @@ export class SuratService {
             const endMonth = isValidDate(parsedDateEventEnd) ? parsedDateEventEnd.getUTCMonth() : eventMonth;
             const endDay = isValidDate(parsedDateEventEnd) ? parsedDateEventEnd.getUTCDate() : eventDay;
 
-            const calculatedFinish = new Date(Date.UTC(endYear, endMonth, endDay, finishH - tzOffsetHours, finishM, 0, 0));
+            const calculatedFinish = new Date(Date.UTC(endYear, endMonth, endDay, finishH, finishM, 0, 0));
             if (isValidDate(calculatedFinish)) {
               eventTimeFinish = calculatedFinish;
               untilFinish = 0;
@@ -585,11 +569,11 @@ export class SuratService {
               untilFinish = 1;
             }
           } else if (isValidDate(parsedDateEventEnd) && parsedDateEventEnd.getTime() !== parsedDateEvent.getTime()) {
-            // Acara multi-hari tanpa jam selesai spesifik -> simpan waktu selesai hari terakhir pukul 17:00 waktu lokal
+            // Acara multi-hari tanpa jam selesai spesifik -> simpan waktu selesai hari terakhir pukul 17:00
             const endYear = parsedDateEventEnd.getUTCFullYear();
             const endMonth = parsedDateEventEnd.getUTCMonth();
             const endDay = parsedDateEventEnd.getUTCDate();
-            eventTimeFinish = new Date(Date.UTC(endYear, endMonth, endDay, 17 - tzOffsetHours, 0, 0, 0));
+            eventTimeFinish = new Date(Date.UTC(endYear, endMonth, endDay, 17, 0, 0, 0));
             untilFinish = 1;
           } else {
             // Acara 1 hari tanpa jam selesai spesifik (atau berlangsung sampai selesai)
