@@ -5,7 +5,7 @@ import OpenAI from 'openai';
 import { ENV } from '../config/env';
 import { ExtractedSuratData, ExtractedDisposisiData } from './sessionService';
 import { splitPicNameAndPhone, sanitizePlaceEvent } from '../utils/textHelper';
-import { parseIndonesianDateToDate, formatTanggalIndo, isValidDate } from '../utils/dateHelper';
+import { parseIndonesianDateToDate, formatTanggalIndo, isValidDate, extractWaktuAcaraFromText } from '../utils/dateHelper';
 import { imageService } from './imageService';
 import { pdfService } from './pdfService';
 
@@ -811,7 +811,7 @@ ${pdfText.slice(0, 6000)}
           rawText = res.text || '';
         }
 
-        const parsedResult = this.parseAiExtractionResponse(rawText, originalFileName);
+        const parsedResult = this.parseAiExtractionResponse(rawText, originalFileName, pdfText);
         if (parsedResult) {
           return parsedResult;
         }
@@ -987,7 +987,7 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
   /**
    * Helper parsing terpusat untuk output JSON dari model AI (baik teks PDF maupun Vision Gambar)
    */
-  private parseAiExtractionResponse(rawText: string, originalFileName?: string): ExtractedSuratData | null {
+  private parseAiExtractionResponse(rawText: string, originalFileName?: string, docText?: string): ExtractedSuratData | null {
     if (!rawText || !rawText.trim()) return null;
 
     try {
@@ -1076,12 +1076,20 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       const sanitizedPlace = sanitizePlaceEvent(rawPlaceEvent, parsed.perihal, parsed.subject, cleanAcara);
       let cleanPlaceEvent = sanitizedPlace ? sanitizedPlace.slice(0, 220) : undefined;
 
-      // Jika cleanTimeEvent belum ada tetapi cleanDateEvent memuat pola jam (misal: "20 Oktober 2026, Pukul 09.00 WIB")
+      // 1. Jika cleanTimeEvent belum ada tetapi cleanDateEvent memuat pola jam (misal: "20 Oktober 2026, Pukul 09.00 WIB")
       if (!cleanTimeEvent && cleanDateEvent) {
         const timeInDateMatch = cleanDateEvent.match(/(?:pukul|jam)?\s*(\d{1,2}[:.]\d{2}(?:\s*(?:-|s\.?d\.?|sampai|\/)\s*(?:\d{1,2}[:.]\d{2}|selesai))?\s*(?:WIB|WITA|WIT)?)/i);
         if (timeInDateMatch && timeInDateMatch[1]) {
           cleanTimeEvent = timeInDateMatch[1].trim();
           cleanDateEvent = cleanDateEvent.replace(/[,;]?\s*(?:pukul|jam)?\s*\d{1,2}[:.]\d{2}(?:\s*(?:-|s\.?d\.?|sampai|\/)\s*(?:\d{1,2}[:.]\d{2}|selesai))?\s*(?:WIB|WITA|WIT)?/i, '').trim();
+        }
+      }
+
+      // 2. Fallback: Jika model AI tidak mengisi timeEvent, ekstrak langsung dari teks asli dokumen surat
+      if (!cleanTimeEvent && docText) {
+        const extractedTimeFromDoc = extractWaktuAcaraFromText(docText);
+        if (extractedTimeFromDoc) {
+          cleanTimeEvent = extractedTimeFromDoc;
         }
       }
 
@@ -1377,11 +1385,9 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
 
     // 11. Cari jam/waktu pelaksanaan kegiatan jika ada
     let timeEvent: string | undefined = undefined;
-    const timeEventMatch = text.match(
-      /(?:pukul|jam|waktu)\s*[:.-]?\s*(\d{1,2}[:.]\d{2}(?:\s*(?:-|s\.?d\.?|sampai|\/)\s*(?:\d{1,2}[:.]\d{2}|selesai))?\s*(?:WIB|WITA|WIT)?)/i
-    );
-    if (timeEventMatch && timeEventMatch[1]) {
-      timeEvent = timeEventMatch[1].trim().slice(0, 100);
+    const extractedTime = extractWaktuAcaraFromText(text);
+    if (extractedTime) {
+      timeEvent = extractedTime.slice(0, 100);
     }
 
     // 12. Cari tempat/lokasi pelaksanaan kegiatan jika ada

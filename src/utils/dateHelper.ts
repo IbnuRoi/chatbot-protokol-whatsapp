@@ -398,8 +398,8 @@ export function parseIndonesianTimeToDates(timeStr?: string): {
       result.startTime = new Date(Date.UTC(1970, 0, 1, h1, m1, 0, 0));
     }
 
-    // Jika ada jam kedua dan bukan bagian dari kata 'selesai'
-    if (timeMatches.length > 1 && !/(?:s\.?d\.?|sampai|hingga|\/|-)\s*selesai/i.test(clean)) {
+    // Jika ada jam kedua, ambil sebagai waktu selesai (finishTime)
+    if (timeMatches.length > 1) {
       const h2 = parseInt(timeMatches[1][1], 10);
       const m2 = parseInt(timeMatches[1][2], 10);
       if (h2 >= 0 && h2 < 24 && m2 >= 0 && m2 < 60) {
@@ -418,6 +418,42 @@ export function parseIndonesianTimeToDates(timeStr?: string): {
   }
 
   return result;
+}
+
+/**
+ * Ekstraktor regex fallback cerdas untuk mengambil waktu/jam acara dari teks dokumen surat
+ * Mendukung berbagai format penulisan:
+ * - "Pukul 09.00 - 12.00 WIB"
+ * - "Waktu: 08.30 s.d. selesai"
+ * - "Jam 10.00 WITA"
+ * - "09:00 s/d 11:30"
+ */
+export function extractWaktuAcaraFromText(text?: string | null): string | null {
+  if (!text || !text.trim()) return null;
+
+  // 1. Cari dengan penanda waktu/pukul/jam
+  const labeledMatch = text.match(
+    /(?:waktu|pukul|jam)\s*[:.-]?\s*(\d{1,2}[:.]\d{2}(?:\s*(?:-|s\.?d\.?|sampai|s\/d|\/)\s*(?:\d{1,2}[:.]\d{2}|selesai))?(?:\s*(?:WIB|WITA|WIT))?)/i
+  );
+  if (labeledMatch && labeledMatch[1]) {
+    return labeledMatch[1].trim();
+  }
+
+  // 2. Cari format rentang jam (misal: 08.30 - 11.30 WIB atau 09:00 - selesai)
+  const rangeMatch = text.match(
+    /\b(\d{1,2}[:.]\d{2}\s*(?:-|s\.?d\.?|sampai|s\/d|\/)\s*(?:\d{1,2}[:.]\d{2}|selesai)\s*(?:WIB|WITA|WIT)?)\b/i
+  );
+  if (rangeMatch && rangeMatch[1]) {
+    return rangeMatch[1].trim();
+  }
+
+  // 3. Cari format jam tunggal dengan zona waktu (misal: 09.00 WIB)
+  const singleWithTz = text.match(/\b(\d{1,2}[:.]\d{2}\s*(?:WIB|WITA|WIT))\b/i);
+  if (singleWithTz && singleWithTz[1]) {
+    return singleWithTz[1].trim();
+  }
+
+  return null;
 }
 
 export interface ParsedDateRangeResult {

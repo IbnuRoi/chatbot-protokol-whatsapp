@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { pdfService } from './pdfService';
 import { SuratDraftData } from './sessionService';
 import { cleanHtml, formatCombinedPic, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone, sanitizePlaceEvent } from '../utils/textHelper';
-import { parseIndonesianDateToDate, formatTanggalIndo, parseIndonesianTimeToDates, parseIndonesianDateEventRange, isValidDate } from '../utils/dateHelper';
+import { parseIndonesianDateToDate, formatTanggalIndo, parseIndonesianTimeToDates, parseIndonesianDateEventRange, isValidDate, extractWaktuAcaraFromText } from '../utils/dateHelper';
 import { ENV } from '../config/env';
 import path from 'path';
 
@@ -329,12 +329,38 @@ export class SuratService {
       if (!rawTimeStr && draft.extractedData.dateEvent) {
         rawTimeStr = draft.extractedData.dateEvent;
       }
+      if (!rawTimeStr && (draft.extractedData as any).rawText) {
+        rawTimeStr = extractWaktuAcaraFromText((draft.extractedData as any).rawText) || '';
+      }
 
       // Parse jam acara/event jika ada
       const parsedTimeInfo = parseIndonesianTimeToDates(rawTimeStr);
       const parsedTimeEvent: Date | null = isValidDate(parsedTimeInfo.startTime) ? parsedTimeInfo.startTime : null;
       const parsedTimeFinish: Date | null = isValidDate(parsedTimeInfo.finishTime) ? parsedTimeInfo.finishTime : null;
       const parsedTimeZone: string = (parsedTimeInfo.timeZone || 'WIB').toUpperCase().slice(0, 10);
+
+      // Tentukan pergeseran zona waktu ke UTC murni:
+      // WIB (UTC+7) -> UTC = WIB - 7 jam
+      // WITA (UTC+8) -> UTC = WITA - 8 jam
+      // WIT (UTC+9) -> UTC = WIT - 9 jam
+      let tzOffsetHours = 7;
+      if (parsedTimeZone === 'WITA') tzOffsetHours = 8;
+      else if (parsedTimeZone === 'WIT') tzOffsetHours = 9;
+
+      // Konversi waktu acara untuk kolom letters.time_event dan time_event_finish (@db.Time(6)) ke standar UTC
+      let letterTimeEvent: Date | null = null;
+      if (isValidDate(parsedTimeEvent)) {
+        const startH = parsedTimeEvent.getUTCHours();
+        const startM = parsedTimeEvent.getUTCMinutes();
+        letterTimeEvent = new Date(Date.UTC(1970, 0, 2, startH - tzOffsetHours, startM, 0, 0));
+      }
+
+      let letterTimeFinish: Date | null = null;
+      if (isValidDate(parsedTimeFinish)) {
+        const finishH = parsedTimeFinish.getUTCHours();
+        const finishM = parsedTimeFinish.getUTCMinutes();
+        letterTimeFinish = new Date(Date.UTC(1970, 0, 2, finishH - tzOffsetHours, finishM, 0, 0));
+      }
 
       // Get max ID to avoid sequence primary key conflict
       const lastLetter = await prisma.letters.findFirst({
@@ -423,8 +449,8 @@ export class SuratService {
             date_letter: parsedDate,
             date_event: isValidDate(parsedDateEvent) ? parsedDateEvent : null,
             date_event_end: isValidDate(parsedDateEventEnd) ? parsedDateEventEnd : null,
-            time_event: isValidDate(parsedTimeEvent) ? parsedTimeEvent : null,
-            time_event_finish: isValidDate(parsedTimeFinish) ? parsedTimeFinish : null,
+            time_event: isValidDate(letterTimeEvent) ? letterTimeEvent : null,
+            time_event_finish: isValidDate(letterTimeFinish) ? letterTimeFinish : null,
             time_zone: safeLettersTimeZone,
             from: safeAsalSurat,
             subject: safeSubject,
@@ -459,8 +485,8 @@ export class SuratService {
               date_letter: parsedDate,
               date_event: isValidDate(parsedDateEvent) ? parsedDateEvent : null,
               date_event_end: isValidDate(parsedDateEventEnd) ? parsedDateEventEnd : null,
-              time_event: isValidDate(parsedTimeEvent) ? parsedTimeEvent : null,
-              time_event_finish: isValidDate(parsedTimeFinish) ? parsedTimeFinish : null,
+              time_event: isValidDate(letterTimeEvent) ? letterTimeEvent : null,
+              time_event_finish: isValidDate(letterTimeFinish) ? letterTimeFinish : null,
               time_zone: safeLettersTimeZone,
               from: safeAsalSurat,
               subject: safeSubject,
@@ -522,7 +548,10 @@ export class SuratService {
           const eventMonth = parsedDateEvent.getUTCMonth();
           const eventDay = parsedDateEvent.getUTCDate();
 
-          // Tentukan pergeseran zona waktu untuk database events (default WIB: +7)
+          // Tentukan pergeseran zona waktu untuk database events:
+          // WIB (UTC+7) -> UTC = WIB - 7 jam
+          // WITA (UTC+8) -> UTC = WITA - 8 jam
+          // WIT (UTC+9) -> UTC = WIT - 9 jam
           let tzOffsetHours = 7;
           if (parsedTimeZone === 'WITA') tzOffsetHours = 8;
           else if (parsedTimeZone === 'WIT') tzOffsetHours = 9;
@@ -535,7 +564,8 @@ export class SuratService {
             startM = parsedTimeEvent.getUTCMinutes();
           }
 
-          const calculatedStart = new Date(Date.UTC(eventYear, eventMonth, eventDay, startH + tzOffsetHours, startM, 0, 0));
+          // Waktu di DB disimpan dalam format UTC murni (WIB - 7 jam):
+          const calculatedStart = new Date(Date.UTC(eventYear, eventMonth, eventDay, startH - tzOffsetHours, startM, 0, 0));
           eventTimeStart = isValidDate(calculatedStart) ? calculatedStart : null;
 
           // 3. Jam selesai: date_event & time_event_finish ke kolom event_time_finish jika ada
@@ -546,7 +576,7 @@ export class SuratService {
             const endMonth = isValidDate(parsedDateEventEnd) ? parsedDateEventEnd.getUTCMonth() : eventMonth;
             const endDay = isValidDate(parsedDateEventEnd) ? parsedDateEventEnd.getUTCDate() : eventDay;
 
-            const calculatedFinish = new Date(Date.UTC(endYear, endMonth, endDay, finishH + tzOffsetHours, finishM, 0, 0));
+            const calculatedFinish = new Date(Date.UTC(endYear, endMonth, endDay, finishH - tzOffsetHours, finishM, 0, 0));
             if (isValidDate(calculatedFinish)) {
               eventTimeFinish = calculatedFinish;
               untilFinish = 0;
@@ -555,11 +585,11 @@ export class SuratService {
               untilFinish = 1;
             }
           } else if (isValidDate(parsedDateEventEnd) && parsedDateEventEnd.getTime() !== parsedDateEvent.getTime()) {
-            // Acara multi-hari tanpa jam selesai spesifik -> simpan waktu selesai hari terakhir pukul 17:00
+            // Acara multi-hari tanpa jam selesai spesifik -> simpan waktu selesai hari terakhir pukul 17:00 waktu lokal
             const endYear = parsedDateEventEnd.getUTCFullYear();
             const endMonth = parsedDateEventEnd.getUTCMonth();
             const endDay = parsedDateEventEnd.getUTCDate();
-            eventTimeFinish = new Date(Date.UTC(endYear, endMonth, endDay, 17 + tzOffsetHours, 0, 0, 0));
+            eventTimeFinish = new Date(Date.UTC(endYear, endMonth, endDay, 17 - tzOffsetHours, 0, 0, 0));
             untilFinish = 1;
           } else {
             // Acara 1 hari tanpa jam selesai spesifik (atau berlangsung sampai selesai)
