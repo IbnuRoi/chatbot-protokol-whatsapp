@@ -502,6 +502,16 @@ export function formatEventTitleFromDisposition(
 }
 
 /**
+ * Memformat judul event awal pada saat surat masuk baru diinput (sebelum ada lembar disposisi)
+ * dengan template teks bold:
+ * <p>Judul Acara<br />\r\n<strong>(Arahan Menaker: Belum ada disposisi)</strong></p>
+ */
+export function formatInitialEventTitle(baseTitle: string | null | undefined): string {
+  const cleanedTitle = cleanTemplatePrefix(baseTitle) || 'Agenda Kegiatan Protokol';
+  return `<p>${cleanedTitle}<br />\r\n<strong>(Arahan Menaker: Belum ada disposisi)</strong></p>`;
+}
+
+/**
  * Memvalidasi dan membersihkan nilai tempat/lokasi acara (placeEvent).
  * Mencegah teks perihal, permohonan, atau judul acara yang tidak sengaja terinput ke kolom lokasi.
  * Mengembalikan null jika kandidat tidak valid atau bukan lokasi fisik/daring yang sebenarnya.

@@ -2,7 +2,7 @@ import { prisma } from '../database/prisma';
 import { Prisma } from '@prisma/client';
 import { pdfService } from './pdfService';
 import { SuratDraftData } from './sessionService';
-import { cleanHtml, formatCombinedPic, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone, sanitizePlaceEvent } from '../utils/textHelper';
+import { cleanHtml, formatCombinedPic, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone, sanitizePlaceEvent, formatInitialEventTitle } from '../utils/textHelper';
 import { parseIndonesianDateToDate, formatTanggalIndo, parseIndonesianTimeToDates, parseIndonesianDateEventRange, isValidDate, extractWaktuAcaraFromText } from '../utils/dateHelper';
 import { generateEventTitleFromSurat, generateSubjectSummary } from './aiService';
 import { ENV } from '../config/env';
@@ -603,9 +603,10 @@ export class SuratService {
         });
         const nextEventId = lastEvent ? BigInt(lastEvent.id) + BigInt(1) : BigInt(1);
 
-        // 4. Judul kegiatan protokol: generate judul aksi aktif pimpinan sesuai pola di database
+        // 4. Judul kegiatan protokol: generate judul aksi aktif pimpinan + template bold belum ada disposisi
         const rawPerihal = draft.finalPerihal || draft.extractedData.perihal || finalPerihal || '';
-        const eventTitle = generateEventTitleFromSurat(draft.extractedData, rawPerihal);
+        const baseEventTitle = generateEventTitleFromSurat(draft.extractedData, rawPerihal);
+        const eventTitle = formatInitialEventTitle(baseEventTitle);
 
         // 5. Lokasi acara: place_event ke location (kosongkan / null jika tidak ada pada surat)
         const eventLocation = safePlaceEvent || null;
