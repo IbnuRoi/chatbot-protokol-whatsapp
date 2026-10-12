@@ -306,7 +306,8 @@ export class JadwalService {
       }
     }
 
-    const cleanTitle = cleanHtml(event.title) || 'Agenda Kegiatan Protokol';
+    const rawTitle = cleanHtml(event.title) || 'Agenda Kegiatan Protokol';
+    const cleanTitle = rawTitle.replace(/\r?\n+/g, ' ').replace(/\s+/g, ' ').trim();
     const picInfo =
       event.pic_name && event.pic_phonenumber && !event.pic_name.includes(event.pic_phonenumber)
         ? `${event.pic_name} (${event.pic_phonenumber})`
