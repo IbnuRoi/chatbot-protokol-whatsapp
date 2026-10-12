@@ -390,7 +390,7 @@ export function cleanTemplatePrefix(title: string | null | undefined): string {
 
   // 1. Hapus suffix arahan atau catatan lama di akhir jika sudah pernah ditambahkan sebelumnya
   text = text
-    .replace(/\s*\(?\s*(?:arahan|disposisi)\s+menaker\s*:[^\)]*\)?\s*$/i, '')
+    .replace(/\s*\(?\s*(?:(?:arahan|disposisi)\s+menaker\s*:[^\)]*|belum\s+ada\s+disposisi)\)?\s*$/i, '')
     .trim();
 
   // 2. Daftar pola spesifik yang umum di perihal surat masuk
@@ -504,11 +504,11 @@ export function formatEventTitleFromDisposition(
 /**
  * Memformat judul event awal pada saat surat masuk baru diinput (sebelum ada lembar disposisi)
  * dengan template teks bold:
- * <p>Judul Acara<br />\r\n<strong>(Arahan Menaker: Belum ada disposisi)</strong></p>
+ * <p>Judul Acara<br />\r\n<strong>(Belum ada disposisi)</strong></p>
  */
 export function formatInitialEventTitle(baseTitle: string | null | undefined): string {
   const cleanedTitle = cleanTemplatePrefix(baseTitle) || 'Agenda Kegiatan Protokol';
-  return `<p>${cleanedTitle}<br />\r\n<strong>(Arahan Menaker: Belum ada disposisi)</strong></p>`;
+  return `<p>${cleanedTitle}<br />\r\n<strong>(Belum ada disposisi)</strong></p>`;
 }
 
 /**
