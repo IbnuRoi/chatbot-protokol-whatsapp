@@ -4,7 +4,7 @@ import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
 import { ENV } from '../config/env';
 import { ExtractedSuratData, ExtractedDisposisiData } from './sessionService';
-import { splitPicNameAndPhone, sanitizePlaceEvent } from '../utils/textHelper';
+import { splitPicNameAndPhone, sanitizePlaceEvent, cleanTemplatePrefix } from '../utils/textHelper';
 import { parseIndonesianDateToDate, formatTanggalIndo, isValidDate, extractWaktuAcaraFromText } from '../utils/dateHelper';
 import { imageService } from './imageService';
 import { pdfService } from './pdfService';
@@ -284,6 +284,159 @@ export function formatPerihalByTemplate(data: Partial<ExtractedSuratData>): stri
   }
 
   return cleanRedundantSentence(result);
+}
+
+/**
+ * Menghasilkan judul agenda kegiatan protokol resmi untuk kolom `events.title`
+ * sesuai pola standar operasional pimpinan di database protokol Kemnaker.
+ * Mengubah perspektif permohonan pasif surat masuk menjadi kalimat aktif tindakan pimpinan.
+ */
+export function generateEventTitleFromSurat(
+  data?: Partial<ExtractedSuratData>,
+  fallbackPerihal?: string
+): string {
+  if (!data && !fallbackPerihal) return 'Agenda Kegiatan Protokol';
+
+  const kat = (data?.kategoriSurat || '').toUpperCase();
+  const rawPenyelenggara = (data?.penyelenggara || '').trim();
+  let penyelenggara = rawPenyelenggara;
+  if (!penyelenggara || penyelenggara === '-' || penyelenggara === 'Instansi Terkait') {
+    if (data?.asalSurat && !data.asalSurat.includes(' - ')) {
+      penyelenggara = data.asalSurat.trim();
+    } else {
+      penyelenggara = '';
+    }
+  }
+
+  const rawAcara = (data?.namaAcara || data?.event || data?.subject || '').trim();
+  const namaAcara = cleanNamaAcara(rawAcara, penyelenggara);
+
+  const rawTema = data?.temaAcara && data.temaAcara !== '-' ? data.temaAcara.trim() : '';
+  const tema = rawTema && rawTema.toLowerCase() !== namaAcara.toLowerCase() ? rawTema : '';
+  const temaClause = tema ? ` dengan tema "${tema}"` : '';
+
+  const orgAlreadyMentioned = isOrganizationMentioned(penyelenggara, namaAcara);
+  const byPenyelenggaraClause = !orgAlreadyMentioned && penyelenggara && penyelenggara !== 'Penyelenggara' && penyelenggara !== 'Instansi Terkait'
+    ? ` yang diselenggarakan oleh ${penyelenggara}`
+    : '';
+
+  let eventTitle = '';
+
+  switch (kat) {
+    case 'PH': {
+      const sesi = cleanSesiAcara(data?.sesiAcara, namaAcara);
+      const lowerSesi = sesi.toLowerCase();
+
+      let actionVerb = 'Memberikan Sambutan';
+      let connector = ' pada ';
+
+      if (lowerSesi.includes('narasumber') || lowerSesi.includes('pembicara') || lowerSesi.includes('pemateri')) {
+        actionVerb = 'Menjadi Narasumber';
+        connector = ' pada ';
+      } else if (lowerSesi.includes('keynote speaker') || lowerSesi.includes('keynote speech') || lowerSesi.includes('keynote')) {
+        actionVerb = 'Menjadi Keynote Speaker';
+        connector = ' pada ';
+      } else if (lowerSesi.includes('orasi ilmiah')) {
+        actionVerb = 'Menjadi Narasumber Orasi Ilmiah';
+        connector = ' pada ';
+      } else if (lowerSesi.includes('kuliah umum')) {
+        actionVerb = 'Memberikan Kuliah Umum';
+        connector = ' pada ';
+      } else if (lowerSesi.includes('sambutan') && lowerSesi.includes('arahan')) {
+        actionVerb = 'Memberikan Sambutan dan Arahan';
+        connector = ' pada ';
+      } else if (lowerSesi.startsWith('membuka')) {
+        actionVerb = 'Membuka Acara';
+        connector = ' ';
+      } else if (lowerSesi.includes('arahan')) {
+        actionVerb = 'Memberikan Arahan';
+        connector = ' pada ';
+      } else if (lowerSesi.includes('sambutan')) {
+        actionVerb = 'Memberikan Sambutan';
+        connector = ' pada ';
+      } else {
+        actionVerb = sesi;
+        connector = ' pada ';
+      }
+
+      eventTitle = `${actionVerb}${connector}${namaAcara}${temaClause}${byPenyelenggaraClause}`;
+      break;
+    }
+
+    case 'UND': {
+      eventTitle = `Menghadiri ${namaAcara}${temaClause}${byPenyelenggaraClause}`;
+      break;
+    }
+
+    case 'UNR': {
+      const m1 = (data?.mempelai1 || '').replace(/\s*\(.*?\)/g, '').trim();
+      const m2 = (data?.mempelai2 || '').replace(/\s*\(.*?\)/g, '').trim();
+      if (m1 && m2) {
+        eventTitle = `Menghadiri acara Resepsi Pernikahan ${m1} dengan ${m2}`;
+      } else if (m1 || m2) {
+        eventTitle = `Menghadiri acara Resepsi Pernikahan ${m1 || m2}`;
+      } else {
+        eventTitle = `Menghadiri acara Resepsi Pernikahan ${namaAcara}`;
+      }
+      break;
+    }
+
+    case 'AU': {
+      const pokok = data?.pokokBahasan && data.pokokBahasan !== '-' ? data.pokokBahasan.trim() : '';
+      const targetInstansi = penyelenggara || data?.asalSurat?.split(' - ')[0]?.trim() || '';
+      if (targetInstansi && pokok) {
+        eventTitle = `Menerima audiensi ${targetInstansi} terkait ${pokok}`;
+      } else if (targetInstansi) {
+        eventTitle = `Menerima audiensi ${targetInstansi}`;
+      } else if (pokok) {
+        eventTitle = `Audiensi terkait ${pokok}`;
+      } else {
+        eventTitle = `Audiensi bersama ${namaAcara}`;
+      }
+      break;
+    }
+
+    case 'WR': {
+      const pokok = data?.pokokBahasan && data.pokokBahasan !== '-' ? data.pokokBahasan.trim() : '';
+      const targetMedia = penyelenggara || data?.asalSurat?.split(' - ')[0]?.trim() || '';
+      if (targetMedia && pokok) {
+        eventTitle = `Menerima Wawancara ${targetMedia} terkait ${pokok}`;
+      } else if (targetMedia) {
+        eventTitle = `Menerima Wawancara ${targetMedia}`;
+      } else {
+        eventTitle = `Wawancara terkait ${pokok || namaAcara}`;
+      }
+      break;
+    }
+
+    case 'TAP': {
+      const rangka = data?.rangkaUcapan && data.rangkaUcapan !== '-' ? data.rangkaUcapan.trim() : namaAcara;
+      eventTitle = `Pembuatan Video Ucapan dalam rangka ${rangka}`;
+      break;
+    }
+
+    case 'LP': {
+      const judul = namaAcara || data?.subject || 'Pelaksanaan Kegiatan';
+      eventTitle = `Menerima Laporan ${judul}${byPenyelenggaraClause}`;
+      break;
+    }
+
+    default: {
+      if (fallbackPerihal && fallbackPerihal.trim()) {
+        eventTitle = cleanTemplatePrefix(fallbackPerihal);
+      } else if (namaAcara && namaAcara !== 'Kegiatan') {
+        eventTitle = `Menghadiri ${namaAcara}${byPenyelenggaraClause}`;
+      } else {
+        eventTitle = 'Agenda Kegiatan Protokol';
+      }
+      break;
+    }
+  }
+
+  // Bersihkan redundansi kalimat & pastikan tidak ada awalan "Permohonan ..." yang tersisa
+  eventTitle = cleanRedundantSentence(cleanTemplatePrefix(eventTitle));
+
+  return eventTitle || 'Agenda Kegiatan Protokol';
 }
 
 /**

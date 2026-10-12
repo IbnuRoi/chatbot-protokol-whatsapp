@@ -99,10 +99,15 @@ export class SshTunnelManager {
         port: sshPort,
         username: sshUser,
         password: sshPassword,
+        tryKeyboard: true,
         keepaliveInterval: 10000,
         keepaliveCountMax: 3,
         readyTimeout: 30000,
       };
+
+      ssh.on('keyboard-interactive', (name, instructions, instructionsLang, prompts, finish) => {
+        finish([sshPassword || '']);
+      });
 
       ssh.on('ready', () => {
         console.log('✅ [SSH Tunnel] Terautentikasi ke SSH Server. Menyiapkan local port forwarding...');
