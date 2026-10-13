@@ -92,10 +92,16 @@ export interface SuratDraftData {
 export interface ExtractedDisposisiData {
   nomorAgenda: string;
   nomorSurat?: string;
+  tanggalSurat?: string;
+  sifat?: string;
   asalSurat?: string;
   perihal?: string;
+  tanggalAcara?: string;
+  waktuAcara?: string;
+  tempatAcara?: string;
   tanggalDisposisi?: string;
   pemberiDisposisi?: string;
+  namaPemberiDisposisi?: string;
   diteruskanKepada?: string[];
   arahanDisposisi?: string[];
   catatan?: string;

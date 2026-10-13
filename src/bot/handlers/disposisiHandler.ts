@@ -89,6 +89,14 @@ export class DisposisiHandler {
       }
     }
 
+    // Fallback: Jika belum cocok dari nomor agenda, coba cari dari nomor surat pengirim
+    if (!matchedLetter && extracted.nomorSurat && extracted.nomorSurat !== '-' && extracted.nomorSurat.length >= 3) {
+      matchedLetter = await disposisiService.findLetterByAgenda(extracted.nomorSurat);
+      if (matchedLetter) {
+        existingDisposition = await disposisiService.findExistingDispositionByLetterId(matchedLetter.id);
+      }
+    }
+
     // Jika tanggal disposisi belum ditemukan dari berkas disposisi, gunakan tanggal surat masuk
     if ((!extracted.tanggalDisposisi || extracted.tanggalDisposisi === '-') && matchedLetter?.date_letter) {
       extracted.tanggalDisposisi = formatTanggalIndo(matchedLetter.date_letter, false);
@@ -158,7 +166,7 @@ export class DisposisiHandler {
     const diteruskanStr =
       ext.diteruskanKepada && ext.diteruskanKepada.length > 0
         ? ext.diteruskanKepada.join(', ')
-        : '-';
+        : '- (Tidak ada / Belum ditentukan)';
 
     const arahanStr =
       ext.arahanDisposisi && ext.arahanDisposisi.length > 0
@@ -189,11 +197,13 @@ export class DisposisiHandler {
       `• *Pengirim*     : ${pengirimDisplay}\n` +
       `• *Perihal*      : ${perihalDisplay}\n\n` +
       `🎯 *Rincian Lembar Disposisi:*\n` +
-      `• *Pemberi Disposisi* : ${ext.pemberiDisposisi || 'Menteri Ketenagakerjaan'}\n` +
+      `• *Pemberi Disposisi* : ${ext.pemberiDisposisi || 'Menteri Ketenagakerjaan RI'}\n` +
+      (ext.sifat && ext.sifat !== '-' ? `• *Sifat Disposisi*   : ${ext.sifat}\n` : '') +
       `• *Diteruskan Kepada* : ${diteruskanStr}\n` +
       `• *Arahan Pimpinan*   : ${arahanStr}\n` +
       `• *Catatan Khusus*    : ${ext.catatan || '-'}\n` +
       `• *Tanggal Disposisi* : ${ext.tanggalDisposisi || '-'}\n` +
+      (ext.tanggalAcara && ext.tanggalAcara !== '-' ? `• *Tanggal Acara*     : ${ext.tanggalAcara}\n` : '') +
       `• *Nama Berkas*       : ${draft.finalFileName || draft.tempFileName}\n\n` +
       `──────────────────────────────\n` +
       `Apakah data disposisi di atas sudah sesuai?\n\n` +

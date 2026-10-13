@@ -1649,43 +1649,47 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
   }
 
   /**
-   * Ekstraksi metadata dan isi Lembar Disposisi dari berkas PDF (baik PDF digital maupun scan fisik)
+   * Ekstraksi metadata dan isi Lembar Disposisi dari berkas PDF (baik PDF digital maupun scan fisik).
+   * Pada lembar disposisi, centangan checklist, tanda tangan, dan paraf adalah elemen visual fisik,
+   * sehingga Multimodal Vision AI SELALU diprioritaskan pada halaman pertama berkas PDF.
    */
   public async extractDisposisiFromPdf(
     pdfFilePath: string,
     originalFileName?: string
   ): Promise<ExtractedDisposisiData> {
     const pdfText = await pdfService.extractText(pdfFilePath);
-    const isScanned = await pdfService.isScannedPdf(pdfFilePath, pdfText);
 
-    if (isScanned) {
+    // Lembar disposisi selalu berada pada halaman 1 (atau 1-2 jika lembar disposisi + surat pengantar).
+    // Render 2 halaman pertama pada skala tinggi (2.0x) agar kotak centang dan teks kecil sangat tajam.
+    try {
       console.log(
-        `[AiService] Lembar disposisi '${originalFileName || path.basename(pdfFilePath)}' berupa scan fisik. Merender ke gambar vision...`
+        `[AiService] Memproses ekstraksi lembar disposisi '${originalFileName || path.basename(pdfFilePath)}' dengan Vision AI (Page 1-2)...`
       );
-      const renderedPages = await pdfService.renderPdfPagesToImages(pdfFilePath, 3);
+      const renderedPages = await pdfService.renderPdfPagesToImages(pdfFilePath, 2, 2.0);
       if (renderedPages.length > 0) {
         try {
-          return await this.extractDisposisiFromImages(renderedPages, originalFileName, pdfText);
+          const visionResult = await this.extractDisposisiFromImages(renderedPages, originalFileName, pdfText);
+          // Jika nomor agenda atau perihal berhasil diekstrak secara valid, kembalikan hasil vision
+          if (
+            (visionResult.nomorAgenda && visionResult.nomorAgenda !== '-') ||
+            (visionResult.perihal && visionResult.perihal !== '-')
+          ) {
+            return visionResult;
+          }
         } finally {
           pdfService.cleanupRenderedPages(renderedPages);
         }
       }
+    } catch (visionErr) {
+      console.warn('[AiService] Upaya ekstraksi Vision AI gagal, beralih ke analisis teks:', visionErr);
     }
 
+    // Fallback ekstraksi berbasis teks digital jika Vision AI gagal
     if (pdfText && pdfText.trim().length > 30) {
       return this.extractDisposisiFromText(pdfText, originalFileName);
     }
 
-    const renderedPages = await pdfService.renderPdfPagesToImages(pdfFilePath, 3);
-    if (renderedPages.length > 0) {
-      try {
-        return await this.extractDisposisiFromImages(renderedPages, originalFileName, pdfText);
-      } finally {
-        pdfService.cleanupRenderedPages(renderedPages);
-      }
-    }
-
-    return this.extractDisposisiFromText(pdfText || '', originalFileName);
+    return this.parseDisposisiResponse('', originalFileName, pdfText || '');
   }
 
   /**
@@ -1714,26 +1718,24 @@ Teks dokumen Lembar Disposisi:
 ${text.slice(0, 10000)}
 """
 
-TUGAS UTAMA:
-Bacalah teks dokumen di atas dan ekstrak data disposisi secara akurat:
-1. "isDisposisi": boolean (apakah ini formulir lembar disposisi)
-2. "nomorAgenda": nomor agenda surat (CONTOH: "UND/2026/09/0001" atau "0012/UND/IX/2026"). JANGAN mengambil nomor surat!
-3. "nomorSurat": nomor surat dinas pengirim yang dicantumkan di lembar disposisi (jika ada).
-4. "asalSurat": instansi / pengirim surat (jika ada).
-5. "perihal": perihal atau hal surat yang tertera.
-6. "tanggalDisposisi": tanggal lembar disposisi yang tertera pada dokumen fisik/lembar disposisi (format: "DD MMMM YYYY", misal "24 September 2026").
-   PANDUAN EKSTRAKSI TANGGAL DISPOSISI:
-   - Cari tanggal yang tercantum pada lembar disposisi:
-     * Kolom "Tanggal Disposisi", "Tgl. Disposisi", "Tanggal", "Tgl"
-     * Tanggal di dekat tanda tangan/paraf pejabat pemberi disposisi (misal: "Jakarta, 24 September 2026" atau "24/09/2026")
-     * Kolom "Tanggal Penerimaan" / "Tgl. Diterima" / "Tanggal Diterima" pada formulir lembar disposisi
-     * Kolom "Tanggal Surat" / "Tgl. Surat" pada lembar disposisi jika tidak ada tanggal disposisi terpisah
-   - SANGAT PENTING: JANGAN PERNAH MENGGUNAKAN TANGGAL HARI INI JIKA TERDAPAT TANGGAL YANG TERCANTUM PADA LEMBAR DISPOSISI!
-   - Kembalikan "-" hanya jika lembar disposisi benar-benar tidak memuat tanggal apapun.
-7. "pemberiDisposisi": pejabat pemberi disposisi (default: "Menteri Ketenagakerjaan").
-8. "diteruskanKepada": array string nama-nama pejabat yang dituju/dicentang (misal: ["Wakil Menteri", "Sekretaris Jenderal", "Dirjen PHI & Jamsos TK"]).
-9. "arahanDisposisi": array string instruksi/tindakan yang dicentang (misal: ["Agendakan", "Hadiri", "Wakili", "Tindak Lanjuti", "Pelajari / Telaah", "Siapkan Bahan"]).
-10. "catatan": catatan tertulis / instruksi khusus pimpinan.
+PANDUAN EKSTRAKSI FORMULIR LEMBAR DISPOSISI KEMNAKER:
+1. "isDisposisi": boolean (true jika dokumen adalah formulir lembar disposisi).
+2. "sifat": sifat dokumen jika dicentang ("Rahasia", "Penting/Segera", "Biasa", "Tembusan").
+3. "nomorAgenda": nomor agenda disposisi pada kolom "Nomor Agenda" (misal: "308/M/PH/IX/2026"). JANGAN mengambil nomor surat pengirim!
+4. "tanggalDisposisi": tanggal di sebelah kanan nomor agenda pada kolom "Tanggal :" (misal: "8 September 2026").
+5. "nomorSurat": nomor surat dinas pengirim pada baris "Nomor / Tanggal :" (misal: "Panasonic.2026").
+6. "tanggalSurat": tanggal surat dinas pengirim di sebelah kanan nomor surat (misal: "3 September 2026").
+7. "asalSurat": nama / instansi pengirim surat pada baris "Asal surat :" (misal: "Mohammad Arif Rachmat Gobel - Direktur Panasonic Gobel Indonesia").
+8. "perihal": isi perihal surat secara lengkap.
+9. Rincian kegiatan jika tertera:
+   - "tanggalAcara": misal "Kamis, 8 Oktober 2026"
+   - "waktuAcara": misal "08:30 WIB - selesai"
+   - "tempatAcara": misal "Auditorium Universitas Darma Persada (UNSADA), Jakarta Timur"
+10. "pemberiDisposisi": pejabat pemberi disposisi (default: "Menteri Ketenagakerjaan RI").
+11. "namaPemberiDisposisi": nama pimpinan jika tertera (misal: "Yassierli").
+12. "diteruskanKepada": array string nama-nama pejabat yang dituju/dicentang. HANYA masukkan yang benar-benar dipilih/dicentang. Kembalikan [] jika tidak ada yang dicentang.
+13. "arahanDisposisi": array string instruksi tindakan pada lajur disposisi (misal: ["Agendakan / Acarakan"]).
+14. "catatan": catatan teks tertulis instruksi khusus pimpinan (kembalikan "-" jika tidak ada catatan teks khusus).
 
 KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN TANPA PENJELASAN LAIN:
 `;
@@ -1799,33 +1801,97 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
           });
         }
 
-        const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan (Kemnaker) yang ahli dalam membaca LEMBAR DISPOSISI resmi Kemnaker.
+        const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan Republik Indonesia (Kemnaker) yang ahli dalam membaca formulir LEMBAR DISPOSISI resmi Kemnaker beserta surat dinas pendukungnya.
 
-TUGAS UTAMA:
-Bacalah formulir / lembar disposisi terlampir secara teliti (baik scan scanner, foto kamera HP, dokumen cetak bertanda tangan/centangan pena).
+DOKUMEN TERLAMPIR:
+- Halaman 1: Formulir LEMBAR DISPOSISI resmi Kemnaker.
+- Halaman berikutnya (jika ada): Surat dinas masuk atau proposal pendukung.
 
-Ekstrak entitas data berikut:
-1. "isDisposisi": boolean (true jika dokumen adalah formulir lembar disposisi)
-2. "nomorAgenda": nomor agenda surat yang tertera pada kolom Nomor Agenda (CONTOH: "UND/2026/09/0001", "0012/UND/IX/2026", "PH/2026/09/0003"). SANGAT PENTING: Jangan tertukar dengan nomor surat dinas pengirim!
-3. "nomorSurat": nomor surat pengirim jika tercantum pada lembar disposisi.
-4. "asalSurat": instansi / pengirim surat yang tertulis pada kolom Surat Dari / Asal Surat.
-5. "perihal": perihal atau ringkasan isi surat yang tertera.
-6. "tanggalDisposisi": tanggal lembar disposisi yang tertera pada lembar disposisi (format: "DD MMMM YYYY", misal "24 September 2026").
-   PANDUAN PENTING:
-   - Baca tanggal yang tertulis pada lembar disposisi:
-     * Kolom "Tanggal Disposisi", "Tanggal", "Tgl"
-     * Tanggal di dekat tanda tangan atau paraf pejabat pimpinan (misal: "Jakarta, 24 September 2026" atau "24/09/2026")
-     * Kolom "Tanggal Penerimaan" / "Tgl. Diterima" pada formulir lembar disposisi
-     * Kolom "Tanggal Surat" pada lembar disposisi
-   - SANGAT PENTING: JANGAN PERNAH MENGGUNAKAN TANGGAL HARI INI JIKA TERDAPAT TANGGAL PADA LEMBAR DISPOSISI! Ambil tanggal yang benar-benar tertulis di dokumen.
-   - Kembalikan "-" hanya jika lembar disposisi benar-benar tidak memuat tanggal apapun.
-7. "pemberiDisposisi": pejabat yang mendisposisikan surat (default: "Menteri Ketenagakerjaan").
-8. "diteruskanKepada": daftar pejabat yang dicentang / ditandai / ditulis pada bagian 'Diteruskan Kepada' (CONTOH: ["Wakil Menteri", "Sekretaris Jenderal", "Dirjen Binapenta & PKK", "Dirjen PHI & Jamsos TK", "Dirjen Binalavotas", "Dirjen Binwasnaker & K3", "Inspektur Jenderal", "Kepala Barenbang", "Kepala Biro Protokol", "Kepala Biro Humas", "Kepala Biro Hukum"]). HANYA sertakan yang benar-benar dicentang / dipilih!
-9. "arahanDisposisi": daftar petunjuk / tindakan yang dicentang atau ditandai pada lembar disposisi (CONTOH: ["Agendakan", "Hadiri", "Wakili", "Tindak Lanjuti", "Pelajari / Telaah", "Siapkan Bahan / Tanggapan", "Koordinasikan", "Untuk Diketahui / Arsip"]).
-10. "catatan": catatan tambahan / arahan tulisan tangan pimpinan yang tertulis pada kolom catatan (CONTOH: "Dimohon hadir didampingi Biro Hukum", atau "-" jika kosong).
+PANDUAN EKSTRAKSI FORMULIR LEMBAR DISPOSISI KEMNAKER (FOKUS UTAMA HALAMAN 1):
+1. SIFAT DOKUMEN:
+   Pilihan di bagian atas: "Rahasia", "Penting/Segera", "Biasa", "Tembusan".
+2. TABEL IDENTITAS SURAT:
+   - "Nomor Agenda": nomor agenda resmi pada kolom "Nomor Agenda" (misal: "308/M/PH/IX/2026"). JANGAN tertukar dengan nomor surat pengirim!
+   - "Tanggal Disposisi": tanggal di sebelah kanan nomor agenda pada kolom "Tanggal :" (misal: "8 September 2026").
+   - "Nomor Surat": nomor surat dinas pengirim pada baris "Nomor / Tanggal :" (misal: "Panasonic.2026"). JANGAN sampai terlewat jika tertera di formulir!
+   - "Tanggal Surat": tanggal surat dinas pengirim di sebelah kanan nomor surat (misal: "3 September 2026").
+   - "Asal Surat": instansi / pengirim surat pada baris "Asal surat :" (misal: "Mohammad Arif Rachmat Gobel - Direktur Panasonic Gobel Indonesia").
+   - "Perihal": ringkasan hal surat pada kolom "Perihal :".
+   - Jika di bawah perihal tertera rincian kegiatan, ekstrak juga:
+     * "tanggalAcara": misal "Kamis, 8 Oktober 2026"
+     * "waktuAcara": misal "08:30 WIB - selesai"
+     * "tempatAcara": misal "Auditorium Universitas Darma Persada (UNSADA), Jakarta Timur"
+3. DITERUSKAN KEPADA:
+   Daftar kotak centang [ ] pejabat tujuan:
+   - Wakil Menteri Ketenagakerjaan
+   - Sekretaris Jenderal
+   - Dirjen Pembinaan Pelatihan Vokasi dan Produktivitas
+   - Dirjen Pembinaan Penempatan Tenaga Kerja dan Perluasan Kesempatan Kerja
+   - Dirjen Pembinaan Hubungan Industrial dan Jaminan Sosial Tenaga Kerja
+   - Dirjen Pembinaan Pengawasan Ketenagakerjaan dan K3
+   - Inspektur Jenderal
+   - Kepala Badan Perencanaan dan Pengembangan Ketenagakerjaan
+   - Staf Ahli Bidang Ekonomi Ketenagakerjaan
+   - Staf Ahli Bidang Hubungan Internasional
+   - Staf Ahli Bidang Hubungan Antarlembaga;
+   - Staf Ahli Bidang Sosial, Politik dan Kebijakan Publik
+   - Staf Khusus
+   - Kepala Pusat Pengembangan SDM Ketenagakerjaan
+   - Kepala Pusat Pasar Kerja
+   - Kabag TU Pimpinan dan Protokol Kementerian
+   - Kasubbag Protokol
+   ATURAN KRUSIAL DITERUSKAN KEPADA:
+   - HANYA masukkan nama pejabat yang kotaknya BENAR-BENAR TERDAPAT TANDA CENTANG / CORETAN PENA / TINTA [✔] atau tanda [X].
+   - Jika kotak kosong [ ], JANGAN dimasukkan!
+   - Jika SEMUA kotak kosong [ ], kembalikan array kosong []. JANGAN PERNAH mengarang pejabat jika kotaknya kosong!
+4. LAJUR DISPOSISI (ARAHAN TINDAKAN):
+   Daftar 16 opsi arahan di kolom kiri dengan kotak centang [ ]:
+   1. Dipelajari / Dicermati
+   2. Ditindaklanjuti
+   3. Agar dimonitor
+   4. Dikoordinasikan
+   5. Segera buat laporan
+   6. Siapkan bahan
+   7. Bahas dengan saya
+   8. Saran / Penjelasan
+   9. Siapkan jawaban
+   10. Copy buat saya
+   11. Dipedomani
+   12. Untuk diketahui
+   13. File / Simpan / Arsip
+   14. Agendakan / Acarakan
+   15. Mendampingi Menteri
+   16. Mewakili Menteri
+   ATURAN KRUSIAL LAJUR DISPOSISI:
+   - Periksa posisi kotak yang dicentang secara presisi dan lurus horizontal dengan teksnya.
+   - Misalnya: jika tanda centang tinta [✔] berada pada kotak baris ke-14 "Agendakan / Acarakan", maka hasilnya adalah ["Agendakan / Acarakan"]. JANGAN tertukar dengan baris di atasnya ("File / Simpan / Arsip")!
+5. CATATAN & TANDA TANGAN:
+   - Kolom "Catatan:" di sebelah kanan lajur disposisi memuat tanda tangan Menteri Ketenagakerjaan RI (misal nama "Yassierli").
+   - "catatan" diisi HANYA jika ada tulisan tangan arahan/catatan instruksi khusus dari pimpinan.
+   - Jika hanya ada tanda tangan, nama jabatan/pejabat, stempel, atau coretan paraf tanggal (seperti "8/9" atau "28/9"), maka "catatan" isi dengan "-". JANGAN pernah membaca coretan paraf tanggal atau tanda tangan sebagai teks catatan (misal jangan membaca paraf tanggal menjadi karakter acak seperti "g%2")!
+6. PEMBERI DISPOSISI:
+   - Pejabat pimpinan yang menandatangani (misal: "Menteri Ketenagakerjaan RI" atau "Menteri Ketenagakerjaan").
+   - "namaPemberiDisposisi": nama pimpinan jika tertera (misal: "Yassierli").
 
-KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN TANPA PENJELASAN LAIN:
-`;
+OUTPUT FORMAT: Kembalikan HANYA JSON valid tanpa blok markdown:
+{
+  "isDisposisi": true,
+  "sifat": "Penting/Segera",
+  "nomorAgenda": "308/M/PH/IX/2026",
+  "tanggalDisposisi": "8 September 2026",
+  "nomorSurat": "Panasonic.2026",
+  "tanggalSurat": "3 September 2026",
+  "asalSurat": "Mohammad Arif Rachmat Gobel - Direktur Panasonic Gobel Indonesia",
+  "perihal": "...",
+  "tanggalAcara": "Kamis, 8 Oktober 2026",
+  "waktuAcara": "08:30 WIB - selesai",
+  "tempatAcara": "Auditorium Universitas Darma Persada (UNSADA), Jakarta Timur",
+  "pemberiDisposisi": "Menteri Ketenagakerjaan RI",
+  "namaPemberiDisposisi": "Yassierli",
+  "diteruskanKepada": ["Kabag TU Pimpinan dan Protokol Kementerian"],
+  "arahanDisposisi": ["Agendakan / Acarakan"],
+  "catatan": "-"
+}`;
 
         let rawText = '';
         if (this.openAiClient) {
@@ -1956,16 +2022,33 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       }
     }
 
+    // Pembersihan artefak atau paraf yang salah terbaca pada kolom catatan (misal "g%2", "%2", "8/9")
+    let cleanCatatan = String(parsed.catatan || '').trim();
+    if (
+      !cleanCatatan ||
+      cleanCatatan === '-' ||
+      /^(?:-|null|undefined|tidak\s+ada|kosong|g%?\d*|%\d+|\d+\/\d+)$/i.test(cleanCatatan) ||
+      cleanCatatan.length < 3
+    ) {
+      cleanCatatan = '-';
+    }
+
     return {
       nomorAgenda: cleanAgenda && cleanAgenda !== '-' ? cleanAgenda : '',
       nomorSurat: String(parsed.nomorSurat || '').trim() || '-',
+      tanggalSurat: String(parsed.tanggalSurat || '').trim() || '-',
+      sifat: String(parsed.sifat || '').trim() || '-',
       asalSurat: String(parsed.asalSurat || '').trim() || '-',
       perihal: String(parsed.perihal || '').trim() || '-',
+      tanggalAcara: String(parsed.tanggalAcara || '').trim() || '-',
+      waktuAcara: String(parsed.waktuAcara || '').trim() || '-',
+      tempatAcara: String(parsed.tempatAcara || '').trim() || '-',
       tanggalDisposisi: finalTanggalDisposisi,
-      pemberiDisposisi: String(parsed.pemberiDisposisi || '').trim() || 'Menteri Ketenagakerjaan',
-      diteruskanKepada: diteruskan.length > 0 ? diteruskan : ['Sekretaris Jenderal'],
-      arahanDisposisi: arahan.length > 0 ? arahan : ['Agendakan'],
-      catatan: String(parsed.catatan || '').trim() || '-',
+      pemberiDisposisi: String(parsed.pemberiDisposisi || '').trim() || 'Menteri Ketenagakerjaan RI',
+      namaPemberiDisposisi: String(parsed.namaPemberiDisposisi || '').trim() || '-',
+      diteruskanKepada: diteruskan,
+      arahanDisposisi: arahan.length > 0 ? arahan : ['Agendakan / Acarakan'],
+      catatan: cleanCatatan,
     };
   }
 }
