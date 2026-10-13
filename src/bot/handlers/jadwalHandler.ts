@@ -6,10 +6,11 @@ import { cariSuratHandler } from './cariSuratHandler';
 import { BotResponse } from '../types';
 import { scoreTextMatch, cleanQueryForSelection, formatNomorSuratLink, getLetterFileUrl, isPureGreeting } from '../../utils/textHelper';
 import { extractDateFromText, extractDateRangeFromText, formatWaktuDisplay } from '../../utils/dateHelper';
+import { formatAgendaProtocolMessage } from '../../utils/scheduleMessageFormatter';
 
 export class JadwalHandler {
   /**
-   * Menampilkan menu Jadwal Kegiatan
+   * Menampilkan menu Jadwal Kegiatan Protokol Hari Ini
    */
   public async showJadwalMenu(session: UserSession): Promise<BotResponse> {
     sessionService.setState(session.whatsappNumber, BotState.JADWAL_MENU);
@@ -17,39 +18,19 @@ export class JadwalHandler {
     const todayStr = jadwalService.getTodayString();
     const todayFormatted = formatTanggalIndo(todayStr);
 
-    // Ambil jadwal hari ini (hanya yang status disposisinya diagendakan)
-    const jadwalsHariIni = await jadwalService.getJadwalHariIni(false, true);
+    // Ambil jadwal hari ini (ambil semua status agar ringkasan selesai, terjadwal, reschedule akurat)
+    const jadwalsHariIni = await jadwalService.getJadwalHariIni(false, false);
 
-    let listText = '';
-    if (jadwalsHariIni.length === 0) {
-      listText = `_Tidak ada agenda kegiatan dengan status diagendakan untuk hari ini (${todayFormatted})._\n`;
-    } else {
+    if (jadwalsHariIni.length > 0) {
       session.jadwalSearchResults = jadwalsHariIni;
       session.jadwalSearchKeyword = 'Agenda Hari Ini';
       sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
-
-      listText = jadwalsHariIni
-        .map((j, idx) => {
-          const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
-          const statusDisp = j.statusDisposisi || 'Diagendakan';
-          return (
-            `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
-            `   📅 *Tanggal Pelaksanaan* : ${todayFormatted}\n` +
-            `   🕒 *Waktu*   : ${waktu}\n` +
-            `   📍 *Lokasi*  : ${j.lokasi}\n` +
-            `   📋 *Status Disposisi* : ${statusDisp}`
-          );
-        })
-        .join('\n\n');
     }
 
-    const text =
-      `📅 *JADWAL KEGIATAN PROTOKOL HARI INI*\n` +
-      `📅 *Tanggal Pelaksanaan:* ${todayFormatted}\n\n` +
-      `${listText}\n\n` +
-      `Silakan beri tahu saya jika Anda ingin melihat kegiatan terdekat berikutnya atau agenda beberapa hari ke depan ya.`;
-
-    return { text };
+    return formatAgendaProtocolMessage({
+      dateFormatted: todayFormatted,
+      items: jadwalsHariIni,
+    });
   }
 
   /**
@@ -63,42 +44,16 @@ export class JadwalHandler {
 
     const jadwalsBesok = await jadwalService.getJadwalBesok();
 
-    let listText = '';
-    if (jadwalsBesok.length === 0) {
-      const nextResult = await jadwalService.getJadwalBerikutnyaTerdekat();
-      const nextInfo = nextResult
-        ? `\n\n💡 *Agenda terdekat berikutnya:* ${nextResult.item.namaKegiatan} pada hari *${formatTanggalIndo(nextResult.item.tanggalKegiatan)}* pukul ${formatWaktuDisplay(nextResult.item.waktuMulai, nextResult.item.waktuSelesai)}.`
-        : '';
-      listText = `_Tidak ada agenda kegiatan terdaftar untuk besok (${tomorrowFormatted})._${nextInfo}`;
-    } else {
+    if (jadwalsBesok.length > 0) {
       session.jadwalSearchResults = jadwalsBesok;
       session.jadwalSearchKeyword = 'Agenda Besok';
       sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
-
-      listText = jadwalsBesok
-        .map((j, idx) => {
-          const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
-          const statusDisp = j.statusDisposisi || 'Diagendakan';
-          return (
-            `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
-            `   📅 *Tanggal Pelaksanaan* : ${tomorrowFormatted}\n` +
-            `   🕒 *Waktu*  : ${waktu}\n` +
-            `   📍 *Lokasi* : ${j.lokasi}\n` +
-            `   📋 *Status Disposisi* : ${statusDisp}\n` +
-            `   👥 *Hadir*  : ${j.pejabatHadir || '-'}\n` +
-            `   📞 *PIC*    : ${j.pic || '-'}`
-          );
-        })
-        .join('\n\n');
     }
 
-    const text =
-      `📅 *JADWAL KEGIATAN PROTOKOL BESOK*\n` +
-      `📅 *Tanggal Pelaksanaan:* ${tomorrowFormatted}\n\n` +
-      `${listText}\n\n` +
-      `Silakan beri tahu saya jika Anda ingin memeriksa jadwal kegiatan lainnya ya.`;
-
-    return { text };
+    return formatAgendaProtocolMessage({
+      dateFormatted: tomorrowFormatted,
+      items: jadwalsBesok,
+    });
   }
 
   /**
@@ -111,44 +66,16 @@ export class JadwalHandler {
     const result = await jadwalService.getJadwalByDate(targetDateStr);
     const { items, formattedDate } = result;
 
-    if (items.length === 0) {
-      sessionService.setState(session.whatsappNumber, BotState.JADWAL_MENU);
-      const text =
-        `📅 *JADWAL KEGIATAN PROTOKOL*\n` +
-        `📅 *Tanggal Pelaksanaan:* ${formattedDate}\n\n` +
-        `_Tidak ada agenda kegiatan terdaftar untuk tanggal tersebut._\n\n` +
-        `Silakan beri tahu saya jika Anda ingin mencari tanggal lain atau kegiatan tertentu ya. 😊`;
-      return { text };
+    if (items.length > 0) {
+      session.jadwalSearchResults = items;
+      session.jadwalSearchKeyword = formattedDate;
+      sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
     }
 
-    session.jadwalSearchResults = items;
-    session.jadwalSearchKeyword = formattedDate;
-    sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
-
-    const listText = items
-      .map((j, idx) => {
-        const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
-        const statusDisp = j.statusDisposisi || 'Diagendakan';
-        return (
-          `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
-          `   📅 *Tanggal Pelaksanaan* : ${formattedDate}\n` +
-          `   🕒 *Waktu*   : ${waktu}\n` +
-          `   📍 *Lokasi*  : ${j.lokasi}\n` +
-          `   📋 *Status Disposisi* : ${statusDisp}\n` +
-          `   👥 *Hadir*   : ${j.pejabatHadir || '-'}\n` +
-          `   📞 *PIC*     : ${j.pic || '-'}`
-        );
-      })
-      .join('\n\n');
-
-    const text =
-      `📅 *JADWAL KEGIATAN PROTOKOL*\n` +
-      `📅 *Tanggal Pelaksanaan:* ${formattedDate}\n\n` +
-      `Ditemukan *${items.length} agenda kegiatan*:\n\n` +
-      `${listText}\n\n` +
-      `Silakan ketik nomor kegiatan (contoh: _jadwal 1_), atau sebutkan *nama kegiatan* yang ingin Anda lihat rinciannya ya. 😊`;
-
-    return { text };
+    return formatAgendaProtocolMessage({
+      dateFormatted: formattedDate,
+      items,
+    });
   }
 
   /**
@@ -162,45 +89,18 @@ export class JadwalHandler {
     const result = await jadwalService.getJadwalRentangHari(daysCount, labelText);
     const { items, formattedRange, label } = result;
 
-    if (items.length === 0) {
-      sessionService.setState(session.whatsappNumber, BotState.JADWAL_MENU);
-      const text =
-        `📅 *JADWAL KEGIATAN PROTOKOL (${label.toUpperCase()})*\n` +
-        `📅 *Periode:* ${formattedRange}\n\n` +
-        `_Tidak ada agenda kegiatan terdaftar untuk periode ${label.toLowerCase()} tersebut._\n\n` +
-        `Silakan beri tahu saya jika Anda ingin mencari tanggal lain atau kegiatan tertentu ya. 😊`;
-      return { text };
+    if (items.length > 0) {
+      session.jadwalSearchResults = items;
+      session.jadwalSearchKeyword = label;
+      sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
     }
 
-    session.jadwalSearchResults = items;
-    session.jadwalSearchKeyword = label;
-    sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
-
-    const listText = items
-      .map((j, idx) => {
-        const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
-        const tglIndo = formatTanggalIndo(j.tanggalKegiatan);
-        const statusDisp = j.statusDisposisi || 'Diagendakan';
-        return (
-          `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
-          `   📅 *Tanggal Pelaksanaan* : ${tglIndo}\n` +
-          `   🕒 *Waktu*   : ${waktu}\n` +
-          `   📍 *Lokasi*  : ${j.lokasi}\n` +
-          `   📋 *Status Disposisi* : ${statusDisp}\n` +
-          `   👥 *Hadir*   : ${j.pejabatHadir || '-'}\n` +
-          `   📞 *PIC*     : ${j.pic || '-'}`
-        );
-      })
-      .join('\n\n');
-
-    const text =
-      `📅 *JADWAL KEGIATAN PROTOKOL (${label.toUpperCase()})*\n` +
-      `📅 *Periode:* ${formattedRange}\n\n` +
-      `Ditemukan *${items.length} agenda kegiatan*:\n\n` +
-      `${listText}\n\n` +
-      `Silakan ketik nomor kegiatan (contoh: _jadwal 1_), atau sebutkan *nama kegiatan* yang ingin Anda lihat rinciannya ya. 😊`;
-
-    return { text };
+    return formatAgendaProtocolMessage({
+      dateFormatted: formattedRange,
+      items,
+      isRange: true,
+      rangeLabel: label,
+    });
   }
 
   /**

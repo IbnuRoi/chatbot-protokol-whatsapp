@@ -14,6 +14,7 @@ import { nluService, NluResult } from '../services/nluService';
 import { jadwalService } from '../services/jadwalService';
 import { extractDateRangeFromText } from '../utils/dateHelper';
 import { isPureGreeting, isFormConfirmationInput } from '../utils/textHelper';
+import { formatRawScheduleText } from '../utils/scheduleMessageFormatter';
 import { BotResponse } from './types';
 
 export interface IncomingMessagePayload {
@@ -97,6 +98,18 @@ export class MessageRouter {
 
     if (lower === 'help' || lower === 'bantuan') {
       return bantuanHandler.showBantuanMenu(session);
+    }
+
+    // 3b. Deteksi jika pesan merupakan instruksi / input pemformatan data jadwal mentah
+    if (
+      (textInput.includes('Tanggal yang diminta:') || textInput.includes('{{TANGGAL}}')) &&
+      (textInput.includes('Data jadwal mentah:') || textInput.includes('{{DATA_JADWAL}}'))
+    ) {
+      const tglMatch = textInput.match(/Tanggal\s+yang\s+diminta\s*:\s*([^\n]+)/i);
+      const rawDataMatch = textInput.match(/Data\s+jadwal\s+mentah\s*:\s*([\s\S]+)$/i);
+      const tglStr = tglMatch ? tglMatch[1].replace(/[{}]/g, '').trim() : 'Hari ini';
+      const rawData = rawDataMatch ? rawDataMatch[1].replace(/\{\{DATA_JADWAL\}\}/g, '').trim() : '';
+      return { text: formatRawScheduleText(tglStr, rawData) };
     }
 
     // 4. Tangani Pengunggahan Berkas Media (Dokumen PDF atau Gambar/Foto Surat atau Lembar Disposisi)
