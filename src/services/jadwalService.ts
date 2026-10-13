@@ -17,14 +17,10 @@ export interface NormalizedJadwal {
   pic: string;
   statusDisposisi?: string;
   statusDisposisiCode?: number | null;
-  notes?: string | null;
-  picName?: string | null;
-  picPhone?: string | null;
   surat?: {
     nomorAgenda: string;
     nomorSurat: string;
     fileName?: string | null;
-    dari?: string | null;
   } | null;
 }
 
@@ -240,7 +236,6 @@ export class JadwalService {
           time_event_finish: true,
           place_event: true,
           subject: true,
-          from: true,
         },
       });
       for (const l of letters) {
@@ -323,7 +318,6 @@ export class JadwalService {
           nomorAgenda: letter.agenda_number,
           nomorSurat: letter.number_or_date || '-',
           fileName: letter.file || null,
-          dari: letter.from || null,
         }
       : null;
 
@@ -341,9 +335,6 @@ export class JadwalService {
       pic: picInfo,
       statusDisposisi,
       statusDisposisiCode,
-      notes: event.notes ? cleanHtml(event.notes) : null,
-      picName: event.pic_name || null,
-      picPhone: event.pic_phonenumber || null,
       surat: letterInfo,
     };
   }
