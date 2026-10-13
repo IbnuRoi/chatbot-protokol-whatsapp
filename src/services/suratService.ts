@@ -1,5 +1,5 @@
 import { prisma } from '../database/prisma';
-import { Prisma } from '@prisma/client';
+import { Prisma, letters } from '@prisma/client';
 import { pdfService } from './pdfService';
 import { SuratDraftData } from './sessionService';
 import { cleanHtml, formatCombinedPic, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone, sanitizePlaceEvent, formatInitialEventTitle } from '../utils/textHelper';
@@ -18,6 +18,8 @@ export interface SuratRegistrationResult {
   fileName?: string;
   createdBy?: string;
   createdAt?: Date;
+  isDuplicateNomorSurat?: boolean;
+  duplicateLetter?: letters;
 }
 
 export const LETTER_CATEGORY_MAP: Record<string, bigint> = {
@@ -277,6 +279,67 @@ export class SuratService {
   }
 
   /**
+   * Memeriksa apakah ada surat di database yang memiliki kesamaan nomor surat (number_or_date).
+   * Melakukan pencocokan secara case-insensitive dan mengabaikan perbedaan spasi pemisah.
+   */
+  public async findExistingLetterByNomorSurat(nomorSurat: string): Promise<letters | null> {
+    if (!nomorSurat) return null;
+    const clean = nomorSurat.trim();
+    if (!clean || clean === '-' || clean.length < 3) return null;
+    if (/^(?:tidak\s+ada|belum\s+ada|kosong|null|undefined|-)$/i.test(clean)) return null;
+
+    try {
+      // 1. Pencocokan exact case-insensitive via Prisma
+      const exactMatch = await prisma.letters.findFirst({
+        where: {
+          deleted_at: null,
+          number_or_date: {
+            equals: clean,
+            mode: 'insensitive',
+          },
+        },
+        orderBy: { id: 'desc' },
+      });
+
+      if (exactMatch) {
+        return exactMatch;
+      }
+
+      // 2. Pencocokan normalisasi spasi (misal: "B - 123 / 2026" vs "B-123/2026")
+      const cleanNoSpace = clean.replace(/\s+/g, '').toLowerCase();
+      if (cleanNoSpace.length >= 3) {
+        const rawMatches = await prisma.$queryRaw<letters[]>`
+          SELECT * FROM "letters"
+          WHERE "deleted_at" IS NULL
+            AND "number_or_date" IS NOT NULL
+            AND "number_or_date" != '-'
+            AND LENGTH(TRIM("number_or_date")) >= 3
+            AND LOWER(REPLACE("number_or_date", ' ', '')) = ${cleanNoSpace}
+          ORDER BY "id" DESC
+          LIMIT 1
+        `;
+
+        if (rawMatches && rawMatches.length > 0) {
+          return rawMatches[0];
+        }
+      }
+
+      return null;
+    } catch (err: any) {
+      console.warn('[SuratService] Gagal memeriksa duplikasi nomor surat:', err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Cek apakah nomor surat sudah ada di database
+   */
+  public async isNomorSuratExists(nomorSurat: string): Promise<boolean> {
+    const existing = await this.findExistingLetterByNomorSurat(nomorSurat);
+    return !!existing;
+  }
+
+  /**
    * Menyimpan Surat Masuk secara transaksional di tabel letters (PostgreSQL DB)
    */
   public async saveSuratDraft(
@@ -289,6 +352,26 @@ export class SuratService {
         success: false,
         message: 'Data draft surat belum lengkap.',
       };
+    }
+
+    // Validasi Anti-Duplikasi: Batalkan proses jika nomor surat sudah ada di database
+    const nomorSuratToCheck = (draft.extractedData.nomorSurat || '').trim();
+    if (nomorSuratToCheck && nomorSuratToCheck !== '-' && nomorSuratToCheck.length >= 3) {
+      const existingLetter = await this.findExistingLetterByNomorSurat(nomorSuratToCheck);
+      if (existingLetter) {
+        console.warn(`[SuratService] Pendaftaran surat dibatalkan: Nomor surat "${nomorSuratToCheck}" sudah ada pada nomor agenda "${existingLetter.agenda_number}".`);
+        if (draft.tempPdfPath) {
+          try {
+            pdfService.deleteTempPdf(draft.tempPdfPath);
+          } catch {}
+        }
+        return {
+          success: false,
+          isDuplicateNomorSurat: true,
+          duplicateLetter: existingLetter,
+          message: `Nomor surat "${nomorSuratToCheck}" sudah terdaftar di database pada nomor agenda ${existingLetter.agenda_number}.`,
+        };
+      }
     }
 
     try {

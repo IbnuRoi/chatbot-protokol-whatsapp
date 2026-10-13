@@ -6,8 +6,8 @@ import { aiService, formatPerihalByTemplate, generateSubjectSummary, formatAsalS
 import { NluResult } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
-import { formatNomorAgendaLink, getLetterFileUrl, generateLetterFileName, splitPicNameAndPhone, formatCombinedPic, sanitizePlaceEvent } from '../../utils/textHelper';
-import { formatWaktuInputIndo, parseIndonesianDateEventRange, parseIndonesianTimeToDates, cleanDateStringFromTime } from '../../utils/dateHelper';
+import { cleanHtml, formatNomorAgendaLink, getLetterFileUrl, generateLetterFileName, splitPicNameAndPhone, formatCombinedPic, sanitizePlaceEvent } from '../../utils/textHelper';
+import { formatTanggalIndo, formatWaktuInputIndo, parseIndonesianDateEventRange, parseIndonesianTimeToDates, cleanDateStringFromTime } from '../../utils/dateHelper';
 
 export const KATEGORI_LABEL_MAP: Record<string, string> = {
   UND: 'UND',
@@ -20,6 +20,33 @@ export const KATEGORI_LABEL_MAP: Record<string, string> = {
 };
 
 export class SuratMasukHandler {
+  /**
+   * Menghasilkan teks respon pembatalan registrasi karena nomor surat sudah ada di database
+   */
+  public formatDuplicateNomorSuratResponse(nomorSurat: string, existing: any): BotResponse {
+    const rawPerihal = cleanHtml(existing.note || existing.subject || '-');
+    const cleanPerihal = rawPerihal.replace(/\s+/g, ' ').trim();
+    const tglSuratStr = existing.date_letter ? formatTanggalIndo(new Date(existing.date_letter)) : '-';
+    const waktuInputStr = existing.created_at ? formatWaktuInputIndo(new Date(existing.created_at)) : '-';
+    const penginput = existing.created_by || 'Petugas Protokol';
+
+    const text =
+      `🚫 *REGISTRASI SURAT DIBATALKAN!*\n\n` +
+      `Proses input surat tidak dapat dilanjutkan karena *Nomor Surat* yang Anda masukkan telah terdaftar sebelumnya di database sistem Protokol.\n\n` +
+      `📄 *Rincian Surat yang Sudah Ada di Sistem:*\n` +
+      `• 🔢 *Nomor Surat*  : *${existing.number_or_date || nomorSurat}*\n` +
+      `• 📌 *Nomor Agenda* : *${existing.agenda_number || '-'}*\n` +
+      `• 🏢 *Asal Surat*   : ${existing.from || '-'}\n` +
+      `• 📋 *Subject*      : ${existing.subject || '-'}\n` +
+      `• 📝 *Perihal*      : ${cleanPerihal || '-'}\n` +
+      `• 🗓️ *Tanggal Surat*: ${tglSuratStr}\n` +
+      `• 👤 *Diinput Oleh* : ${penginput}\n` +
+      `• ⏰ *Waktu Input*  : ${waktuInputStr}\n\n` +
+      `⚠️ *Alasan:* Sistem Protokol menerapkan validasi anti-duplikasi untuk mencegah pencatatan nomor surat yang sama ke dalam buku agenda.\n\n` +
+      `_Draft registrasi dan berkas sementara telah dibatalkan secara otomatis._ Silakan periksa kembali berkas fisik surat Anda atau hubungi penginput sebelumnya jika diperlukan.`;
+
+    return { text };
+  }
   /**
    * Memulai alur Surat Masuk: Tampilkan instruksi kirim dokumen PDF
    */
@@ -248,6 +275,18 @@ export class SuratMasukHandler {
     // AI Ekstraksi Data Dokumen & Pemahaman Isi Surat (otomatis tangani PDF digital maupun PDF hasil scan fisik/kamera)
     const extractedData = await aiService.extractSuratData(rawPdfText, originalFileName, tempFilePath);
 
+    // Validasi Anti-Duplikasi: Batalkan proses jika nomor surat sudah ada di database
+    const extractedNomorSurat = (extractedData.nomorSurat || '').trim();
+    if (extractedNomorSurat && extractedNomorSurat !== '-' && extractedNomorSurat.length >= 3) {
+      const duplicate = await suratService.findExistingLetterByNomorSurat(extractedNomorSurat);
+      if (duplicate) {
+        console.warn(`[SuratMasukHandler] Menolak upload PDF: Nomor surat "${extractedNomorSurat}" sudah terdaftar di database (Agenda: ${duplicate.agenda_number}).`);
+        pdfService.deleteTempPdf(tempFilePath);
+        sessionService.resetSession(session.whatsappNumber);
+        return this.formatDuplicateNomorSuratResponse(extractedNomorSurat, duplicate);
+      }
+    }
+
     // Kategori surat hasil pemahaman AI (UND, PH, UNR, WR, AU, TAP, LP)
     const detectedJenis = (extractedData.kategoriSurat || 'UND').toUpperCase();
     const defaultTipe = 'Biasa';
@@ -299,6 +338,18 @@ export class SuratMasukHandler {
 
     // AI Multimodal Vision Ekstraksi Data Dokumen & Pemahaman Isi Surat dari Gambar
     const extractedData = await aiService.extractSuratFromImage(tempFilePath, originalFileName);
+
+    // Validasi Anti-Duplikasi: Batalkan proses jika nomor surat sudah ada di database
+    const extractedNomorSurat = (extractedData.nomorSurat || '').trim();
+    if (extractedNomorSurat && extractedNomorSurat !== '-' && extractedNomorSurat.length >= 3) {
+      const duplicate = await suratService.findExistingLetterByNomorSurat(extractedNomorSurat);
+      if (duplicate) {
+        console.warn(`[SuratMasukHandler] Menolak upload Gambar: Nomor surat "${extractedNomorSurat}" sudah terdaftar di database (Agenda: ${duplicate.agenda_number}).`);
+        pdfService.deleteTempPdf(tempFilePath);
+        sessionService.resetSession(session.whatsappNumber);
+        return this.formatDuplicateNomorSuratResponse(extractedNomorSurat, duplicate);
+      }
+    }
 
     // Kategori surat hasil pemahaman AI (UND, PH, UNR, WR, AU, TAP, LP)
     const detectedJenis = (extractedData.kategoriSurat || 'UND').toUpperCase();
@@ -477,6 +528,13 @@ export class SuratMasukHandler {
             `Bila ada hal lain yang ingin Anda kelola atau cari, silakan beri tahu saya ya. 😊`,
         };
       } else {
+        if (result.isDuplicateNomorSurat && result.duplicateLetter) {
+          sessionService.resetSession(session.whatsappNumber);
+          return this.formatDuplicateNomorSuratResponse(
+            session.draftSurat?.extractedData?.nomorSurat || '-',
+            result.duplicateLetter
+          );
+        }
         return {
           text: `❌ Gagal menyimpan surat: ${result.message}\n\nKetik *Ya* untuk mencoba menyimpan kembali, atau *Batal*.`,
         };
@@ -633,7 +691,21 @@ export class SuratMasukHandler {
     }
 
     if (parsed.nomorSurat) {
-      session.draftSurat.extractedData.nomorSurat = parsed.nomorSurat.trim().slice(0, 100);
+      const candidateNomor = parsed.nomorSurat.trim().slice(0, 100);
+      if (candidateNomor && candidateNomor !== '-' && candidateNomor.length >= 3) {
+        const duplicate = await suratService.findExistingLetterByNomorSurat(candidateNomor);
+        if (duplicate) {
+          console.warn(`[SuratMasukHandler] Menolak koreksi template: Nomor surat "${candidateNomor}" sudah terdaftar di database.`);
+          if (session.draftSurat?.tempPdfPath) {
+            try {
+              pdfService.deleteTempPdf(session.draftSurat.tempPdfPath);
+            } catch {}
+          }
+          sessionService.resetSession(session.whatsappNumber);
+          return this.formatDuplicateNomorSuratResponse(candidateNomor, duplicate);
+        }
+      }
+      session.draftSurat.extractedData.nomorSurat = candidateNomor;
       updatedKeys.push('Nomor Surat');
     }
     if (parsed.tanggalSurat) {
@@ -1321,6 +1393,22 @@ export class SuratMasukHandler {
         session.draftSurat.extractedData.picName = splitted.name.slice(0, 100);
         session.draftSurat.extractedData.picPhoneNumber = splitted.phone.slice(0, 50);
         session.draftSurat.extractedData.picPengirim = formatCombinedPic(splitted.name, splitted.phone);
+      } else if (field === 'nomorSurat') {
+        const candidateNomor = val.trim().slice(0, 100);
+        if (candidateNomor && candidateNomor !== '-' && candidateNomor.length >= 3) {
+          const duplicate = await suratService.findExistingLetterByNomorSurat(candidateNomor);
+          if (duplicate) {
+            console.warn(`[SuratMasukHandler] Menolak koreksi nomor surat: Nomor surat "${candidateNomor}" sudah terdaftar di database.`);
+            if (session.draftSurat?.tempPdfPath) {
+              try {
+                pdfService.deleteTempPdf(session.draftSurat.tempPdfPath);
+              } catch {}
+            }
+            sessionService.resetSession(session.whatsappNumber);
+            return this.formatDuplicateNomorSuratResponse(candidateNomor, duplicate);
+          }
+        }
+        session.draftSurat.extractedData.nomorSurat = candidateNomor;
       } else {
         (session.draftSurat.extractedData as any)[field] = val;
       }
@@ -1535,6 +1623,13 @@ export class SuratMasukHandler {
             `Berkas PDF telah disimpan dan otomatis diagendakan pada jadwal kegiatan protokol. Silakan beri tahu saya jika ada hal lain yang bisa dibantu.`,
         };
       } else {
+        if (result.isDuplicateNomorSurat && result.duplicateLetter) {
+          sessionService.resetSession(session.whatsappNumber);
+          return this.formatDuplicateNomorSuratResponse(
+            session.draftSurat?.extractedData?.nomorSurat || '-',
+            result.duplicateLetter
+          );
+        }
         return {
           text: `❌ Gagal menyimpan surat: ${result.message}\n\nKetik _"simpan"_ untuk coba lagi atau _"batal"_.`,
         };
