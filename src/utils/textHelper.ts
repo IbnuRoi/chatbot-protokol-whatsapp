@@ -577,6 +577,37 @@ export function sanitizePlaceEvent(
   return cleanResult;
 }
 
+/**
+ * Memformat status disposisi/kegiatan protokol dengan badge ikon visual yang rapi dan mudah dipahami
+ */
+export function formatStatusBadge(status?: string | null, statusCode?: number | null): string {
+  const code = statusCode !== null && statusCode !== undefined ? Number(statusCode) : null;
+  const s = (status || '').toLowerCase();
+
+  if (code === 5 || s.includes('selesai') || s.includes('terlaksana')) {
+    return '🟢 Selesai / Terlaksana';
+  }
+  if (code === 2 || s.includes('reschedule') || s.includes('dijadwalkan ulang')) {
+    return '🔄 Dijadwalkan Ulang';
+  }
+  if (code === 3 || s.includes('diwakilkan')) {
+    return '👤 Diwakilkan';
+  }
+  if (code === 4 || s.includes('batal') || s.includes('cancel')) {
+    return '❌ Dibatalkan';
+  }
+  if (code === 6 || s.includes('tolak')) {
+    return '❌ Ditolak';
+  }
+  if (s.includes('tentatif')) {
+    return '🟡 Diagendakan (Tentatif)';
+  }
+  if (code === 1 || s.includes('diagendakan') || s.includes('terjadwal') || s.includes('onschedule')) {
+    return '🟡 Diagendakan';
+  }
+  return status || '🟡 Diagendakan';
+}
+
 
 
 

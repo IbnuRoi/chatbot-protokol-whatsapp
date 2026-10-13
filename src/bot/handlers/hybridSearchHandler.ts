@@ -5,7 +5,8 @@ import { nluService, NluResult } from '../../services/nluService';
 import { cariSuratHandler } from './cariSuratHandler';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
-import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink, getLetterFileUrl, isPureGreeting } from '../../utils/textHelper';
+import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink, getLetterFileUrl, isPureGreeting, formatStatusBadge } from '../../utils/textHelper';
+import { formatWaktuDisplay } from '../../utils/dateHelper';
 import { NormalizedSurat } from '../../services/suratService';
 import { NormalizedJadwal } from '../../services/jadwalService';
 
@@ -118,17 +119,23 @@ export class HybridSearchHandler {
 
       const listText = schedules
         .map((j, idx) => {
-          const waktu = j.waktuSelesai ? `${j.waktuMulai} - ${j.waktuSelesai}` : j.waktuMulai;
+          const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
           const formattedDate = formatTanggalIndo(j.tanggalKegiatan);
-          return (
-            `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
-            `   📅 *Tanggal Pelaksanaan* : ${formattedDate}\n` +
-            `   🕒 *Waktu*   : ${waktu} WIB\n` +
-            `   📍 *Lokasi*  : ${j.lokasi}\n` +
-            `   📋 *Status Disposisi* : ${j.statusDisposisi || 'Diagendakan'}\n` +
-            `   👥 *Hadir*   : ${j.pejabatHadir || '-'}\n` +
-            `   📞 *PIC*     : ${j.pic || '-'}`
-          );
+          const statusBadge = formatStatusBadge(j.statusDisposisi, j.statusDisposisiCode);
+          const lines = [
+            `*${idx + 1}.* 📌 *${j.namaKegiatan}*`,
+            `   📅 *Tanggal* : ${formattedDate}`,
+            `   🕒 *Waktu*   : ${waktu}`,
+            `   📍 *Lokasi*  : ${j.lokasi && j.lokasi !== '-' ? j.lokasi : 'Belum ditentukan'}`,
+            `   📋 *Status*  : ${statusBadge}`,
+          ];
+          if (j.pejabatHadir && j.pejabatHadir.trim() !== '-' && j.pejabatHadir.trim() !== '') {
+            lines.push(`   👥 *Hadir*   : ${j.pejabatHadir.trim()}`);
+          }
+          if (j.pic && j.pic.trim() !== '-' && j.pic.trim() !== '') {
+            lines.push(`   📞 *PIC*     : ${j.pic.trim()}`);
+          }
+          return lines.join('\n');
         })
         .join('\n\n');
 
@@ -138,7 +145,9 @@ export class HybridSearchHandler {
           `🔍 *HASIL PENCARIAN JADWAL KEGIATAN*\n` +
           `Ditemukan *${schedules.length} agenda kegiatan* untuk pencarian *"${clean}"*:\n\n` +
           `${listText}\n\n` +
-          `Silakan beri tahu saya jika Anda memerlukan informasi lebih lanjut mengenai kegiatan di atas atau ingin mencari agenda lainnya ya.`,
+          `─────────────────────────\n` +
+          `💡 *Petunjuk:*\n` +
+          `Silakan ketik nomor kegiatan (contoh: _jadwal 1_), atau sebutkan *nama kegiatan* untuk melihat rinciannya ya. 😊`,
       };
     }
 
@@ -168,14 +177,14 @@ export class HybridSearchHandler {
     // 1. Format bagian Jadwal Kegiatan (dengan tanggal pelaksanaan)
     const jadwalListText = displayedSchedules
       .map((j, idx) => {
-        const waktu = j.waktuSelesai ? `${j.waktuMulai} - ${j.waktuSelesai}` : j.waktuMulai;
+        const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
         const formattedDate = formatTanggalIndo(j.tanggalKegiatan);
+        const statusBadge = formatStatusBadge(j.statusDisposisi, j.statusDisposisiCode);
         return (
           `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
-          `   📅 *Tanggal Pelaksanaan* : ${formattedDate}\n` +
-          `   🕒 *Waktu*   : ${waktu} WIB\n` +
-          `   📍 *Lokasi*  : ${j.lokasi}\n` +
-          `   📋 *Status Disposisi* : ${j.statusDisposisi || 'Diagendakan'}`
+          `   📅 *Tanggal* : ${formattedDate} · 🕒 ${waktu}\n` +
+          `   📍 *Lokasi*  : ${j.lokasi && j.lokasi !== '-' ? j.lokasi : 'Belum ditentukan'}\n` +
+          `   📋 *Status*  : ${statusBadge}`
         );
       })
       .join('\n\n');
@@ -184,15 +193,12 @@ export class HybridSearchHandler {
     const suratListText = displayedLetters
       .map((s, idx) => {
         const statusIcon = s.disposisi?.status === 'SUDAH_DISPOSISI' ? '🟢 Sudah Disposisi' : '🟡 Belum Disposisi';
-        const fileUrl = getLetterFileUrl(s.fileName);
-        const linkLine = fileUrl ? `\n   • Link File: ${fileUrl}` : '';
+        const instansiLine = s.asalInstansi && s.asalInstansi !== '-' && s.asalInstansi !== s.asalSurat ? ` (${s.asalInstansi})` : '';
         return (
-          `*${idx + 1}.* 📑 *${s.nomorAgenda || '-'}*\n` +
-          `   • Tanggal : ${s.tanggalSurat}\n` +
-          `   • Pengirim: ${s.asalSurat}\n` +
-          `   • Perihal : ${s.perihal}\n` +
-          `   • Status  : ${statusIcon}` +
-          linkLine
+          `*${idx + 1}.* 📑 *${s.perihal || 'Surat Masuk'}*\n` +
+          `   📄 *No. Agenda* : ${s.nomorAgenda || '-'}\n` +
+          `   🏢 *Pengirim*   : ${s.asalSurat || '-'}${instansiLine} · 📅 ${s.tanggalSurat}\n` +
+          `   📋 *Status*     : ${statusIcon}`
         );
       })
       .join('\n\n');
@@ -206,8 +212,11 @@ export class HybridSearchHandler {
       `Ditemukan *${schedules.length} agenda kegiatan* dan *${letters.length} surat masuk* dengan topik yang serupa:\n\n` +
       `📅 *AGENDA KEGIATAN PROTOKOL*${scheduleNote}:\n` +
       `${jadwalListText}\n\n` +
+      `─────────────────────────\n\n` +
       `📑 *ARSIP SURAT MASUK*${letterNote}:\n` +
       `${suratListText}\n\n` +
+      `─────────────────────────\n` +
+      `💡 *Petunjuk:*\n` +
       `Silakan ketik nomor (contoh: *jadwal 1* atau *surat 1*), atau cukup sebutkan *nama agenda* / *perihal surat* untuk melihat rincian lengkapnya ya. 😊`;
 
     return { text };

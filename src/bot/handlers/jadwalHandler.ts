@@ -4,10 +4,40 @@ import { nluService, NluResult } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { cariSuratHandler } from './cariSuratHandler';
 import { BotResponse } from '../types';
-import { scoreTextMatch, cleanQueryForSelection, formatNomorSuratLink, getLetterFileUrl, isPureGreeting } from '../../utils/textHelper';
+import { scoreTextMatch, cleanQueryForSelection, formatNomorSuratLink, getLetterFileUrl, isPureGreeting, formatStatusBadge } from '../../utils/textHelper';
 import { extractDateFromText, extractDateRangeFromText, formatWaktuDisplay } from '../../utils/dateHelper';
 
 export class JadwalHandler {
+  /**
+   * Merender format kartu satu agenda kegiatan dalam daftar agar rapi, padat, dan mudah dipindai
+   */
+  private formatJadwalItem(j: NormalizedJadwal, index: number, showTanggal: boolean = true): string {
+    const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
+    const statusBadge = formatStatusBadge(j.statusDisposisi, j.statusDisposisiCode);
+    const lines = [
+      `*${index}.* 📌 *${j.namaKegiatan}*`,
+    ];
+
+    if (showTanggal) {
+      const formattedDate = formatTanggalIndo(j.tanggalKegiatan);
+      lines.push(`   📅 *Tanggal* : ${formattedDate}`);
+    }
+
+    lines.push(`   🕒 *Waktu*   : ${waktu}`);
+    lines.push(`   📍 *Lokasi*  : ${j.lokasi && j.lokasi !== '-' ? j.lokasi : 'Belum ditentukan'}`);
+    lines.push(`   📋 *Status*  : ${statusBadge}`);
+
+    if (j.pejabatHadir && j.pejabatHadir.trim() !== '-' && j.pejabatHadir.trim() !== '') {
+      lines.push(`   👥 *Hadir*   : ${j.pejabatHadir.trim()}`);
+    }
+
+    if (j.pic && j.pic.trim() !== '-' && j.pic.trim() !== '') {
+      lines.push(`   📞 *PIC*     : ${j.pic.trim()}`);
+    }
+
+    return lines.join('\n');
+  }
+
   /**
    * Menampilkan menu Jadwal Kegiatan
    */
@@ -29,24 +59,15 @@ export class JadwalHandler {
       sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
 
       listText = jadwalsHariIni
-        .map((j, idx) => {
-          const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
-          const statusDisp = j.statusDisposisi || 'Diagendakan';
-          return (
-            `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
-            `   📅 *Tanggal Pelaksanaan* : ${todayFormatted}\n` +
-            `   🕒 *Waktu*   : ${waktu}\n` +
-            `   📍 *Lokasi*  : ${j.lokasi}\n` +
-            `   📋 *Status Disposisi* : ${statusDisp}`
-          );
-        })
+        .map((j, idx) => this.formatJadwalItem(j, idx + 1, false))
         .join('\n\n');
     }
 
     const text =
       `📅 *JADWAL KEGIATAN PROTOKOL HARI INI*\n` +
-      `📅 *Tanggal Pelaksanaan:* ${todayFormatted}\n\n` +
+      `📅 *Tanggal:* ${todayFormatted}\n\n` +
       `${listText}\n\n` +
+      `─────────────────────────\n` +
       `Silakan beri tahu saya jika Anda ingin melihat kegiatan terdekat berikutnya atau agenda beberapa hari ke depan ya.`;
 
     return { text };
@@ -76,26 +97,15 @@ export class JadwalHandler {
       sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
 
       listText = jadwalsBesok
-        .map((j, idx) => {
-          const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
-          const statusDisp = j.statusDisposisi || 'Diagendakan';
-          return (
-            `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
-            `   📅 *Tanggal Pelaksanaan* : ${tomorrowFormatted}\n` +
-            `   🕒 *Waktu*  : ${waktu}\n` +
-            `   📍 *Lokasi* : ${j.lokasi}\n` +
-            `   📋 *Status Disposisi* : ${statusDisp}\n` +
-            `   👥 *Hadir*  : ${j.pejabatHadir || '-'}\n` +
-            `   📞 *PIC*    : ${j.pic || '-'}`
-          );
-        })
+        .map((j, idx) => this.formatJadwalItem(j, idx + 1, false))
         .join('\n\n');
     }
 
     const text =
       `📅 *JADWAL KEGIATAN PROTOKOL BESOK*\n` +
-      `📅 *Tanggal Pelaksanaan:* ${tomorrowFormatted}\n\n` +
+      `📅 *Tanggal:* ${tomorrowFormatted}\n\n` +
       `${listText}\n\n` +
+      `─────────────────────────\n` +
       `Silakan beri tahu saya jika Anda ingin memeriksa jadwal kegiatan lainnya ya.`;
 
     return { text };
@@ -115,7 +125,7 @@ export class JadwalHandler {
       sessionService.setState(session.whatsappNumber, BotState.JADWAL_MENU);
       const text =
         `📅 *JADWAL KEGIATAN PROTOKOL*\n` +
-        `📅 *Tanggal Pelaksanaan:* ${formattedDate}\n\n` +
+        `📅 *Tanggal:* ${formattedDate}\n\n` +
         `_Tidak ada agenda kegiatan terdaftar untuk tanggal tersebut._\n\n` +
         `Silakan beri tahu saya jika Anda ingin mencari tanggal lain atau kegiatan tertentu ya. 😊`;
       return { text };
@@ -126,26 +136,16 @@ export class JadwalHandler {
     sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
 
     const listText = items
-      .map((j, idx) => {
-        const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
-        const statusDisp = j.statusDisposisi || 'Diagendakan';
-        return (
-          `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
-          `   📅 *Tanggal Pelaksanaan* : ${formattedDate}\n` +
-          `   🕒 *Waktu*   : ${waktu}\n` +
-          `   📍 *Lokasi*  : ${j.lokasi}\n` +
-          `   📋 *Status Disposisi* : ${statusDisp}\n` +
-          `   👥 *Hadir*   : ${j.pejabatHadir || '-'}\n` +
-          `   📞 *PIC*     : ${j.pic || '-'}`
-        );
-      })
+      .map((j, idx) => this.formatJadwalItem(j, idx + 1, false))
       .join('\n\n');
 
     const text =
       `📅 *JADWAL KEGIATAN PROTOKOL*\n` +
-      `📅 *Tanggal Pelaksanaan:* ${formattedDate}\n\n` +
+      `📅 *Tanggal:* ${formattedDate}\n\n` +
       `Ditemukan *${items.length} agenda kegiatan*:\n\n` +
       `${listText}\n\n` +
+      `─────────────────────────\n` +
+      `💡 *Petunjuk:*\n` +
       `Silakan ketik nomor kegiatan (contoh: _jadwal 1_), atau sebutkan *nama kegiatan* yang ingin Anda lihat rinciannya ya. 😊`;
 
     return { text };
@@ -177,20 +177,7 @@ export class JadwalHandler {
     sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
 
     const listText = items
-      .map((j, idx) => {
-        const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
-        const tglIndo = formatTanggalIndo(j.tanggalKegiatan);
-        const statusDisp = j.statusDisposisi || 'Diagendakan';
-        return (
-          `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
-          `   📅 *Tanggal Pelaksanaan* : ${tglIndo}\n` +
-          `   🕒 *Waktu*   : ${waktu}\n` +
-          `   📍 *Lokasi*  : ${j.lokasi}\n` +
-          `   📋 *Status Disposisi* : ${statusDisp}\n` +
-          `   👥 *Hadir*   : ${j.pejabatHadir || '-'}\n` +
-          `   📞 *PIC*     : ${j.pic || '-'}`
-        );
-      })
+      .map((j, idx) => this.formatJadwalItem(j, idx + 1, true))
       .join('\n\n');
 
     const text =
@@ -198,6 +185,8 @@ export class JadwalHandler {
       `📅 *Periode:* ${formattedRange}\n\n` +
       `Ditemukan *${items.length} agenda kegiatan*:\n\n` +
       `${listText}\n\n` +
+      `─────────────────────────\n` +
+      `💡 *Petunjuk:*\n` +
       `Silakan ketik nomor kegiatan (contoh: _jadwal 1_), atau sebutkan *nama kegiatan* yang ingin Anda lihat rinciannya ya. 😊`;
 
     return { text };
@@ -330,26 +319,15 @@ export class JadwalHandler {
    */
   private renderSearchResultList(session: UserSession, results: NormalizedJadwal[], keyword: string): BotResponse {
     const listText = results
-      .map((j, idx) => {
-        const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
-        const formattedDate = formatTanggalIndo(j.tanggalKegiatan);
-        const statusDisp = j.statusDisposisi || 'Diagendakan';
-        return (
-          `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
-          `   📅 Tanggal Pelaksanaan : ${formattedDate}\n` +
-          `   🕒 Waktu   : ${waktu}\n` +
-          `   📍 Lokasi  : ${j.lokasi}\n` +
-          `   📋 Status Disposisi : ${statusDisp}\n` +
-          `   👥 Hadir   : ${j.pejabatHadir || '-'}\n` +
-          `   📞 PIC     : ${j.pic || '-'}`
-        );
-      })
+      .map((j, idx) => this.formatJadwalItem(j, idx + 1, true))
       .join('\n\n');
 
     const text =
       `🔍 *HASIL PENCARIAN JADWAL KEGIATAN*\n` +
       `Ditemukan *${results.length} agenda kegiatan* untuk kata kunci *"${keyword}"*:\n\n` +
       `${listText}\n\n` +
+      `─────────────────────────\n` +
+      `💡 *Petunjuk:*\n` +
       `Silakan ketik nomor kegiatan (contoh: _jadwal 1_), atau sebutkan *nama kegiatan* yang ingin Anda lihat rinciannya ya. 😊`;
 
     return { text };
@@ -365,27 +343,30 @@ export class JadwalHandler {
     let suratNote = '';
     if (item.surat?.nomorAgenda) {
       const fileUrl = getLetterFileUrl(item.surat.fileName);
-      const noSurat = item.surat.nomorSurat ? ` (No: ${item.surat.nomorSurat})` : '';
-      suratNote = `\n• *Surat Terkait*        : ${item.surat.nomorAgenda}${noSurat}`;
+      const noSurat = item.surat.nomorSurat && item.surat.nomorSurat !== '-' ? ` (No: ${item.surat.nomorSurat})` : '';
+      suratNote = `\n• *Surat Terkait*    : ${item.surat.nomorAgenda}${noSurat}`;
       if (fileUrl) {
-        suratNote += `\n• *Link Berkas Surat*   : ${fileUrl}`;
+        suratNote += `\n• *Link Berkas*      : ${fileUrl}`;
       }
     }
 
-    const statusDisp = item.statusDisposisi || 'Diagendakan';
+    const statusBadge = formatStatusBadge(item.statusDisposisi, item.statusDisposisiCode);
+    const hadirLine = item.pejabatHadir && item.pejabatHadir.trim() !== '-' ? `\n• *Pejabat Hadir*   : ${item.pejabatHadir.trim()}` : '';
+    const picLine = item.pic && item.pic.trim() !== '-' ? `\n• *PIC & Kontak*    : ${item.pic.trim()}` : '';
 
     return {
       text:
-        `📌 *RINCIAN AGENDA KEGIATAN*\n\n` +
-        `• *Kegiatan*            : ${item.namaKegiatan}\n` +
-        `• *Tanggal Pelaksanaan* : ${formattedDate}\n` +
-        `• *Waktu*               : ${waktu}\n` +
-        `• *Lokasi*              : ${item.lokasi}\n` +
-        `• *Status Disposisi*    : ${statusDisp}\n` +
-        `• *Pejabat Hadir*       : ${item.pejabatHadir || '-'}\n` +
-        `• *PIC*                 : ${item.pic || '-'}` +
+        `📌 *RINCIAN JADWAL KEGIATAN*\n\n` +
+        `• *Kegiatan*        : *${item.namaKegiatan}*\n` +
+        `• *Tanggal*         : ${formattedDate}\n` +
+        `• *Waktu*           : ${waktu}\n` +
+        `• *Lokasi*          : ${item.lokasi && item.lokasi !== '-' ? item.lokasi : 'Belum ditentukan'}\n` +
+        `• *Status Disposisi*: ${statusBadge}` +
+        hadirLine +
+        picLine +
         suratNote +
-        `\n\nBila Anda ingin mencari agenda lainnya atau kembali ke menu utama, silakan beri tahu saya ya. 😊`,
+        `\n\n─────────────────────────\n` +
+        `Bila Anda ingin mencari agenda lainnya atau kembali ke menu utama, silakan beri tahu saya ya. 😊`,
     };
   }
 

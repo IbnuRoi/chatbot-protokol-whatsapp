@@ -124,24 +124,27 @@ export class CariSuratHandler {
       .map((s, idx) => {
         const itemNumber = idx + 1;
         const statusIcon = s.disposisi?.status === 'SUDAH_DISPOSISI' ? '🟢 Sudah Disposisi' : '🟡 Belum Disposisi';
-        const fileUrl = getLetterFileUrl(s.fileName);
-        const linkLine = fileUrl ? `\n   • Link File: ${fileUrl}` : '';
+        const nomorSuratLine = s.nomorSurat && s.nomorSurat !== '-' ? `\n   ✉️ *No. Surat*  : ${s.nomorSurat}` : '';
+        const instansiLine = s.asalInstansi && s.asalInstansi !== '-' && s.asalInstansi !== s.asalSurat ? ` (${s.asalInstansi})` : '';
+
         return (
-          `*${itemNumber}.* 📑 *${s.nomorAgenda || '-'}*\n` +
-          `   • Tanggal : ${s.tanggalSurat}\n` +
-          `   • Pengirim: ${s.asalSurat}\n` +
-          `   • Perihal : ${s.perihal}\n` +
-          `   • Status  : ${statusIcon}` +
-          linkLine
+          `*${itemNumber}.* 📑 *${s.perihal || 'Surat Masuk'}*\n` +
+          `   📄 *No. Agenda* : ${s.nomorAgenda || '-'}` +
+          nomorSuratLine + '\n' +
+          `   🏢 *Pengirim*   : ${s.asalSurat || '-'}${instansiLine}\n` +
+          `   📅 *Tanggal*    : ${s.tanggalSurat}\n` +
+          `   📋 *Status*     : ${statusIcon}`
         );
       })
       .join('\n\n');
 
     const text =
-      `🔎 *HASIL PENCARIAN SURAT*\n` +
-      `Ditemukan *${results.length} surat* yang berkaitan dengan *"${keyword}"*:\n\n` +
+      `🔎 *HASIL PENCARIAN SURAT MASUK*\n` +
+      `Ditemukan *${results.length} surat* untuk kata kunci *"${keyword}"*:\n\n` +
       `${listText}\n\n` +
-      `Silakan sebutkan nomor surat (contoh: _surat 1_), atau cukup sebutkan *perihal surat* yang ingin Anda lihat rinciannya ya. 😊`;
+      `─────────────────────────\n` +
+      `💡 *Petunjuk:*\n` +
+      `Silakan ketik nomor surat (contoh: *surat 1*), atau sebutkan *perihal surat* untuk melihat rincian & berkas dokumen ya. 😊`;
 
     return { text };
   }
@@ -261,23 +264,28 @@ export class CariSuratHandler {
     const statusDisp = disposisi?.status === 'SUDAH_DISPOSISI' ? '🟢 SUDAH DISPOSISI' : '🟡 BELUM DISPOSISI';
     const waktuInputStr = formatWaktuInputIndo(surat.createdAt);
     const fileUrl = getLetterFileUrl(surat.fileName);
-    const fileLine = fileUrl ? `• *Link File Surat*: ${fileUrl}\n` : '';
+
+    const noSuratLine = surat.nomorSurat && surat.nomorSurat !== '-' ? `• *Nomor Surat*      : ${surat.nomorSurat}\n` : '';
+    const instansiLine = surat.asalInstansi && surat.asalInstansi !== '-' && surat.asalInstansi !== surat.asalSurat ? ` (${surat.asalInstansi})` : '';
+    const eventLine = surat.event && surat.event !== '-' ? `• *Acara / Kegiatan* : ${surat.event}\n` : '';
+    const picLine = surat.picPengirim && surat.picPengirim !== '-' ? `• *PIC Pengirim*     : ${surat.picPengirim}\n` : '';
+    const fileLine = fileUrl ? `• *Link Berkas*      : ${fileUrl}\n` : '';
 
     const text =
-      `📋 *DETAIL SURAT MASUK (PENCARIAN)*\n\n` +
-      `• *Nomor Agenda*   : ${surat.nomorAgenda}\n` +
-      `• *Jenis / Tipe*    : ${surat.jenisSurat} / ${surat.tipeSurat}\n` +
-      `• *Tanggal Surat*   : ${surat.tanggalSurat}\n` +
-      `• *Asal Instansi*   : ${surat.asalInstansi}\n` +
-      `• *Pengirim*        : ${surat.asalSurat}\n` +
-      `• *Event / Acara*   : ${surat.event || '-'}\n` +
-      `• *PIC & Kontak*    : ${surat.picPengirim || '-'}\n` +
-      `• *Perihal*         : ${surat.perihal}\n` +
-      `• *Status Disposisi*: ${statusDisp}\n` +
+      `📋 *RINCIAN SURAT MASUK*\n\n` +
+      `• *Perihal*          : *${surat.perihal}*\n` +
+      `• *Nomor Agenda*     : ${surat.nomorAgenda}\n` +
+      noSuratLine +
+      `• *Pengirim*         : ${surat.asalSurat}${instansiLine}\n` +
+      `• *Kategori / Jenis* : ${surat.jenisSurat} (${surat.tipeSurat})\n` +
+      `• *Tanggal Surat*    : ${surat.tanggalSurat}\n` +
+      eventLine +
+      picLine +
+      `• *Status Disposisi* : ${statusDisp}\n` +
       fileLine +
-      `• *Diinput Oleh*    : ${surat.userInput?.nama || 'Petugas Protokol'}\n` +
-      `• *Waktu Input*     : ${waktuInputStr}\n\n` +
-      `Bila Anda ingin melihat rincian disposisi surat ini atau kembali ke daftar pencarian, silakan beri tahu saya ya.`;
+      `• *Waktu Registrasi* : ${waktuInputStr} (Oleh: ${surat.userInput?.nama || 'Petugas Protokol'})\n\n` +
+      `─────────────────────────\n` +
+      `💡 Ketik *1* untuk melihat isi disposisi surat ini, atau sebutkan pencarian lainnya. 😊`;
 
     return { text };
   }
