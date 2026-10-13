@@ -21,6 +21,7 @@
     "user:sync-lids": "tsx src/tools/syncLids.ts",
     "schedule:add": "tsx src/tools/addUpcomingSchedules.ts",
     "letters:add": "tsx src/tools/addDiverseSampleLetters.ts",
+    "db:sync-sequences": "tsx src/tools/syncSequences.ts",
     "test:pdf": "tsx src/tools/generateSamplePdf.ts",
     "build": "tsc"
   },

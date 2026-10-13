@@ -3,6 +3,7 @@ import path from 'path';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../database/prisma';
 import { ENV } from '../config/env';
+import { syncTableSequence, isDuplicateKeyError } from '../database/sequenceSync';
 import { suratService, NormalizedSurat } from './suratService';
 import { DisposisiDraftData } from './sessionService';
 import { pdfService } from './pdfService';
@@ -264,19 +265,40 @@ export class DisposisiService {
           console.warn('[DisposisiService] Gagal mereset relasi lama posisi/tindakan:', delRelErr);
         }
       } else {
-        // INSERT disposisi baru jika belum pernah ada
-        disp = await prisma.dispositions.create({
-          data: {
-            letter_id: BigInt(draft.matchedLetter.id),
-            date: parsedDate,
-            note: cleanNote,
-            file: finalFileName,
-            send_by: draft.extractedData.pemberiDisposisi || 'Menteri Ketenagakerjaan',
-            created_by: userName || 'Petugas Protokol',
-            created_at: new Date(),
-            updated_at: new Date(),
-          },
-        });
+        // INSERT disposisi baru jika belum pernah ada (dengan auto-healing sequence sync)
+        try {
+          disp = await prisma.dispositions.create({
+            data: {
+              letter_id: BigInt(draft.matchedLetter.id),
+              date: parsedDate,
+              note: cleanNote,
+              file: finalFileName,
+              send_by: draft.extractedData.pemberiDisposisi || 'Menteri Ketenagakerjaan',
+              created_by: userName || 'Petugas Protokol',
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          });
+        } catch (dispErr: any) {
+          if (isDuplicateKeyError(dispErr)) {
+            console.warn('[DisposisiService] Terdeteksi bentrok sequence pada tabel dispositions. Menjalankan auto-sync sequence...');
+            await syncTableSequence('dispositions');
+            disp = await prisma.dispositions.create({
+              data: {
+                letter_id: BigInt(draft.matchedLetter.id),
+                date: parsedDate,
+                note: cleanNote,
+                file: finalFileName,
+                send_by: draft.extractedData.pemberiDisposisi || 'Menteri Ketenagakerjaan',
+                created_by: userName || 'Petugas Protokol',
+                created_at: new Date(),
+                updated_at: new Date(),
+              },
+            });
+          } else {
+            throw dispErr;
+          }
+        }
         console.log(`[DisposisiService] Berhasil membuat data disposisi baru ID: ${disp.id} untuk nomor agenda: ${draft.matchedLetter.agendaNumber || draft.extractedData.nomorAgenda}`);
       }
 
@@ -291,16 +313,34 @@ export class DisposisiService {
           const matchedPositions = matchPositionsList(draft.extractedData.diteruskanKepada, allPositions);
 
           for (const pos of matchedPositions) {
-            await prisma.disposition_positions.create({
-              data: {
-                disposition_id: disp.id,
-                position_id: BigInt(pos.id),
-                note: '',
-                created_by: userName || 'Petugas Protokol',
-                created_at: new Date(),
-                updated_at: new Date(),
-              },
-            });
+            try {
+              await prisma.disposition_positions.create({
+                data: {
+                  disposition_id: disp.id,
+                  position_id: BigInt(pos.id),
+                  note: '',
+                  created_by: userName || 'Petugas Protokol',
+                  created_at: new Date(),
+                  updated_at: new Date(),
+                },
+              });
+            } catch (dpErr: any) {
+              if (isDuplicateKeyError(dpErr)) {
+                await syncTableSequence('disposition_positions');
+                await prisma.disposition_positions.create({
+                  data: {
+                    disposition_id: disp.id,
+                    position_id: BigInt(pos.id),
+                    note: '',
+                    created_by: userName || 'Petugas Protokol',
+                    created_at: new Date(),
+                    updated_at: new Date(),
+                  },
+                });
+              } else {
+                throw dpErr;
+              }
+            }
             console.log(`[DisposisiService] Berhasil menautkan jabatan: "${pos.name}" (ID: ${pos.id}) ke disposisi ID: ${disp.id}`);
           }
         } catch (posErr) {
@@ -320,16 +360,34 @@ export class DisposisiService {
           matchedActions = matchActionsList(draft.extractedData.arahanDisposisi, allActions);
 
           for (const act of matchedActions) {
-            await prisma.disposition_actions.create({
-              data: {
-                disposition_id: disp.id,
-                action_id: BigInt(act.id),
-                note: '',
-                created_by: userName || 'Petugas Protokol',
-                created_at: new Date(),
-                updated_at: new Date(),
-              },
-            });
+            try {
+              await prisma.disposition_actions.create({
+                data: {
+                  disposition_id: disp.id,
+                  action_id: BigInt(act.id),
+                  note: '',
+                  created_by: userName || 'Petugas Protokol',
+                  created_at: new Date(),
+                  updated_at: new Date(),
+                },
+              });
+            } catch (daErr: any) {
+              if (isDuplicateKeyError(daErr)) {
+                await syncTableSequence('disposition_actions');
+                await prisma.disposition_actions.create({
+                  data: {
+                    disposition_id: disp.id,
+                    action_id: BigInt(act.id),
+                    note: '',
+                    created_by: userName || 'Petugas Protokol',
+                    created_at: new Date(),
+                    updated_at: new Date(),
+                  },
+                });
+              } else {
+                throw daErr;
+              }
+            }
             console.log(`[DisposisiService] Berhasil menautkan arahan: "${act.name}" (ID: ${act.id}) ke disposisi ID: ${disp.id}`);
           }
         } catch (actErr) {

@@ -95,6 +95,15 @@ export async function initDatabaseConnection(): Promise<DatabaseConnectionInfo> 
 
   const info = await ensureDatabaseReady();
   console.log('✅ [Database] Koneksi database siap digunakan oleh Prisma ORM.\n');
+
+  // Sinkronkan PostgreSQL sequences untuk mencegah bentrok ID antara Chatbot dan Website
+  try {
+    const { syncDatabaseSequences } = await import('./sequenceSync');
+    await syncDatabaseSequences();
+  } catch (seqErr: any) {
+    console.warn('⚠️ [SequenceSync] Peringatan: Sinkronisasi sequence saat boot dilewati:', seqErr?.message || seqErr);
+  }
+
   return info;
 }
 

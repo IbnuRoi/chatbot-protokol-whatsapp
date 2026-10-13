@@ -5,6 +5,7 @@ import { SuratDraftData } from './sessionService';
 import { cleanHtml, formatCombinedPic, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone, sanitizePlaceEvent, formatInitialEventTitle } from '../utils/textHelper';
 import { parseIndonesianDateToDate, formatTanggalIndo, parseIndonesianTimeToDates, parseIndonesianDateEventRange, isValidDate, extractWaktuAcaraFromText } from '../utils/dateHelper';
 import { generateEventTitleFromSurat, generateSubjectSummary } from './aiService';
+import { syncTableSequence, isDuplicateKeyError } from '../database/sequenceSync';
 import { ENV } from '../config/env';
 import path from 'path';
 
@@ -355,13 +356,7 @@ export class SuratService {
         letterTimeFinish = new Date(Date.UTC(1970, 0, 1, finishH, finishM, 0, 0));
       }
 
-      // Get max ID to avoid sequence primary key conflict
-      const lastLetter = await prisma.letters.findFirst({
-        orderBy: { id: 'desc' },
-        select: { id: true },
-      });
-      const nextId = lastLetter ? BigInt(lastLetter.id) + BigInt(1) : BigInt(1);
-
+      // ID ditangani otomatis oleh PostgreSQL Sequence (autoincrement) agar selalu sinkron dengan website
       const finalPerihal = draft.finalPerihal || draft.extractedData.perihal || '-';
       const finalSubject = (
         draft.finalSubject ||
@@ -434,78 +429,79 @@ export class SuratService {
       const safeInstansi = (draft.asalInstansi || 'Lainnya').trim().slice(0, 50);
       const safeCreatorName = creatorName.trim().slice(0, 191);
 
-      // Simpan surat ke tabel letters dengan fallback protektif
+      // Siapkan payload data surat (tanpa id manual agar sequence PostgreSQL bertambah otomatis dan sinkron dengan website)
+      const letterPayload: Prisma.lettersCreateInput = {
+        letter_category_id: categoryId,
+        agenda_number: safeAgendaNumber,
+        number_or_date: safeNomorSurat,
+        date_letter: parsedDate,
+        date_event: isValidDate(parsedDateEvent) ? parsedDateEvent : null,
+        date_event_end: isValidDate(parsedDateEventEnd) ? parsedDateEventEnd : null,
+        time_event: isValidDate(letterTimeEvent) ? letterTimeEvent : null,
+        time_event_finish: isValidDate(letterTimeFinish) ? letterTimeFinish : null,
+        time_zone: safeLettersTimeZone,
+        from: safeAsalSurat,
+        subject: safeSubject,
+        place_event: safePlaceEvent,
+        type_letter: typeId,
+        note: formattedNote,
+        file: safeFileName,
+        pic_name: safePicCombined,
+        pic_phone_number: safeLettersPicPhone,
+        pic_json: picJson,
+        institution_origin: safeInstansi,
+        created_by: safeCreatorName,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      // Simpan surat ke tabel letters dengan fallback protektif & self-healing sequence sync
       let surat: any;
       try {
         surat = await prisma.letters.create({
-          data: {
-            id: nextId,
-            letter_category_id: categoryId,
-            agenda_number: safeAgendaNumber,
-            number_or_date: safeNomorSurat,
-            date_letter: parsedDate,
-            date_event: isValidDate(parsedDateEvent) ? parsedDateEvent : null,
-            date_event_end: isValidDate(parsedDateEventEnd) ? parsedDateEventEnd : null,
-            time_event: isValidDate(letterTimeEvent) ? letterTimeEvent : null,
-            time_event_finish: isValidDate(letterTimeFinish) ? letterTimeFinish : null,
-            time_zone: safeLettersTimeZone,
-            from: safeAsalSurat,
-            subject: safeSubject,
-            place_event: safePlaceEvent,
-            type_letter: typeId,
-            note: formattedNote,
-            file: safeFileName,
-            pic_name: safePicCombined,
-            pic_phone_number: safeLettersPicPhone,
-            pic_json: picJson,
-            institution_origin: safeInstansi,
-            created_by: safeCreatorName,
-            created_at: new Date(),
-            updated_at: new Date(),
-          },
+          data: letterPayload,
         });
       } catch (insertErr: any) {
-        // Fallback protektif: Jika database di server memiliki batasan panjang pada kolom `note` (misal VARCHAR(255))
-        if (
+        if (isDuplicateKeyError(insertErr)) {
+          console.warn('[SuratService] Terdeteksi bentrok sequence pada tabel letters. Menjalankan auto-sync sequence dan me-retry insert...');
+          await syncTableSequence('letters');
+          surat = await prisma.letters.create({
+            data: letterPayload,
+          });
+        } else if (
           insertErr.message?.includes('too long') ||
           insertErr.code === 'P2000' ||
           insertErr.code === '22001'
         ) {
           console.warn('[SuratService] Insert pertama gagal karena nilai terlalu panjang, mencoba fallback note dipotong:', insertErr.message);
           const truncatedNote = formattedNote ? `<p>${finalPerihal.trim().slice(0, 210)}</p>` : null;
-          surat = await prisma.letters.create({
-            data: {
-              id: nextId,
-              letter_category_id: categoryId,
-              agenda_number: safeAgendaNumber,
-              number_or_date: safeNomorSurat,
-              date_letter: parsedDate,
-              date_event: isValidDate(parsedDateEvent) ? parsedDateEvent : null,
-              date_event_end: isValidDate(parsedDateEventEnd) ? parsedDateEventEnd : null,
-              time_event: isValidDate(letterTimeEvent) ? letterTimeEvent : null,
-              time_event_finish: isValidDate(letterTimeFinish) ? letterTimeFinish : null,
-              time_zone: safeLettersTimeZone,
-              from: safeAsalSurat,
-              subject: safeSubject,
-              place_event: safePlaceEvent,
-              type_letter: typeId,
-              note: truncatedNote,
-              file: safeFileName,
-              pic_name: safePicCombined,
-              pic_phone_number: safeLettersPicPhone,
-              pic_json: picJson,
-              institution_origin: safeInstansi,
-              created_by: safeCreatorName,
-              created_at: new Date(),
-              updated_at: new Date(),
-            },
-          });
+          try {
+            surat = await prisma.letters.create({
+              data: {
+                ...letterPayload,
+                note: truncatedNote,
+              },
+            });
+          } catch (retryErr: any) {
+            if (isDuplicateKeyError(retryErr)) {
+              console.warn('[SuratService] Terdeteksi bentrok sequence pada tabel letters saat retry note. Menjalankan auto-sync sequence...');
+              await syncTableSequence('letters');
+              surat = await prisma.letters.create({
+                data: {
+                  ...letterPayload,
+                  note: truncatedNote,
+                },
+              });
+            } else {
+              throw retryErr;
+            }
+          }
         } else {
           throw insertErr;
         }
       }
 
-      // Catat activity log surat
+      // Catat activity log surat dengan penanganan bentrok sequence
       try {
         await prisma.activity_log.create({
           data: {
@@ -527,8 +523,34 @@ export class SuratService {
             updated_at: new Date(),
           },
         });
-      } catch (logErr) {
-        console.warn('Failed to write activity_log:', logErr);
+      } catch (logErr: any) {
+        if (isDuplicateKeyError(logErr)) {
+          await syncTableSequence('activity_log');
+          try {
+            await prisma.activity_log.create({
+              data: {
+                log_name: 'default',
+                description: `Menambah Surat oleh ${creatorName}`,
+                subject_id: Number(surat.id),
+                subject_type: 'App\\Models\\Letters',
+                causer_id: Number(userId),
+                causer_type: 'App\\Models\\User',
+                properties: JSON.stringify({
+                  nomorAgenda: surat.agenda_number,
+                  nomorSurat: surat.number_or_date,
+                  asalSurat: surat.from,
+                  subject: surat.subject,
+                  note: surat.note,
+                  createdBy: creatorName,
+                }),
+                created_at: new Date(),
+                updated_at: new Date(),
+              },
+            });
+          } catch {}
+        } else {
+          console.warn('Failed to write activity_log:', logErr);
+        }
       }
 
       // Otomatis masukkan ke jadwal kegiatan (tabel events) walaupun belum ada lembar disposisi
@@ -596,13 +618,6 @@ export class SuratService {
           safeEventTimeZone = null;
         }
 
-        // Ambil max ID events untuk menghindari sequence primary key conflict
-        const lastEvent = await prisma.events.findFirst({
-          orderBy: { id: 'desc' },
-          select: { id: true },
-        });
-        const nextEventId = lastEvent ? BigInt(lastEvent.id) + BigInt(1) : BigInt(1);
-
         // 4. Judul kegiatan protokol: generate judul aksi aktif pimpinan + template bold belum ada disposisi
         const rawPerihal = draft.finalPerihal || draft.extractedData.perihal || finalPerihal || '';
         const baseEventTitle = generateEventTitleFromSurat(draft.extractedData, rawPerihal);
@@ -624,7 +639,7 @@ export class SuratService {
 
         const eventNotes = `Asal Surat: ${safeAsalSurat} | No. Surat: ${safeNomorSurat} | No. Agenda: ${safeAgendaNumber}`;
 
-        // Siapkan data event baru (pastikan time_zone maksimal 10 karakter sesuai skema DB)
+        // Siapkan data event baru (tanpa id manual agar sequence PostgreSQL bertambah otomatis dan sinkron dengan website)
         const eventDataPayload: Prisma.eventsCreateInput = {
           title: eventTitle,
           letter_id: BigInt(surat.id),
@@ -648,19 +663,21 @@ export class SuratService {
 
         try {
           createdEvent = await prisma.events.create({
-            data: {
-              ...eventDataPayload,
-              id: nextEventId,
-            },
-          });
-        } catch (evIdErr: any) {
-          console.warn('[SuratService] Insert event dengan nextEventId gagal, mencoba fallback autoincrement ID:', evIdErr.message);
-          createdEvent = await prisma.events.create({
             data: eventDataPayload,
           });
+        } catch (evIdErr: any) {
+          if (isDuplicateKeyError(evIdErr)) {
+            console.warn('[SuratService] Terdeteksi bentrok sequence pada tabel events. Menjalankan auto-sync sequence dan me-retry insert...');
+            await syncTableSequence('events');
+            createdEvent = await prisma.events.create({
+              data: eventDataPayload,
+            });
+          } else {
+            console.warn('[SuratService] Gagal membuat event jadwal:', evIdErr.message);
+          }
         }
 
-        console.log(`[SuratService] Acara kegiatan berhasil dibuat otomatis untuk surat ${surat.agenda_number} (Event ID: ${createdEvent.id})`);
+        console.log(`[SuratService] Acara kegiatan berhasil dibuat otomatis untuk surat ${surat.agenda_number} (Event ID: ${createdEvent?.id})`);
 
         if (createdEvent) {
           // Hubungkan ke tabel pivot event_letters untuk relasi many-to-many Laravel
@@ -676,8 +693,27 @@ export class SuratService {
               },
             });
             console.log(`[SuratService] Menautkan event ID ${createdEvent.id} dan letter ID ${surat.id} di tabel event_letters`);
-          } catch (elErr) {
-            console.warn('[SuratService] Gagal membuat relasi event_letters:', elErr);
+          } catch (elErr: any) {
+            if (isDuplicateKeyError(elErr)) {
+              console.warn('[SuratService] Terdeteksi bentrok sequence pada tabel event_letters. Menjalankan auto-sync sequence dan me-retry...');
+              await syncTableSequence('event_letters');
+              try {
+                await prisma.event_letters.create({
+                  data: {
+                    event_id: createdEvent.id.toString(),
+                    letter_id: surat.id.toString(),
+                    disposition_id: null,
+                    created_by: safeCreatorName,
+                    created_at: new Date(),
+                    updated_at: new Date(),
+                  },
+                });
+              } catch (elRetryErr) {
+                console.warn('[SuratService] Gagal me-retry relasi event_letters:', elRetryErr);
+              }
+            } else {
+              console.warn('[SuratService] Gagal membuat relasi event_letters:', elErr);
+            }
           }
 
           // Catat activity log untuk penambahan agenda acara
@@ -704,8 +740,36 @@ export class SuratService {
                 updated_at: new Date(),
               },
             });
-          } catch (evLogErr) {
-            console.warn('Failed to write activity_log for event:', evLogErr);
+          } catch (evLogErr: any) {
+            if (isDuplicateKeyError(evLogErr)) {
+              await syncTableSequence('activity_log');
+              try {
+                await prisma.activity_log.create({
+                  data: {
+                    log_name: 'default',
+                    description: `Menambah Jadwal Kegiatan Otomatis dari Surat ${surat.agenda_number} oleh ${creatorName}`,
+                    subject_id: Number(createdEvent.id),
+                    subject_type: 'App\\Models\\Events',
+                    causer_id: Number(userId),
+                    causer_type: 'App\\Models\\User',
+                    properties: JSON.stringify({
+                      letterId: Number(surat.id),
+                      agendaNumber: surat.agenda_number,
+                      title: eventTitle,
+                      location: eventLocation,
+                      eventTimeStart: isValidDate(eventTimeStart) ? eventTimeStart.toISOString() : null,
+                      eventTimeFinish: isValidDate(eventTimeFinish) ? eventTimeFinish.toISOString() : null,
+                      untilFinish,
+                      status: 'Diagendakan',
+                    }),
+                    created_at: new Date(),
+                    updated_at: new Date(),
+                  },
+                });
+              } catch {}
+            } else {
+              console.warn('Failed to write activity_log for event:', evLogErr);
+            }
           }
         }
       } catch (eventErr: any) {
