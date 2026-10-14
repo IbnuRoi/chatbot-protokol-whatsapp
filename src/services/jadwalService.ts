@@ -138,9 +138,10 @@ export class JadwalService {
           lte: endOfDay,
         },
       },
-      orderBy: {
-        event_time_start: 'asc',
-      },
+      orderBy: [
+        { event_time_start: 'asc' },
+        { id: 'asc' },
+      ],
       take: 30,
     });
 
@@ -186,9 +187,10 @@ export class JadwalService {
           lte: endRange.endOfDay,
         },
       },
-      orderBy: {
-        event_time_start: 'asc',
-      },
+      orderBy: [
+        { event_time_start: 'asc' },
+        { id: 'asc' },
+      ],
       take: 50,
     });
 
@@ -353,9 +355,10 @@ export class JadwalService {
           lte: endOfDay,
         },
       },
-      orderBy: {
-        event_time_start: 'asc',
-      },
+      orderBy: [
+        { event_time_start: 'asc' },
+        { id: 'asc' },
+      ],
       take: 20,
     });
 
@@ -397,9 +400,10 @@ export class JadwalService {
 
     const events = await prisma.events.findMany({
       where: whereClause,
-      orderBy: {
-        event_time_start: 'asc',
-      },
+      orderBy: [
+        { event_time_start: 'asc' },
+        { id: 'asc' },
+      ],
       take: 20,
     });
 
@@ -491,9 +495,10 @@ export class JadwalService {
           gte: startOfDay,
         },
       },
-      orderBy: {
-        event_time_start: 'asc',
-      },
+      orderBy: [
+        { event_time_start: 'asc' },
+        { id: 'asc' },
+      ],
       take: limit,
     });
 
@@ -504,9 +509,10 @@ export class JadwalService {
           deleted_at: null,
           event_time_start: { not: null },
         },
-        orderBy: {
-          event_time_start: 'desc',
-        },
+        orderBy: [
+          { event_time_start: 'desc' },
+          { id: 'desc' },
+        ],
         take: limit,
       });
     }

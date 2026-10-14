@@ -20,6 +20,14 @@ export interface SuratRegistrationResult {
   createdAt?: Date;
   isDuplicateNomorSurat?: boolean;
   duplicateLetter?: letters;
+  hasTimeConflict?: boolean;
+  conflictingEvents?: Array<{
+    id: number | bigint;
+    title: string;
+    eventTimeStart?: Date | null;
+    eventTimeFinish?: Date | null;
+    location?: string | null;
+  }>;
 }
 
 export const LETTER_CATEGORY_MAP: Record<string, bigint> = {
@@ -340,6 +348,61 @@ export class SuratService {
   }
 
   /**
+   * Memeriksa apakah terdapat jadwal kegiatan lain yang berbenturan atau memiliki waktu yang sama
+   * pada tabel events. Bersifat informatif (non-blocking).
+   */
+  public async findConflictingEvents(
+    eventTimeStart: Date | null,
+    eventTimeFinish: Date | null,
+    excludeEventId?: number | bigint
+  ): Promise<any[]> {
+    if (!eventTimeStart || !isValidDate(eventTimeStart)) return [];
+
+    try {
+      const where: Prisma.eventsWhereInput = {
+        deleted_at: null,
+      };
+
+      if (excludeEventId) {
+        where.id = { not: BigInt(excludeEventId) };
+      }
+
+      if (eventTimeFinish && isValidDate(eventTimeFinish) && eventTimeFinish > eventTimeStart) {
+        where.OR = [
+          { event_time_start: eventTimeStart },
+          {
+            event_time_start: {
+              gte: eventTimeStart,
+              lt: eventTimeFinish,
+            },
+          },
+        ];
+      } else {
+        where.event_time_start = eventTimeStart;
+      }
+
+      const conflicts = await prisma.events.findMany({
+        where,
+        select: {
+          id: true,
+          title: true,
+          event_time_start: true,
+          event_time_finish: true,
+          location: true,
+          status: true,
+        },
+        take: 3,
+        orderBy: [{ event_time_start: 'asc' }, { id: 'asc' }],
+      });
+
+      return conflicts;
+    } catch (err) {
+      console.warn('[SuratService] Gagal memeriksa bentrok jadwal:', err);
+      return [];
+    }
+  }
+
+  /**
    * Menyimpan Surat Masuk secara transaksional di tabel letters (PostgreSQL DB)
    */
   public async saveSuratDraft(
@@ -638,10 +701,10 @@ export class SuratService {
 
       // Otomatis masukkan ke jadwal kegiatan (tabel events) walaupun belum ada lembar disposisi
       let createdEvent: any = null;
+      let eventTimeStart: Date | null = null;
+      let eventTimeFinish: Date | null = null;
       try {
         // 1. Waktu kegiatan (hanya diisi jika memang ada tanggal kegiatan pada surat/hasil ekstraksi)
-        let eventTimeStart: Date | null = null;
-        let eventTimeFinish: Date | null = null;
         let untilFinish = 0;
         let safeEventTimeZone: string | null = null;
 
@@ -683,13 +746,17 @@ export class SuratService {
             const endYear = parsedDateEventEnd.getUTCFullYear();
             const endMonth = parsedDateEventEnd.getUTCMonth();
             const endDay = parsedDateEventEnd.getUTCDate();
-            eventTimeFinish = new Date(Date.UTC(endYear, endMonth, endDay, 17, 0, 0, 0));
+            const calcEndMulti = new Date(Date.UTC(endYear, endMonth, endDay, 17, 0, 0, 0));
+            eventTimeFinish = isValidDate(calcEndMulti) ? calcEndMulti : null;
             untilFinish = 1;
           } else {
             // Acara 1 hari tanpa jam selesai spesifik (atau berlangsung sampai selesai)
             eventTimeFinish = null;
             untilFinish = 1;
           }
+
+          if (!isValidDate(eventTimeStart)) eventTimeStart = null;
+          if (!isValidDate(eventTimeFinish)) eventTimeFinish = null;
 
           safeEventTimeZone = (parsedTimeZone || 'WIB').slice(0, 10);
         } else {
@@ -859,6 +926,16 @@ export class SuratService {
         console.error('[SuratService] Gagal membuat jadwal kegiatan otomatis dari surat:', eventErr);
       }
 
+      // Cek apakah ada jadwal lain yang bentrok / bersamaan waktunya (bersifat informatif, tidak membatalkan)
+      let conflictingEvents: any[] = [];
+      if (eventTimeStart && isValidDate(eventTimeStart)) {
+        conflictingEvents = await this.findConflictingEvents(
+          eventTimeStart,
+          eventTimeFinish,
+          createdEvent ? createdEvent.id : undefined
+        );
+      }
+
       return {
         success: true,
         message: 'Surat berhasil disimpan ke sistem.',
@@ -868,6 +945,8 @@ export class SuratService {
         fileName: safeFileName,
         createdBy: creatorName,
         createdAt: surat.created_at || new Date(),
+        hasTimeConflict: conflictingEvents.length > 0,
+        conflictingEvents,
       };
     } catch (err: any) {
       console.error('Database error saving surat:', err);

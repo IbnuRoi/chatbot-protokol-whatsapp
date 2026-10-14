@@ -503,6 +503,18 @@ export class SuratMasukHandler {
         if (!picName) picName = '-';
         if (!picPhone) picPhone = '-';
 
+        let conflictNote = '';
+        if (result.hasTimeConflict && result.conflictingEvents && result.conflictingEvents.length > 0) {
+          const firstConflict = result.conflictingEvents[0];
+          const cleanConflictTitle = cleanHtml(firstConflict.title) || firstConflict.title;
+          const conflictCount = result.conflictingEvents.length;
+          const otherText = conflictCount > 1 ? ` dan ${conflictCount - 1} agenda lainnya` : '';
+          conflictNote =
+            `\n⚠️ *Perhatian (Jadwal Bersamaan/Bentrok):*\n` +
+            `Terdapat agenda kegiatan lain pada waktu yang sama: *${cleanConflictTitle}*${otherText}.\n` +
+            `_Jadwal tetap berhasil didaftarkan ke sistem dengan jam yang sama persis sesuai surat masuk._\n`;
+        }
+
         return {
           text:
             `✅ *SURAT BERHASIL DISIMPAN KE DATABASE!*\n\n` +
@@ -523,8 +535,9 @@ export class SuratMasukHandler {
             `• 📅 *Jadwal Acara*  : 🟢 Otomatis Terjadwal (Diagendakan)\n` +
             `• 📂 *Status Disposisi*: 🟡 Belum Ada Disposisi\n` +
             `• 👤 *Diinput Oleh*  : ${userPenginput}\n` +
-            `• ⏰ *Waktu Input*   : ${waktuInputStr}\n\n` +
-            `_Catatan: Surat telah tersimpan di database dan otomatis langsung masuk ke agenda jadwal kegiatan protokol._\n\n` +
+            `• ⏰ *Waktu Input*   : ${waktuInputStr}\n` +
+            conflictNote +
+            `\n_Catatan: Surat telah tersimpan di database dan otomatis langsung masuk ke agenda jadwal kegiatan protokol._\n\n` +
             `Bila ada hal lain yang ingin Anda kelola atau cari, silakan beri tahu saya ya. 😊`,
         };
       } else {
@@ -1610,6 +1623,19 @@ export class SuratMasukHandler {
         const fileLine = fileUrl ? `• 📎 *Link Berkas*     : ${fileUrl}\n` : '';
         const userPenginput = result.createdBy || session.userName || 'Petugas Protokol';
         const waktuInputStr = formatWaktuInputIndo(result.createdAt || new Date());
+
+        let conflictNote = '';
+        if (result.hasTimeConflict && result.conflictingEvents && result.conflictingEvents.length > 0) {
+          const firstConflict = result.conflictingEvents[0];
+          const cleanConflictTitle = cleanHtml(firstConflict.title) || firstConflict.title;
+          const conflictCount = result.conflictingEvents.length;
+          const otherText = conflictCount > 1 ? ` dan ${conflictCount - 1} agenda lainnya` : '';
+          conflictNote =
+            `\n⚠️ *Perhatian (Jadwal Bersamaan/Bentrok):*\n` +
+            `Terdapat agenda kegiatan lain pada waktu yang sama: *${cleanConflictTitle}*${otherText}.\n` +
+            `_Jadwal tetap berhasil didaftarkan ke sistem dengan jam yang sama persis sesuai surat masuk._\n`;
+        }
+
         return {
           text:
             `✅ *REGISTRASI SURAT BERHASIL!*\n\n` +
@@ -1619,8 +1645,9 @@ export class SuratMasukHandler {
             `• 📅 *Jadwal Acara*    : 🟢 Otomatis Terjadwal (Diagendakan)\n` +
             `• 📂 *Status Disposisi*: 🟡 Belum Ada Disposisi\n` +
             `• 👤 *Diinput Oleh*    : ${userPenginput}\n` +
-            `• ⏰ *Waktu Input*     : ${waktuInputStr}\n\n` +
-            `Berkas PDF telah disimpan dan otomatis diagendakan pada jadwal kegiatan protokol. Silakan beri tahu saya jika ada hal lain yang bisa dibantu.`,
+            `• ⏰ *Waktu Input*     : ${waktuInputStr}\n` +
+            conflictNote +
+            `\nBerkas PDF telah disimpan dan otomatis diagendakan pada jadwal kegiatan protokol. Silakan beri tahu saya jika ada hal lain yang bisa dibantu.`,
         };
       } else {
         if (result.isDuplicateNomorSurat && result.duplicateLetter) {
