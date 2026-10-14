@@ -524,3 +524,16 @@ export class WhatsAppClient {
 }
 
 export const whatsappClient = new WhatsAppClient();
+
+/**
+ * Mengirimkan pesan push notification WhatsApp ke nomor/JID tertentu
+ */
+export async function sendPushNotification(jid: string, text: string): Promise<boolean> {
+  try {
+    await whatsappClient.sendReply(jid, { text });
+    return true;
+  } catch (err) {
+    console.error(`❌ [Push Notification] Gagal mengirim pesan notifikasi ke ${jid}:`, err);
+    return false;
+  }
+}

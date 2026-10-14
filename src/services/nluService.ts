@@ -7,6 +7,7 @@ export type NluIntent =
   | 'GREETING'
   | 'SURAT_MASUK'
   | 'INPUT_DISPOSISI'
+  | 'INPUT_JADWAL_ARAHAN'
   | 'JADWAL_HARI_INI'
   | 'JADWAL_BESOK'
   | 'JADWAL_BERIKUTNYA'
@@ -348,6 +349,58 @@ export class NluService {
       }
     }
 
+    // 0d. Shortcut langsung untuk Input Jadwal Arahan Langsung
+    const isInputJadwalArahan =
+      /\b(?:input|tambah|catat|buat|masukkan|bikin)\s*(?:jadwal|agenda)\s*(?:arahan\s*langsung|arahan|langsung)?\b/i.test(cleanText) ||
+      /\bjadwal\s*(?:arahan\s*langsung|langsung)\b/i.test(cleanText) ||
+      /\barahan\s*langsung\b/i.test(cleanText) ||
+      cleanText.toLowerCase() === 'input jadwal' ||
+      cleanText.toLowerCase() === 'catat jadwal' ||
+      cleanText.toLowerCase() === 'tambah jadwal';
+
+    if (isInputJadwalArahan && !cleanText.toLowerCase().includes('cari') && !cleanText.toLowerCase().includes('cek')) {
+      return {
+        intent: 'INPUT_JADWAL_ARAHAN',
+        confidence: 1.0,
+        conversationalReply: `Baik ${userName}, mari kita catat jadwal kegiatan arahan langsung:`,
+        entities: {},
+      };
+    }
+
+    if (currentState === 'JADWAL_ARAHAN_INPUT_TEMPLATE') {
+      if (lowerText === 'batal' || lowerText === 'cancel') {
+        return {
+          intent: 'BATAL',
+          confidence: 1.0,
+          conversationalReply: `Input jadwal arahan langsung dibatalkan.`,
+          entities: {},
+        };
+      }
+      return {
+        intent: 'SUBMIT_STEP',
+        confidence: 1.0,
+        conversationalReply: `Memproses isian formulir jadwal...`,
+        entities: {},
+      };
+    }
+
+    if (currentState === 'JADWAL_ARAHAN_REVIEW') {
+      if (lowerText === 'batal' || lowerText === 'cancel') {
+        return {
+          intent: 'BATAL',
+          confidence: 1.0,
+          conversationalReply: `Input jadwal arahan langsung dibatalkan.`,
+          entities: {},
+        };
+      }
+      return {
+        intent: 'SUBMIT_STEP',
+        confidence: 1.0,
+        conversationalReply: `Memproses konfirmasi jadwal arahan langsung...`,
+        entities: {},
+      };
+    }
+
     const client = this.getClient();
 
     if (!client) {
@@ -379,12 +432,15 @@ export class NluService {
         `   - Pengguna ingin mencatat, menginput, mengunggah, merekam, atau mengirim berkas lembar disposisi baru dari pimpinan.\n` +
         `   - PENTING: Jika pengguna hanya mengetikkan "disposisi", "lembar disposisi", "mau disposisi", "upload disposisi", "kirim disposisi" (tanpa kata cek/lacak/status), WAJIB diklasifikasikan sebagai "INPUT_DISPOSISI" agar bot meminta berkas disposisi.\n` +
         `   - Contoh: "disposisi", "lembar disposisi", "input disposisi", "catat disposisi", "upload lembar disposisi", "unggah disposisi", "kirim disposisi", "rekam disposisi", "tambah disposisi", "mau upload disposisi".\n\n` +
-        `3. PENCARIAN ARSIP SURAT (Intent: "CARI_SURAT"):\n` +
+        `3. INPUT JADWAL ARAHAN LANGSUNG (Intent: "INPUT_JADWAL_ARAHAN"):\n` +
+        `   - Pengguna ingin mencatat, menambah, membuat, atau menginput jadwal kegiatan arahan langsung pimpinan (bukan melalui surat masuk biasa).\n` +
+        `   - Contoh: "input jadwal", "catat jadwal", "tambah jadwal", "jadwal arahan langsung", "arahan langsung pimpinan", "buat jadwal baru", "input agenda".\n\n` +
+        `4. PENCARIAN ARSIP SURAT (Intent: "CARI_SURAT"):\n` +
         `   - Pengguna ingin mencari dokumen / arsip surat masuk berdasarkan perihal, topik, instansi, pengirim, atau kata kunci tertentu.\n` +
         `   - Contoh: "carikan surat tentang vokasi", "cari surat rakor", "dokumen k3", "surat dari kemenkeu", "cek surat audiensi", "surat permohonan".\n` +
         `   - WAJIB ekstrak entities.keyword (kata kunci/topik perihal surat).\n` +
         `   - CATATAN: Jika pengguna meminta "carikan surat terbaru", "surat terbaru", "surat terakhir", atau "surat yang baru masuk", klasifikasikan sebagai "RIWAYAT" atau "CARI_SURAT" dengan keyword="terbaru".\n\n` +
-        `4. RIWAYAT ARSIP SURAT MASUK (Intent: "RIWAYAT"):\n` +
+        `5. RIWAYAT ARSIP SURAT MASUK (Intent: "RIWAYAT"):\n` +
         `   - Pengguna ingin melihat daftar / log riwayat surat masuk terkini atau terbaru.\n` +
         `   - Contoh: "carikan surat terbaru", "surat terbaru", "surat masuk terbaru", "lihat surat masuk", "daftar surat", "riwayat surat masuk", "surat terakhir", "arsip surat terkini".\n\n` +
         `5. PELACAKAN STATUS DISPOSISI (Intent: "DISPOSISI"):\n` +
@@ -419,7 +475,7 @@ export class NluService {
         `- Jika menanyakan identitas bot ("kamu siapa?", "siapa namamu?"): intent = "CHITCHAT".\n\n` +
         `WAJIB menjawab HANYA dalam format JSON valid berikut tanpa teks pendahuluan atau penutup apapun:\n` +
         `{\n` +
-        `  "intent": "GREETING | SURAT_MASUK | INPUT_DISPOSISI | JADWAL_HARI_INI | JADWAL_BESOK | JADWAL_BERIKUTNYA | JADWAL_MENDATANG | JADWAL_RENTANG | JADWAL_CARI | DISPOSISI | RIWAYAT | CARI_SURAT | CARI_UMUM | BANTUAN | BATAL | SELESAI | CHITCHAT | SUBMIT_STEP",\n` +
+        `  "intent": "GREETING | SURAT_MASUK | INPUT_DISPOSISI | INPUT_JADWAL_ARAHAN | JADWAL_HARI_INI | JADWAL_BESOK | JADWAL_BERIKUTNYA | JADWAL_MENDATANG | JADWAL_RENTANG | JADWAL_CARI | DISPOSISI | RIWAYAT | CARI_SURAT | CARI_UMUM | BANTUAN | BATAL | SELESAI | CHITCHAT | SUBMIT_STEP",\n` +
         `  "conversationalReply": "HANYA 1 kalimat sapaan/pengantar singkat (contoh: 'Halo ${userName}, ini jadwal kegiatan protokol hari ini:'). DILARANG MENULIS DAFTAR JADWAL/JAM/SURAT APAPUN!",\n` +
         `  "entities": {\n` +
         `    "keyword": "kata kunci pencarian jika ada",\n` +
@@ -979,6 +1035,25 @@ export class NluService {
         conversationalReply: `Halo ${userName}! Ada yang bisa saya bantu hari ini? 😊`,
         entities: {},
       };
+    }
+
+    // 3b. Input Jadwal Arahan Langsung
+    if (
+      /\b(?:input|tambah|catat|buat|masukkan|bikin)\s*(?:jadwal|agenda)\s*(?:arahan\s*langsung|arahan|langsung)?\b/i.test(lower) ||
+      /\bjadwal\s*(?:arahan\s*langsung|langsung)\b/i.test(lower) ||
+      /\barahan\s*langsung\b/i.test(lower) ||
+      lower === 'input jadwal' ||
+      lower === 'catat jadwal' ||
+      lower === 'tambah jadwal'
+    ) {
+      if (!lower.includes('cari') && !lower.includes('cek')) {
+        return {
+          intent: 'INPUT_JADWAL_ARAHAN',
+          confidence: 0.95,
+          conversationalReply: `Baik ${userName}, mari kita catat jadwal kegiatan arahan langsung:`,
+          entities: {},
+        };
+      }
     }
 
     // 4. Surat Masuk (Registrasi / Input baru)

@@ -14,7 +14,7 @@ export class MenuHandler {
 
     const text =
       `Halo *${session.userName}*! 👋\n\n` +
-      `Saya asisten AI Protokol Kementerian Ketenagakerjaan RI. Saya siap membantu Anda mengurus registrasi *Surat Masuk*, mencatat & melacak *Disposisi Surat*, mengecek agenda *Jadwal Kegiatan*, maupun mencari arsip persuratan dinas.\n\n` +
+      `Saya asisten AI Protokol Kementerian Ketenagakerjaan RI. Saya siap membantu Anda mengurus registrasi *Surat Masuk*, mencatat *Jadwal Arahan Langsung*, mencatat & melacak *Disposisi Surat*, mengecek agenda *Jadwal Kegiatan*, maupun mencari arsip persuratan dinas.\n\n` +
       `Ada yang bisa saya bantu hari ini? Silakan langsung sampaikan apa yang Anda perlukan ya. 😊`;
 
     return { text };

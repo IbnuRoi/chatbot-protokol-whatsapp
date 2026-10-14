@@ -21,6 +21,8 @@ export enum BotState {
   JADWAL_MENU = 'JADWAL_MENU',
   JADWAL_CARI_INPUT = 'JADWAL_CARI_INPUT',
   JADWAL_CARI_HASIL = 'JADWAL_CARI_HASIL',
+  JADWAL_ARAHAN_INPUT_TEMPLATE = 'JADWAL_ARAHAN_INPUT_TEMPLATE',
+  JADWAL_ARAHAN_REVIEW = 'JADWAL_ARAHAN_REVIEW',
 
   // Alur Disposisi
   DISPOSISI_INPUT_NOMOR = 'DISPOSISI_INPUT_NOMOR',
@@ -128,6 +130,19 @@ export interface DisposisiDraftData {
   existingDispositionId?: number;
 }
 
+export interface JadwalArahanDraftData {
+  namaKegiatan: string;
+  tanggalKegiatan: string; // Tampilan atau string input
+  tanggalIso?: string; // YYYY-MM-DD
+  waktuMulai: string; // HH:mm
+  waktuSelesai?: string | null; // HH:mm
+  sampaiSelesai?: boolean;
+  lokasi: string;
+  pejabatHadir?: string;
+  pic?: string;
+  catatan?: string;
+}
+
 export interface UserSession {
   whatsappNumber: string;
   userId: number;
@@ -137,6 +152,7 @@ export interface UserSession {
   lastActive: Date;
   draftSurat?: SuratDraftData;
   draftDisposisi?: DisposisiDraftData;
+  draftJadwalArahan?: JadwalArahanDraftData;
   riwayatPage?: number;
   selectedSuratId?: number;
   searchKeyword?: string;
@@ -227,12 +243,31 @@ class SessionService {
     }
   }
 
+  public updateJadwalArahanDraft(whatsappNumber: string, partialDraft: Partial<JadwalArahanDraftData>): void {
+    const session = this.getSession(whatsappNumber);
+    if (session) {
+      session.draftJadwalArahan = {
+        ...(session.draftJadwalArahan || ({} as JadwalArahanDraftData)),
+        ...partialDraft,
+      };
+      session.lastActive = new Date();
+    }
+  }
+
+  public clearJadwalArahanDraft(whatsappNumber: string): void {
+    const session = this.getSession(whatsappNumber);
+    if (session) {
+      session.draftJadwalArahan = undefined;
+    }
+  }
+
   public resetSession(whatsappNumber: string): void {
     const session = this.sessions.get(whatsappNumber);
     if (session) {
       session.state = BotState.MAIN_MENU;
       session.draftSurat = undefined;
       session.draftDisposisi = undefined;
+      session.draftJadwalArahan = undefined;
       session.riwayatPage = 0;
       session.selectedSuratId = undefined;
       session.searchKeyword = undefined;

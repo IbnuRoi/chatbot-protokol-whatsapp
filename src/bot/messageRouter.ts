@@ -8,6 +8,7 @@ import { riwayatHandler } from './handlers/riwayatHandler';
 import { cariSuratHandler } from './handlers/cariSuratHandler';
 import { hybridSearchHandler } from './handlers/hybridSearchHandler';
 import { bantuanHandler } from './handlers/bantuanHandler';
+import { arahanLangsungHandler } from './handlers/arahanLangsungHandler';
 import { sessionService, BotState, UserSession } from '../services/sessionService';
 import { pdfService } from '../services/pdfService';
 import { nluService, NluResult } from '../services/nluService';
@@ -273,7 +274,9 @@ export class MessageRouter {
       session.state === BotState.DISPOSISI_INPUT_NILAI_KOREKSI ||
       session.state === BotState.DISPOSISI_INPUT_AGENDA_MANUAL ||
       session.state === BotState.DISPOSISI_EDIT_FIELD ||
-      session.state === BotState.DISPOSISI_REVIEW_DATA;
+      session.state === BotState.DISPOSISI_REVIEW_DATA ||
+      session.state === BotState.JADWAL_ARAHAN_INPUT_TEMPLATE ||
+      session.state === BotState.JADWAL_ARAHAN_REVIEW;
 
     let isDifferentFeature = false;
 
@@ -283,6 +286,7 @@ export class MessageRouter {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
         nlu.intent === 'INPUT_DISPOSISI' ||
+        nlu.intent === 'INPUT_JADWAL_ARAHAN' ||
         nlu.intent === 'CARI_SURAT' ||
         nlu.intent === 'RIWAYAT' ||
         nlu.intent === 'DISPOSISI' ||
@@ -293,6 +297,7 @@ export class MessageRouter {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
         nlu.intent === 'INPUT_DISPOSISI' ||
+        nlu.intent === 'INPUT_JADWAL_ARAHAN' ||
         nlu.intent.startsWith('JADWAL_') ||
         nlu.intent === 'DISPOSISI' ||
         nlu.intent === 'CARI_UMUM' ||
@@ -301,6 +306,7 @@ export class MessageRouter {
     } else if (isDisposisiState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
+        nlu.intent === 'INPUT_JADWAL_ARAHAN' ||
         (session.state === BotState.DISPOSISI_INPUT_NOMOR && nlu.intent === 'INPUT_DISPOSISI') ||
         (session.state === BotState.DISPOSISI_UPLOAD_BERKAS && nlu.intent === 'DISPOSISI') ||
         nlu.intent.startsWith('JADWAL_') ||
@@ -313,6 +319,7 @@ export class MessageRouter {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
         nlu.intent === 'INPUT_DISPOSISI' ||
+        nlu.intent === 'INPUT_JADWAL_ARAHAN' ||
         nlu.intent.startsWith('JADWAL_') ||
         nlu.intent === 'DISPOSISI' ||
         nlu.intent === 'CARI_SURAT' ||
@@ -327,6 +334,7 @@ export class MessageRouter {
       isDifferentFeature =
         !isConfirmationOrFormInput &&
         (nlu.intent.startsWith('JADWAL_') ||
+          nlu.intent === 'INPUT_JADWAL_ARAHAN' ||
           nlu.intent === 'INPUT_DISPOSISI' ||
           nlu.intent === 'DISPOSISI' ||
           nlu.intent === 'CARI_SURAT' ||
@@ -336,6 +344,7 @@ export class MessageRouter {
     } else if (isBantuanState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
+        nlu.intent === 'INPUT_JADWAL_ARAHAN' ||
         nlu.intent.startsWith('JADWAL_') ||
         nlu.intent === 'CARI_SURAT' ||
         nlu.intent === 'RIWAYAT' ||
@@ -464,6 +473,12 @@ export class MessageRouter {
       case BotState.JADWAL_CARI_HASIL:
         return jadwalHandler.handleSearchResultInput(session, textInput, nlu);
 
+      case BotState.JADWAL_ARAHAN_INPUT_TEMPLATE:
+        return arahanLangsungHandler.handleInputTemplate(session, textInput);
+
+      case BotState.JADWAL_ARAHAN_REVIEW:
+        return arahanLangsungHandler.handleReview(session, textInput, nlu);
+
       // Alur Disposisi
       case BotState.DISPOSISI_INPUT_NOMOR:
         return disposisiHandler.handleSearch(session, textInput);
@@ -578,7 +593,13 @@ export class MessageRouter {
       session.state === BotState.SURAT_MASUK_EDIT_TEMPLATE ||
       session.state === BotState.SURAT_MASUK_INPUT_NILAI_KOREKSI ||
       session.state === BotState.SURAT_MASUK_INPUT_PERIHAL_MANUAL ||
-      session.state === BotState.SURAT_MASUK_INPUT_AGENDA_MANUAL;
+      session.state === BotState.SURAT_MASUK_INPUT_AGENDA_MANUAL ||
+      session.state === BotState.DISPOSISI_INPUT_NILAI_KOREKSI ||
+      session.state === BotState.DISPOSISI_INPUT_AGENDA_MANUAL ||
+      session.state === BotState.DISPOSISI_EDIT_FIELD ||
+      session.state === BotState.DISPOSISI_REVIEW_DATA ||
+      session.state === BotState.JADWAL_ARAHAN_INPUT_TEMPLATE ||
+      session.state === BotState.JADWAL_ARAHAN_REVIEW;
 
     let isDifferentFeature = false;
     if (isFormInputState) {
@@ -586,6 +607,8 @@ export class MessageRouter {
     } else if (isJadwalState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
+        nlu.intent === 'INPUT_DISPOSISI' ||
+        nlu.intent === 'INPUT_JADWAL_ARAHAN' ||
         nlu.intent === 'CARI_SURAT' ||
         nlu.intent === 'RIWAYAT' ||
         nlu.intent === 'DISPOSISI' ||
@@ -595,6 +618,8 @@ export class MessageRouter {
     } else if (isCariSuratState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
+        nlu.intent === 'INPUT_DISPOSISI' ||
+        nlu.intent === 'INPUT_JADWAL_ARAHAN' ||
         nlu.intent.startsWith('JADWAL_') ||
         nlu.intent === 'DISPOSISI' ||
         nlu.intent === 'CARI_UMUM' ||
@@ -603,6 +628,7 @@ export class MessageRouter {
     } else if (isDisposisiState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
+        nlu.intent === 'INPUT_JADWAL_ARAHAN' ||
         (session.state === BotState.DISPOSISI_INPUT_NOMOR && nlu.intent === 'INPUT_DISPOSISI') ||
         (session.state === BotState.DISPOSISI_UPLOAD_BERKAS && nlu.intent === 'DISPOSISI') ||
         nlu.intent.startsWith('JADWAL_') ||
@@ -614,6 +640,8 @@ export class MessageRouter {
     } else if (isRiwayatState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
+        nlu.intent === 'INPUT_DISPOSISI' ||
+        nlu.intent === 'INPUT_JADWAL_ARAHAN' ||
         nlu.intent.startsWith('JADWAL_') ||
         nlu.intent === 'DISPOSISI' ||
         nlu.intent === 'CARI_SURAT' ||
@@ -628,6 +656,8 @@ export class MessageRouter {
       isDifferentFeature =
         !isConfirmationOrFormInput &&
         (nlu.intent.startsWith('JADWAL_') ||
+          nlu.intent === 'INPUT_JADWAL_ARAHAN' ||
+          nlu.intent === 'INPUT_DISPOSISI' ||
           nlu.intent === 'DISPOSISI' ||
           nlu.intent === 'CARI_SURAT' ||
           nlu.intent === 'RIWAYAT' ||
@@ -636,6 +666,7 @@ export class MessageRouter {
     } else if (isBantuanState) {
       isDifferentFeature =
         nlu.intent === 'SURAT_MASUK' ||
+        nlu.intent === 'INPUT_JADWAL_ARAHAN' ||
         nlu.intent.startsWith('JADWAL_') ||
         nlu.intent === 'CARI_SURAT' ||
         nlu.intent === 'RIWAYAT' ||
@@ -767,6 +798,11 @@ export class MessageRouter {
 
       case 'SURAT_MASUK': {
         const res = await suratMasukHandler.startFlow(session);
+        return prependIntro(res, nlu.conversationalReply);
+      }
+
+      case 'INPUT_JADWAL_ARAHAN': {
+        const res = arahanLangsungHandler.startFlow(session);
         return prependIntro(res, nlu.conversationalReply);
       }
 

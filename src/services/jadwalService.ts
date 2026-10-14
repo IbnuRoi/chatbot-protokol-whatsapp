@@ -1,8 +1,10 @@
 import { prisma } from '../database/prisma';
 import { Prisma } from '@prisma/client';
-import { cleanHtml } from '../utils/textHelper';
+import { cleanHtml, splitPicNameAndPhone } from '../utils/textHelper';
 import { expandSearchTermsWithAcronyms, calculateRelevanceScore } from '../utils/acronymHelper';
-import { formatTanggalIndo, formatWaktuDisplay } from '../utils/dateHelper';
+import { formatTanggalIndo, formatWaktuDisplay, parseIndonesianDateToDate, parseIndonesianTimeToDates, isValidDate } from '../utils/dateHelper';
+import { syncTableSequence, isDuplicateKeyError } from '../database/sequenceSync';
+import { JadwalArahanDraftData } from './sessionService';
 
 export { formatTanggalIndo, formatWaktuDisplay };
 
@@ -735,6 +737,234 @@ export class JadwalService {
       .filter((s) => s.totalScore >= threshold)
       .slice(0, limit)
       .map((s) => s.item);
+  }
+
+  /**
+   * Menyimpan jadwal kegiatan yang berasal dari arahan langsung pimpinan ke tabel events
+   */
+  public async saveJadwalArahanLangsung(
+    draft: JadwalArahanDraftData,
+    userId?: number | string,
+    userName?: string
+  ): Promise<{
+    success: boolean;
+    event?: any;
+    message?: string;
+    hasTimeConflict?: boolean;
+    conflictingEvents?: any[];
+  }> {
+    try {
+      // 1. Ekstrak tanggal kegiatan
+      let eventDate: Date | null = null;
+      if (draft.tanggalIso) {
+        eventDate = parseIndonesianDateToDate(draft.tanggalIso);
+      }
+      if (!eventDate && draft.tanggalKegiatan) {
+        eventDate = parseIndonesianDateToDate(draft.tanggalKegiatan);
+      }
+      if (!eventDate) {
+        eventDate = new Date();
+      }
+
+      const eventYear = eventDate.getUTCFullYear();
+      const eventMonth = eventDate.getUTCMonth();
+      const eventDay = eventDate.getUTCDate();
+
+      // 2. Ekstrak waktu kegiatan (mulai & selesai)
+      let startH = 9;
+      let startM = 0;
+      let eventTimeFinish: Date | null = null;
+      let untilFinish = draft.sampaiSelesai ? 1 : 0;
+
+      const parsedTime = parseIndonesianTimeToDates(
+        `${draft.waktuMulai || '09:00'}${draft.waktuSelesai ? ' - ' + draft.waktuSelesai : ''}`
+      );
+
+      if (parsedTime.startTime && isValidDate(parsedTime.startTime)) {
+        startH = parsedTime.startTime.getUTCHours();
+        startM = parsedTime.startTime.getUTCMinutes();
+      }
+
+      const calculatedStart = new Date(Date.UTC(eventYear, eventMonth, eventDay, startH, startM, 0, 0));
+      const eventTimeStart = isValidDate(calculatedStart)
+        ? calculatedStart
+        : new Date(Date.UTC(eventYear, eventMonth, eventDay, 9, 0, 0, 0));
+
+      if (parsedTime.finishTime && isValidDate(parsedTime.finishTime)) {
+        const finishH = parsedTime.finishTime.getUTCHours();
+        const finishM = parsedTime.finishTime.getUTCMinutes();
+        const calculatedFinish = new Date(Date.UTC(eventYear, eventMonth, eventDay, finishH, finishM, 0, 0));
+        if (isValidDate(calculatedFinish)) {
+          eventTimeFinish = calculatedFinish;
+          untilFinish = 0;
+        }
+      } else if (draft.sampaiSelesai) {
+        eventTimeFinish = null;
+        untilFinish = 1;
+      }
+
+      // 3. Gabungkan nama PIC dan kontak
+      let picNameStr = draft.pic?.trim() || '';
+      let picPhoneStr = '';
+      if (picNameStr && picNameStr !== '-') {
+        const splitted = splitPicNameAndPhone(picNameStr);
+        picNameStr = splitted.name;
+        picPhoneStr = splitted.phone;
+      }
+
+      // Jika ada info Pejabat Hadir, gabungkan ke pic_name
+      let finalPicName = picNameStr;
+      if (draft.pejabatHadir && draft.pejabatHadir.trim() !== '-' && draft.pejabatHadir.trim() !== '') {
+        finalPicName =
+          finalPicName && finalPicName !== '-'
+            ? `${draft.pejabatHadir.trim()} | PIC: ${finalPicName}`
+            : draft.pejabatHadir.trim();
+      }
+
+      let picJson: string | null = null;
+      if (picNameStr && picNameStr !== '-') {
+        picJson = JSON.stringify([{ name: picNameStr, phone: picPhoneStr || '' }]);
+      }
+
+      // 4. Catatan arahan langsung
+      const notesParts: string[] = ['[ARAHAN LANGSUNG PIMPINAN]'];
+      if (draft.pejabatHadir && draft.pejabatHadir.trim() !== '-') {
+        notesParts.push(`Pejabat Hadir: ${draft.pejabatHadir.trim()}`);
+      }
+      if (draft.catatan && draft.catatan.trim() !== '-' && draft.catatan.trim() !== '') {
+        notesParts.push(`Catatan: ${draft.catatan.trim()}`);
+      }
+      const eventNotes = notesParts.join(' | ');
+
+      const creatorName = (userName || 'Petugas Protokol').trim();
+
+      // 5. Cek apakah ada jadwal lain yang bersamaan / bentrok
+      let hasTimeConflict = false;
+      let conflictingEvents: any[] = [];
+      try {
+        conflictingEvents = await prisma.events.findMany({
+          where: {
+            deleted_at: null,
+            event_time_start: eventTimeStart,
+          },
+          select: {
+            id: true,
+            title: true,
+            location: true,
+            status: true,
+          },
+          take: 5,
+        });
+        if (conflictingEvents.length > 0) {
+          hasTimeConflict = true;
+        }
+      } catch (confErr) {
+        console.warn('[JadwalService] Gagal memeriksa bentrok waktu:', confErr);
+      }
+
+      // 6. Buat payload events
+      const eventDataPayload: Prisma.eventsCreateInput = {
+        title: draft.namaKegiatan.trim(),
+        letter_id: null,
+        disposition_id: null,
+        event_time_start: eventTimeStart,
+        event_time_finish: eventTimeFinish,
+        until_finish: untilFinish,
+        is_internal: '1',
+        is_hide_location: '0',
+        time_zone: 'WIB',
+        status: 1n, // 1: onschedule (Diagendakan)
+        location: draft.lokasi && draft.lokasi !== '-' ? draft.lokasi.trim() : null,
+        pic_name: finalPicName && finalPicName !== '-' ? finalPicName.slice(0, 225) : null,
+        pic_phonenumber: picPhoneStr && picPhoneStr !== '-' ? picPhoneStr.slice(0, 100) : null,
+        pic_json: picJson,
+        notes: eventNotes,
+        created_by: creatorName,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      let createdEvent: any = null;
+      try {
+        createdEvent = await prisma.events.create({
+          data: eventDataPayload,
+        });
+      } catch (evErr: any) {
+        if (isDuplicateKeyError(evErr)) {
+          console.warn('[JadwalService] Terdeteksi bentrok sequence events. Menjalankan auto-sync dan me-retry insert...');
+          await syncTableSequence('events');
+          createdEvent = await prisma.events.create({
+            data: eventDataPayload,
+          });
+        } else {
+          throw evErr;
+        }
+      }
+
+      // 7. Catat ke activity_log (sinkron dengan web Laravel)
+      if (createdEvent && userId) {
+        try {
+          await prisma.activity_log.create({
+            data: {
+              log_name: 'default',
+              description: `Menambah Jadwal Arahan Langsung: "${draft.namaKegiatan}" oleh ${creatorName}`,
+              subject_id: Number(createdEvent.id),
+              subject_type: 'App\\Models\\Events',
+              causer_id: Number(userId),
+              causer_type: 'App\\Models\\User',
+              properties: JSON.stringify({
+                title: draft.namaKegiatan,
+                location: draft.lokasi,
+                eventTimeStart: eventTimeStart.toISOString(),
+                eventTimeFinish: eventTimeFinish ? eventTimeFinish.toISOString() : null,
+                isInternal: '1',
+                status: 'Diagendakan',
+                notes: eventNotes,
+              }),
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          });
+        } catch (logErr: any) {
+          if (isDuplicateKeyError(logErr)) {
+            await syncTableSequence('activity_log');
+            try {
+              await prisma.activity_log.create({
+                data: {
+                  log_name: 'default',
+                  description: `Menambah Jadwal Arahan Langsung: "${draft.namaKegiatan}" oleh ${creatorName}`,
+                  subject_id: Number(createdEvent.id),
+                  subject_type: 'App\\Models\\Events',
+                  causer_id: Number(userId),
+                  causer_type: 'App\\Models\\User',
+                  properties: JSON.stringify({
+                    title: draft.namaKegiatan,
+                    location: draft.lokasi,
+                    eventTimeStart: eventTimeStart.toISOString(),
+                    status: 'Diagendakan',
+                  }),
+                  created_at: new Date(),
+                  updated_at: new Date(),
+                },
+              });
+            } catch {}
+          }
+        }
+      }
+
+      return {
+        success: true,
+        event: createdEvent,
+        hasTimeConflict,
+        conflictingEvents,
+      };
+    } catch (err: any) {
+      console.error('[JadwalService] Gagal menyimpan jadwal arahan langsung:', err);
+      return {
+        success: false,
+        message: err.message || 'Terjadi kesalahan sistem saat menyimpan ke database.',
+      };
+    }
   }
 }
 
