@@ -1,7 +1,13 @@
 import OpenAI from 'openai';
 import { ENV } from '../config/env';
 import { extractDateFromText, extractDateRangeFromText } from '../utils/dateHelper';
-import { isPureGreeting, isFormConfirmationInput } from '../utils/textHelper';
+import {
+  isPureGreeting,
+  isFormConfirmationInput,
+  normalizeUserInput,
+  isFuzzyMatch,
+  levenshteinDistance,
+} from '../utils/textHelper';
 
 export type NluIntent =
   | 'GREETING'
@@ -84,9 +90,11 @@ export class NluService {
   ): Promise<NluResult> {
     const cleanText = message.trim();
     const lowerText = cleanText.toLowerCase();
+    const normalizedText = normalizeUserInput(cleanText);
+    const normLowerText = normalizedText.toLowerCase();
 
     // 0a. Penanganan Sapaan Murni / Greeting Cepat (Deterministik & 100% Akurat Tanpa Memanggil LLM Eksternal)
-    if (isPureGreeting(cleanText)) {
+    if (isPureGreeting(cleanText) || isPureGreeting(normalizedText)) {
       return {
         intent: 'GREETING',
         confidence: 1.0,
@@ -286,13 +294,17 @@ export class NluService {
     }
 
     // 0c. Shortcut langsung untuk Disposisi (Input/Upload vs Pelacakan Status)
-    const isDisposisiInquiry = /\bdisposisi\b/i.test(cleanText) || /\blembar\s+disposisi\b/i.test(cleanText);
+    const isDisposisiInquiry =
+      /\bdisposisi\b/i.test(cleanText) ||
+      /\blembar\s+disposisi\b/i.test(cleanText) ||
+      /\bdisposisi\b/i.test(normLowerText) ||
+      /\blembar\s+disposisi\b/i.test(normLowerText);
 
     if (isDisposisiInquiry) {
-      const isDisposisiSearch = /\b(?:cari|carikan|temukan)\b/i.test(cleanText);
+      const isDisposisiSearch = /\b(?:cari|carikan|temukan)\b/i.test(normLowerText);
       const isDisposisiTracking =
-        /\b(?:cek|lacak|status|pantau|lihat|progress|posisi|sudah.*(?:belum|kah))\b/i.test(cleanText) ||
-        /\b(?:nomor|no\.?)\s*(?:agenda|surat)\b/i.test(cleanText) ||
+        /\b(?:cek|lacak|status|pantau|lihat|progress|posisi|sudah.*(?:belum|kah))\b/i.test(normLowerText) ||
+        /\b(?:nomor|no\.?)\s*(?:agenda|surat)\b/i.test(normLowerText) ||
         /\b\d+\/[A-Za-z0-9\-\/]+\/\d{4}\b/.test(cleanText);
 
       if (!isDisposisiSearch) {
@@ -319,9 +331,11 @@ export class NluService {
 
     if (currentState === 'DISPOSISI_REVIEW_DATA') {
       const isConfirm =
-        lowerText === '1' || lowerText === 'ya' || lowerText === 'simpan' || lowerText === 'sesuai' || lowerText === 'ok';
+        lowerText === '1' || lowerText === 'ya' || lowerText === 'simpan' || lowerText === 'sesuai' || lowerText === 'ok' ||
+        normLowerText === 'ya' || normLowerText === 'simpan' || normLowerText === 'sesuai';
       const isKoreksi =
-        lowerText === '2' || lowerText === 'koreksi' || lowerText === 'ubah' || lowerText === 'edit';
+        lowerText === '2' || lowerText === 'koreksi' || lowerText === 'ubah' || lowerText === 'edit' ||
+        normLowerText === 'koreksi' || normLowerText === 'ubah';
       if (isConfirm || isKoreksi) {
         return {
           intent: 'SUBMIT_STEP',
@@ -339,7 +353,7 @@ export class NluService {
       currentState === 'DISPOSISI_INPUT_NILAI_KOREKSI' ||
       currentState === 'DISPOSISI_INPUT_AGENDA_MANUAL'
     ) {
-      if (lowerText !== 'batal' && lowerText !== 'kembali' && lowerText !== '/cancel') {
+      if (lowerText !== 'batal' && lowerText !== 'kembali' && lowerText !== '/cancel' && normLowerText !== 'batal') {
         return {
           intent: 'SUBMIT_STEP',
           confidence: 1.0,
@@ -352,13 +366,18 @@ export class NluService {
     // 0d. Shortcut langsung untuk Input Jadwal Arahan Langsung
     const isInputJadwalArahan =
       /\b(?:input|tambah|catat|buat|masukkan|bikin)\s*(?:jadwal|agenda)\s*(?:arahan\s*langsung|arahan|langsung)?\b/i.test(cleanText) ||
+      /\b(?:input|tambah|catat|buat|masukkan|bikin)\s*(?:jadwal|agenda)\s*(?:arahan\s*langsung|arahan|langsung)?\b/i.test(normLowerText) ||
       /\bjadwal\s*(?:arahan\s*langsung|langsung)\b/i.test(cleanText) ||
-      /\barahan\s*langsung\b/i.test(cleanText) ||
+      /\bjadwal\s*(?:arahan\s*langsung|langsung)\b/i.test(normLowerText) ||
+      /\barahan\s*langsung\b/i.test(normLowerText) ||
       cleanText.toLowerCase() === 'input jadwal' ||
       cleanText.toLowerCase() === 'catat jadwal' ||
-      cleanText.toLowerCase() === 'tambah jadwal';
+      cleanText.toLowerCase() === 'tambah jadwal' ||
+      normLowerText === 'input jadwal' ||
+      normLowerText === 'catat jadwal' ||
+      normLowerText === 'tambah jadwal';
 
-    if (isInputJadwalArahan && !cleanText.toLowerCase().includes('cari') && !cleanText.toLowerCase().includes('cek')) {
+    if (isInputJadwalArahan && !normLowerText.includes('cari') && !normLowerText.includes('cek')) {
       return {
         intent: 'INPUT_JADWAL_ARAHAN',
         confidence: 1.0,
@@ -463,6 +482,18 @@ export class NluService {
         `   - Bot akan memeriksa arsip surat dan jadwal kegiatan sekaligus, lalu menyajikannya secara bersamaan dalam SATU bubble chat bila keduanya memiliki hasil yang sesuai!\n\n` +
         `8. BANTUAN & PANDUAN (Intent: "BANTUAN"):\n` +
         `   - Pengguna meminta panduan atau menu bantuan ("bantuan", "help", "panduan", "cara pakai").\n\n` +
+        `=== TOLERANSI TYPO & NORMALISASI BAHASA INFORMAL WHATSAPP ===\n` +
+        `- Pengguna WhatsApp sering mengetik dengan cepat/terburu-buru sehingga timbul kesalahan ketik / typo (misal: "igin" -> "ingin", "dikirimkann" -> "dikirimkan", "dispossi" -> "disposisi", "jadwl bsk" -> "jadwal besok", "surt" -> "surat", "inpt" -> "input", "bntuan" -> "bantuan", "crkn" -> "carikan").\n` +
+        `- Kamu WAJIB memahami esensi niat asli pengguna meskipun terdapat typo atau singkatan informal.\n` +
+        `- Jika kata kunci pencarian (keyword) atau nama instansi memiliki typo (misal: "audiensi poltekes", "surat kemnakr"), WAJIB normalisasikan di 'entities.keyword' menjadi ejaan baku yang benar (misal: "audiensi poltekkes", "kemnaker").\n` +
+        `- DILARANG KERAS mengklasifikasikan pesan sebagai 'UNKNOWN' hanya karena ada kesalahan ketik huruf!\n\n` +
+        `CONTOH PENGENALAN TYPO:\n` +
+        `* "saya igin cek jadwl bsk" -> intent: "JADWAL_BESOK", entities: {}\n` +
+        `* "tolong cek dispossi suratt no 145" -> intent: "DISPOSISI", entities: { "nomorSurat": "145" }\n` +
+        `* "crkn surt permohonan audiensi poltekes" -> intent: "CARI_SURAT", entities: { "keyword": "permohonan audiensi poltekkes" }\n` +
+        `* "inpt jadwal arahan pimpinan" -> intent: "INPUT_JADWAL_ARAHAN", entities: {}\n` +
+        `* "batalin min gajadii" -> intent: "BATAL", entities: {}\n` +
+        `* "bntuan min" -> intent: "BANTUAN", entities: {}\n\n` +
         `=== ATURAN MUTLAK PERALIHAN KONTEKS (CONTEXT SWITCHING) ===\n` +
         `- Pengguna DAPAT beralih atau meminta fitur lain KAPAN SAJA di tengah alur percakapan!\n` +
         `- JANGAN PERNAH membatasi niat pengguna hanya pada fitur alur sebelumnya ("${currentState}")!\n` +
@@ -497,11 +528,16 @@ export class NluService {
 
       let rawContent: string | null | undefined;
       try {
+        const userPromptContent =
+          cleanText.toLowerCase() === normalizedText.toLowerCase()
+            ? cleanText
+            : `${cleanText} (Koreksi kata/ejaan: ${normalizedText})`;
+
         const response = await client.chat.completions.create({
           model: ENV.CHAT_MODEL || 'openrouter/free',
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: cleanText },
+            { role: 'user', content: userPromptContent },
           ],
           temperature: 0.1,
           max_tokens: 1500,
@@ -698,12 +734,21 @@ export class NluService {
    * Fallback cerdas berbasis aturan bahasa Indonesia ketika OpenRouter API offline atau key belum diisi
    */
   public heuristicFallback(text: string, userName: string, currentState: string = 'MAIN_MENU'): NluResult {
-    const lower = text.toLowerCase().trim();
+    const rawClean = text.trim();
+    const normalized = normalizeUserInput(rawClean);
+    const lower = normalized.toLowerCase();
+    const rawLower = rawClean.toLowerCase();
+
+    const tokens = lower.split(/\s+/).map((t) => t.replace(/[^\w]/g, '')).filter(Boolean);
+    const hasFuzzy = (target: string) => tokens.some((tok) => isFuzzyMatch(tok, target));
 
     // 1. Pembatalan
     const cancelPattern = /\b(batal|batalkan|batalin|cancel|gajadi|ga jadi|gak jadi|nggak jadi|ngga jadi|ndak jadi|gk jadi|tdk jadi|tidak jadi|ga usah|gak usah|ngga usah|nggak usah|skip|anulir|urung)\b/i;
     if (
       cancelPattern.test(lower) ||
+      cancelPattern.test(rawLower) ||
+      hasFuzzy('batal') ||
+      hasFuzzy('cancel') ||
       lower.startsWith('batal') ||
       lower.startsWith('gajadi') ||
       lower.startsWith('ga jadi')
@@ -720,6 +765,8 @@ export class NluService {
     const selesaiPattern = /\b(selesai|keluar|exit|stop|bye|cukup|sudah cukup)\b/i;
     if (
       selesaiPattern.test(lower) ||
+      selesaiPattern.test(rawLower) ||
+      hasFuzzy('selesai') ||
       lower.includes('selesai') ||
       lower.startsWith('keluar') ||
       lower.includes('makasih cukup') ||
@@ -1091,16 +1138,22 @@ export class NluService {
       lower.includes('surat') ||
       lower.includes('dokumen') ||
       lower.includes('berkas') ||
-      lower.includes('arsip');
+      lower.includes('arsip') ||
+      hasFuzzy('surat') ||
+      hasFuzzy('dokumen') ||
+      hasFuzzy('arsip');
 
     const isAboutJadwal =
       lower.includes('jadwal') ||
       lower.includes('agenda') ||
       lower.includes('kegiatan') ||
+      hasFuzzy('jadwal') ||
+      hasFuzzy('agenda') ||
       lower.includes('mendatang') ||
       lower.includes('kedepannya') ||
       lower.includes('ke depan') ||
       lower.includes('kedepan') ||
+      lower.includes('selanjutnya') ||
       lower.includes('akan datang') ||
       lower.includes('akan ada') ||
       lower.includes('beberapa hari') ||
@@ -1367,7 +1420,7 @@ export class NluService {
     }
 
     // 7. Disposisi
-    if (lower.includes('disposisi')) {
+    if (lower.includes('disposisi') || hasFuzzy('disposisi')) {
       const isTracking =
         lower.includes('cek') ||
         lower.includes('lacak') ||
@@ -1407,7 +1460,12 @@ export class NluService {
     }
 
     // 8. Riwayat Surat
-    if (lower.includes('riwayat') || (lower.includes('log') && lower.includes('surat')) || lower.includes('arsip')) {
+    if (
+      lower.includes('riwayat') ||
+      hasFuzzy('riwayat') ||
+      (lower.includes('log') && lower.includes('surat')) ||
+      lower.includes('arsip')
+    ) {
       return {
         intent: 'RIWAYAT',
         confidence: 0.85,
@@ -1431,6 +1489,8 @@ export class NluService {
       lower.includes('bantuan') ||
       lower.includes('panduan') ||
       lower.includes('help') ||
+      hasFuzzy('bantuan') ||
+      hasFuzzy('panduan') ||
       lower.includes('cara pakai') ||
       lower.includes('cara pake') ||
       lower.includes('bisa ngapain') ||

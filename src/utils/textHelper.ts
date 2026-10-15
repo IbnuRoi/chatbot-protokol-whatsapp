@@ -53,12 +53,256 @@ export function formatNoteHtml(text: string | null | undefined): string {
 }
 
 /**
+ * Menghitung jarak Levenshtein (edit distance) antara dua kata/string.
+ * Mengembalikan jumlah operasi penambahan, penghapusan, atau penggantian karakter.
+ */
+export function levenshteinDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  let curr = new Array(b.length + 1).fill(0);
+
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        curr[j - 1] + 1, // insertion
+        prev[j] + 1, // deletion
+        prev[j - 1] + cost // substitution
+      );
+    }
+    for (let j = 0; j <= b.length; j++) {
+      prev[j] = curr[j];
+    }
+  }
+
+  return prev[b.length];
+}
+
+/**
+ * Memeriksa apakah kata sumber memiliki kemiripan (fuzzy match) dengan kata target
+ * berdasarkan ambang batas toleransi kesalahan ketik (typo).
+ * - Panjang <= 3: exact match
+ * - Panjang 4-6: toleransi 1 karakter typo
+ * - Panjang >= 7: toleransi 2 karakter typo
+ */
+export function isFuzzyMatch(word: string, target: string, maxDistance?: number): boolean {
+  if (!word || !target) return false;
+  const w = word.toLowerCase().trim();
+  const t = target.toLowerCase().trim();
+  if (w === t) return true;
+
+  const lenDiff = Math.abs(w.length - t.length);
+  const maxLen = Math.max(w.length, t.length);
+
+  let threshold = maxDistance;
+  if (threshold === undefined) {
+    if (maxLen <= 3) {
+      threshold = 0;
+    } else if (maxLen <= 6) {
+      threshold = 1;
+    } else {
+      threshold = 2;
+    }
+  }
+
+  if (lenDiff > threshold) return false;
+  return levenshteinDistance(w, t) <= threshold;
+}
+
+/**
+ * Menormalkan karakter yang berulang akibat ketidaksengajaan mengetik di WhatsApp.
+ * Contoh:
+ * - "dikirimkann" -> "dikirimkan"
+ * - "suratt" -> "surat"
+ * - "mauuu" -> "mau"
+ * - "halooo" -> "halo"
+ * - "yaaa" -> "ya"
+ * - "siapp" -> "siap"
+ * - "besokk" -> "besok"
+ */
+export function normalizeRepeatedCharacters(text: string): string {
+  if (!text) return '';
+
+  let res = text;
+  // 1. Kompresi 3 atau lebih karakter berulang di mana pun dalam kata (e.g. "assssalamualaikum" -> "asalamualaikum", "mauuu" -> "mau")
+  res = res.replace(/(.)\1{2,}/gi, '$1');
+
+  // 2. Kompresi 2 konsonan identik di akhir kata (e.g. "dikirimkann" -> "dikirimkan", "suratt" -> "surat", "jadwall" -> "jadwal")
+  res = res.replace(/\b(\w+?)([b-df-hj-np-tv-z])\2+\b/gi, '$1$2');
+
+  // 3. Kompresi 2 vokal identik di akhir kata (e.g. "haloo" -> "halo", "iyaa" -> "iya", "siapp" -> "siap", "okee" -> "oke")
+  res = res.replace(/\b(\w+?)([aeiou])\2+\b/gi, '$1$2');
+
+  return res;
+}
+
+/**
+ * Kamus pemetaan kata slang, singkatan percakapan WhatsApp, dan typo umum
+ * ke bentuk kata baku protokol Kemnaker RI
+ */
+export const SLANG_DICTIONARY: Record<string, string> = {
+  // Kata bantu & percakapan santai
+  'igin': 'ingin',
+  'pengen': 'ingin',
+  'pingin': 'ingin',
+  'pgn': 'ingin',
+  'mauu': 'mau',
+  'bsk': 'besok',
+  'beso': 'besok',
+  'bso': 'besok',
+  'hr': 'hari',
+  'hri': 'hari',
+  'skrg': 'sekarang',
+  'skrang': 'sekarang',
+  'tdk': 'tidak',
+  'tdak': 'tidak',
+  'ngga': 'tidak',
+  'nggak': 'tidak',
+  'gak': 'tidak',
+  'ga': 'tidak',
+  'gk': 'tidak',
+  'udh': 'sudah',
+  'uda': 'sudah',
+  'sdh': 'sudah',
+  'sda': 'sudah',
+  'blm': 'belum',
+  'blom': 'belum',
+  'dgn': 'dengan',
+  'dg': 'dengan',
+  'utk': 'untuk',
+  'untk': 'untuk',
+  'sy': 'saya',
+  'sya': 'saya',
+  'ak': 'aku',
+  'km': 'kamu',
+  'kmu': 'kamu',
+  'lg': 'lagi',
+  'lgi': 'lagi',
+  'dr': 'dari',
+  'dri': 'dari',
+  'krn': 'karena',
+  'karna': 'karena',
+  'tp': 'tapi',
+  'tpi': 'tapi',
+  'bkn': 'bukan',
+  'bgt': 'banget',
+  'gmn': 'gimana',
+  'bgmn': 'bagaimana',
+  'knp': 'kenapa',
+  'tlg': 'tolong',
+  'tlong': 'tolong',
+  'tlng': 'tolong',
+  'mhon': 'mohon',
+  'mhn': 'mohon',
+  'mks': 'makasih',
+  'mksh': 'makasih',
+  'makasi': 'makasih',
+  'makasihh': 'makasih',
+  'terimakasih': 'terima kasih',
+  'ywdh': 'ya sudah',
+  'hay': 'hai',
+
+  // Aksi & Perintah
+  'liat': 'lihat',
+  'lhat': 'lihat',
+  'lht': 'lihat',
+  'cek': 'cek',
+  'ck': 'cek',
+  'batalin': 'batal',
+  'batalkeun': 'batal',
+  'gajadi': 'batal',
+  'inpt': 'input',
+  'imput': 'input',
+  'tmbh': 'tambah',
+  'tmbah': 'tambah',
+  'ctat': 'catat',
+  'catet': 'catat',
+  'masukkin': 'masukkan',
+  'masukin': 'masukkan',
+  'crkn': 'carikan',
+  'cri': 'cari',
+  'bntuan': 'bantuan',
+  'bntu': 'bantuan',
+  'bantun': 'bantuan',
+
+  // Domain Protokol & Persuratan
+  'jdwl': 'jadwal',
+  'jadwl': 'jadwal',
+  'jadwall': 'jadwal',
+  'jawal': 'jadwal',
+  'jdwal': 'jadwal',
+  'agnda': 'agenda',
+  'kgiatan': 'kegiatan',
+  'dispo': 'disposisi',
+  'dispossi': 'disposisi',
+  'diposisi': 'disposisi',
+  'disposi': 'disposisi',
+  'disposs': 'disposisi',
+  'dispoisi': 'disposisi',
+  'dissposisi': 'disposisi',
+  'surt': 'surat',
+  'suratt': 'surat',
+  'srat': 'surat',
+  'surat2': 'surat-surat',
+  'dok': 'dokumen',
+  'dokmen': 'dokumen',
+  'riwyat': 'riwayat',
+  'riwayt': 'riwayat',
+  'riwayatt': 'riwayat',
+  'rkor': 'rakor',
+  'rakro': 'rakor',
+  'rakorr': 'rakor',
+  'audinsi': 'audiensi',
+  'audensi': 'audiensi',
+  'poltekes': 'poltekkes',
+  'kemenakr': 'kemnaker',
+  'kemnker': 'kemnaker',
+};
+
+/**
+ * Mengganti kata slang / singkatan percakapan WhatsApp dengan padanan kata baku
+ */
+export function normalizeChatSlang(text: string): string {
+  if (!text) return '';
+  return text.replace(/\b[a-zA-Z0-9_-]+\b/g, (token) => {
+    const lower = token.toLowerCase();
+    const replacement = SLANG_DICTIONARY[lower];
+    if (replacement) {
+      if (token[0] === token[0].toUpperCase() && token.length > 1 && token[1] === token[1].toLowerCase()) {
+        return replacement.charAt(0).toUpperCase() + replacement.slice(1);
+      }
+      return replacement;
+    }
+    return token;
+  });
+}
+
+/**
+ * Normalisasi lengkap input teks pengguna:
+ * 1. Menghilangkan spasi berlebih
+ * 2. Mengompresi karakter/huruf berulang (typo WhatsApp)
+ * 3. Mengganti singkatan/slang ke kata baku protokol
+ */
+export function normalizeUserInput(text: string | null | undefined): string {
+  if (!text) return '';
+  let clean = text.trim();
+  clean = normalizeRepeatedCharacters(clean);
+  clean = normalizeChatSlang(clean);
+  return clean;
+}
+
+/**
  * Menghitung skor relevansi pencocokan antara query pengguna dengan teks target
  * (Digunakan untuk pencarian fluid pada daftar perihal surat dan nama kegiatan)
+ * Dilengkapi dengan Fuzzy Token Matching (Levenshtein Distance) agar kebal terhadap typo.
  */
 export function scoreTextMatch(query: string, target: string | null | undefined): number {
   if (!query || !target) return 0;
-  const q = query.toLowerCase().trim();
+  const q = normalizeUserInput(query).toLowerCase().trim();
   const t = target.toLowerCase().trim();
 
   if (!q || !t) return 0;
@@ -84,6 +328,12 @@ export function scoreTextMatch(query: string, target: string | null | undefined)
   const queryTokens = q.split(/\s+/).filter((w) => w.length >= 2 && !stopWords.has(w));
   if (queryTokens.length === 0) return 0;
 
+  // Siapkan token target untuk fuzzy comparison
+  const targetTokens = t
+    .split(/\s+/)
+    .map((w) => w.replace(/[^\w]/g, ''))
+    .filter((w) => w.length >= 2);
+
   let matched = 0;
   for (const token of queryTokens) {
     const escapedToken = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -92,6 +342,16 @@ export function scoreTextMatch(query: string, target: string | null | undefined)
       matched += 1.5; // Bobot lebih tinggi untuk kecocokan kata/akronim mandiri
     } else if (t.includes(token)) {
       matched += 1;
+    } else {
+      // 2. Fuzzy Token Matching: Bandingkan token query terhadap setiap kata di target
+      let foundFuzzy = false;
+      for (const tgtToken of targetTokens) {
+        if (isFuzzyMatch(token, tgtToken)) {
+          matched += 1.2; // Nilai relevansi tinggi untuk kata yang sedikit typo
+          foundFuzzy = true;
+          break;
+        }
+      }
     }
   }
 
@@ -228,16 +488,19 @@ export function getDispositionFileUrl(fileName?: string | null): string | null {
  */
 export function isPureGreeting(text: string | null | undefined): boolean {
   if (!text) return false;
-  const clean = text
+  const rawClean = text
     .toLowerCase()
     .replace(/^[^\w]+|[^\w]+$/g, '')
     .trim();
-  if (!clean) return false;
+  if (!rawClean) return false;
+
+  const normalized = normalizeUserInput(rawClean).toLowerCase().trim();
 
   const greetingTokens = new Set([
     'halo', 'halo min', 'halo bot', 'halo admin', 'halo pak', 'halo bu', 'halo kak',
     'hai', 'hai min', 'hai bot', 'hai admin', 'hai kak',
-    'hi', 'hi min', 'hi bot', 'helo', 'hello',
+    'hay', 'hay min', 'hay bot', 'hay admin',
+    'hi', 'hi min', 'hi bot', 'helo', 'hello', 'hey', 'heyy',
     'pagi', 'selamat pagi', 'pagi min', 'selamat pagi min', 'selamat pagi pak', 'selamat pagi bu',
     'siang', 'selamat siang', 'siang min', 'selamat siang min', 'selamat siang pak', 'selamat siang bu',
     'sore', 'selamat sore', 'sore min', 'selamat sore min', 'selamat sore pak', 'selamat sore bu',
@@ -248,11 +511,11 @@ export function isPureGreeting(text: string | null | undefined): boolean {
     'menu', 'start', '/start', 'buka menu', 'tampilkan menu'
   ]);
 
-  if (greetingTokens.has(clean)) return true;
+  if (greetingTokens.has(rawClean) || greetingTokens.has(normalized)) return true;
 
-  const greetingPattern = /^(?:halo|hai|hi|helo|hello|p|ping|tes|test|assalamu\s*['’]?alaikum(?:\s*wr\s*wb)?|selamat\s+(?:pagi|siang|sore|malam)|salam)(?:\s+(?:min|admin|bot|kak|pak|bu|bapak|ibu|protokol|asisten))?[.!?~]*$/i;
+  const greetingPattern = /^(?:halo|hai|hay|hi|helo|hello|hey|p|ping|tes|test|assalamu\s*['’]?alaikum(?:\s*wr\s*wb)?|selamat\s+(?:pagi|siang|sore|malam)|salam)(?:\s+(?:min|admin|bot|kak|pak|bu|bapak|ibu|protokol|asisten))?[.!?~]*$/i;
 
-  return greetingPattern.test(clean);
+  return greetingPattern.test(rawClean) || greetingPattern.test(normalized);
 }
 
 /**
@@ -261,7 +524,9 @@ export function isPureGreeting(text: string | null | undefined): boolean {
  */
 export function isFormConfirmationInput(text: string | null | undefined): boolean {
   if (!text) return false;
-  const clean = text.toLowerCase().trim();
+  const rawClean = text.toLowerCase().trim();
+  const normalized = normalizeUserInput(rawClean).toLowerCase().trim();
+
   const confirmationWords = new Set([
     '1', '2', '3', '4', '5', '6', '7',
     'ya', 'iya', 'y', 'yes', 'benar', 'betul', 'simpan', 'oke', 'ok',
@@ -269,7 +534,8 @@ export function isFormConfirmationInput(text: string | null | undefined): boolea
     'salah', 'tidak', 'bukan', 't', 'koreksi', 'ubah', 'edit', 'ganti', 'ada yang salah',
     'manual', 'batal', 'cancel', 'gajadi'
   ]);
-  return confirmationWords.has(clean);
+
+  return confirmationWords.has(rawClean) || confirmationWords.has(normalized);
 }
 
 /**

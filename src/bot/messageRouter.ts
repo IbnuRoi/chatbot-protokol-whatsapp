@@ -14,7 +14,7 @@ import { pdfService } from '../services/pdfService';
 import { nluService, NluResult } from '../services/nluService';
 import { jadwalService } from '../services/jadwalService';
 import { extractDateRangeFromText } from '../utils/dateHelper';
-import { isPureGreeting, isFormConfirmationInput } from '../utils/textHelper';
+import { isPureGreeting, isFormConfirmationInput, normalizeUserInput } from '../utils/textHelper';
 import { BotResponse } from './types';
 
 export interface IncomingMessagePayload {
@@ -76,9 +76,18 @@ export class MessageRouter {
 
     // 3. Perintah Cepat Khusus (/cancel, /reset, /start, menu, sapaan murni)
     const lower = textInput.toLowerCase();
+    const normalizedInput = normalizeUserInput(textInput);
+    const normLower = normalizedInput.toLowerCase();
     const isSuratMasukActive = session.state.startsWith('SURAT_MASUK_');
 
-    if (lower === '/cancel' || lower === '/reset') {
+    if (
+      lower === '/cancel' ||
+      lower === '/reset' ||
+      lower === 'batal' ||
+      normLower === 'batal' ||
+      lower === 'batalin' ||
+      lower === 'cancel'
+    ) {
       if (session.draftSurat) {
         await suratMasukHandler.handleFinalConfirm(session, '2');
       }
@@ -89,14 +98,20 @@ export class MessageRouter {
       );
     }
 
-    if (lower === '/start' || lower === 'menu' || isPureGreeting(textInput)) {
+    if (
+      lower === '/start' ||
+      lower === 'menu' ||
+      normLower === 'menu' ||
+      isPureGreeting(textInput) ||
+      isPureGreeting(normalizedInput)
+    ) {
       if (!isSuratMasukActive || session.state === BotState.MAIN_MENU) {
         sessionService.resetSession(session.whatsappNumber);
         return menuHandler.getMainGreeting(session);
       }
     }
 
-    if (lower === 'help' || lower === 'bantuan') {
+    if (lower === 'help' || lower === 'bantuan' || normLower === 'help' || normLower === 'bantuan') {
       return bantuanHandler.showBantuanMenu(session);
     }
 
