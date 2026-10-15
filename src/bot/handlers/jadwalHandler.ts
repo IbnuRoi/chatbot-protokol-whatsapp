@@ -4,7 +4,7 @@ import { nluService, NluResult } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { cariSuratHandler } from './cariSuratHandler';
 import { BotResponse } from '../types';
-import { scoreTextMatch, cleanQueryForSelection, formatNomorSuratLink, getLetterFileUrl, isPureGreeting, formatStatusBadge } from '../../utils/textHelper';
+import { scoreTextMatch, cleanQueryForSelection, formatNomorSuratLink, getLetterFileUrl, isPureGreeting, formatStatusBadge, formatListSummary, formatDetailBullets } from '../../utils/textHelper';
 import { extractDateFromText, extractDateRangeFromText, formatWaktuDisplay } from '../../utils/dateHelper';
 
 export class JadwalHandler {
@@ -27,8 +27,31 @@ export class JadwalHandler {
     lines.push(`   📍 *Lokasi*  : ${j.lokasi && j.lokasi !== '-' ? j.lokasi : 'Belum ditentukan'}`);
     lines.push(`   📋 *Status*  : ${statusBadge}`);
 
-    if (j.pejabatHadir && j.pejabatHadir.trim() !== '-' && j.pejabatHadir.trim() !== '') {
+    if (j.arahan && j.arahan.trim() !== '') {
+      lines.push(`   📝 *Arahan*  : ${j.arahan.trim()}`);
+    }
+
+    if (j.peserta && j.peserta.trim() !== '') {
+      const pesertaSummary = formatListSummary(j.peserta, 2);
+      if (pesertaSummary) {
+        lines.push(`   👥 *Peserta* : ${pesertaSummary}`);
+      }
+    }
+
+    if (j.pendamping && j.pendamping.trim() !== '') {
+      const pendampingSummary = formatListSummary(j.pendamping, 2);
+      if (pendampingSummary) {
+        lines.push(`   🤝 *Pendamping* : ${pendampingSummary}`);
+      }
+    } else if (j.pejabatHadir && j.pejabatHadir.trim() !== '-' && j.pejabatHadir.trim() !== '') {
       lines.push(`   👥 *Hadir*   : ${j.pejabatHadir.trim()}`);
+    }
+
+    if (j.catatan && j.catatan.trim() !== '') {
+      const catatanSummary = formatListSummary(j.catatan, 1);
+      if (catatanSummary) {
+        lines.push(`   ℹ️ *Catatan* : ${catatanSummary}`);
+      }
     }
 
     if (j.pic && j.pic.trim() !== '-' && j.pic.trim() !== '') {
@@ -351,8 +374,34 @@ export class JadwalHandler {
     }
 
     const statusBadge = formatStatusBadge(item.statusDisposisi, item.statusDisposisiCode);
-    const hadirLine = item.pejabatHadir && item.pejabatHadir.trim() !== '-' ? `\n• *Pejabat Hadir*   : ${item.pejabatHadir.trim()}` : '';
+    const arahanLine = item.arahan && item.arahan.trim() !== '' ? `\n• *Arahan Pimpinan* : ${item.arahan.trim()}` : '';
     const picLine = item.pic && item.pic.trim() !== '-' ? `\n• *PIC & Kontak*    : ${item.pic.trim()}` : '';
+
+    let pesertaSection = '';
+    if (item.peserta && item.peserta.trim() !== '') {
+      const bullets = formatDetailBullets(item.peserta);
+      if (bullets) {
+        pesertaSection = `\n\n👥 *Daftar Peserta Rapat*:\n${bullets}`;
+      }
+    }
+
+    let pendampingSection = '';
+    if (item.pendamping && item.pendamping.trim() !== '') {
+      const bullets = formatDetailBullets(item.pendamping);
+      if (bullets) {
+        pendampingSection = `\n\n🤝 *Daftar Pendamping*:\n${bullets}`;
+      }
+    } else if (item.pejabatHadir && item.pejabatHadir.trim() !== '-') {
+      pendampingSection = `\n• *Pejabat Hadir*   : ${item.pejabatHadir.trim()}`;
+    }
+
+    let catatanSection = '';
+    if (item.catatan && item.catatan.trim() !== '') {
+      const bullets = formatDetailBullets(item.catatan);
+      if (bullets) {
+        catatanSection = `\n\nℹ️ *Catatan Khusus*:\n${bullets}`;
+      }
+    }
 
     return {
       text:
@@ -362,9 +411,12 @@ export class JadwalHandler {
         `• *Waktu*           : ${waktu}\n` +
         `• *Lokasi*          : ${item.lokasi && item.lokasi !== '-' ? item.lokasi : 'Belum ditentukan'}\n` +
         `• *Status Disposisi*: ${statusBadge}` +
-        hadirLine +
+        arahanLine +
         picLine +
         suratNote +
+        pesertaSection +
+        pendampingSection +
+        catatanSection +
         `\n\n─────────────────────────\n` +
         `Bila Anda ingin mencari agenda lainnya atau kembali ke menu utama, silakan beri tahu saya ya. 😊`,
     };
@@ -524,11 +576,18 @@ export class JadwalHandler {
       const formattedDate = formatTanggalIndo(item.tanggalKegiatan);
       const statusLabel = nextResult.isToday ? `Hari Ini (${formattedDate})` : formattedDate;
       const waktu = formatWaktuDisplay(item.waktuMulai, item.waktuSelesai);
-      const statusDisp = item.statusDisposisi || 'Diagendakan';
+      const statusDisp = formatStatusBadge(item.statusDisposisi, item.statusDisposisiCode);
 
       session.jadwalSearchResults = [item];
       session.jadwalSearchKeyword = item.namaKegiatan;
       sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
+
+      let extraDetails = '';
+      if (item.arahan) extraDetails += `\n📝 *Arahan Pimpinan* : ${item.arahan}`;
+      if (item.peserta) extraDetails += `\n👥 *Peserta*         : ${formatListSummary(item.peserta, 2)}`;
+      if (item.pendamping) extraDetails += `\n🤝 *Pendamping*      : ${formatListSummary(item.pendamping, 2)}`;
+      else if (item.pejabatHadir && item.pejabatHadir !== '-') extraDetails += `\n👥 *Pejabat Hadir*   : ${item.pejabatHadir}`;
+      if (item.catatan) extraDetails += `\nℹ️ *Catatan*         : ${formatListSummary(item.catatan, 1)}`;
 
       const text =
         `⏰ *KEGIATAN TERDEKAT BERIKUTNYA (${statusLabel})*\n\n` +
@@ -536,9 +595,9 @@ export class JadwalHandler {
         `📅 *Tanggal Pelaksanaan* : ${formattedDate}\n` +
         `🕒 *Waktu*               : ${waktu}\n` +
         `📍 *Lokasi*              : ${item.lokasi}\n` +
-        `📋 *Status Disposisi*    : ${statusDisp}\n` +
-        `👥 *Pejabat Hadir*       : ${item.pejabatHadir || '-'}\n` +
-        `📞 *PIC*                 : ${item.pic || '-'}\n\n` +
+        `📋 *Status Disposisi*    : ${statusDisp}` +
+        extraDetails +
+        `\n📞 *PIC*                 : ${item.pic || '-'}\n\n` +
         `Beri tahu saya jika Anda ingin melihat agenda kegiatan lainnya ya.`;
 
       return { text };
@@ -562,18 +621,7 @@ export class JadwalHandler {
       sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
 
       const listText = mendatang
-        .map((j, idx) => {
-          const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
-          const formattedDate = formatTanggalIndo(j.tanggalKegiatan);
-          const statusDisp = j.statusDisposisi || 'Diagendakan';
-          return (
-            `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
-            `   📅 *Tanggal Pelaksanaan* : ${formattedDate}\n` +
-            `   🕒 *Waktu*   : ${waktu}\n` +
-            `   📍 *Lokasi*  : ${j.lokasi}\n` +
-            `   📋 *Status Disposisi* : ${statusDisp}`
-          );
-        })
+        .map((j, idx) => this.formatJadwalItem(j, idx + 1, true))
         .join('\n\n');
 
       return {

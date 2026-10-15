@@ -1,6 +1,6 @@
 import { prisma } from '../database/prisma';
 import { Prisma } from '@prisma/client';
-import { cleanHtml, splitPicNameAndPhone } from '../utils/textHelper';
+import { cleanHtml, splitPicNameAndPhone, extractEventTitleDetails } from '../utils/textHelper';
 import { expandSearchTermsWithAcronyms, calculateRelevanceScore } from '../utils/acronymHelper';
 import { formatTanggalIndo, formatWaktuDisplay, parseIndonesianDateToDate, parseIndonesianTimeToDates, isValidDate } from '../utils/dateHelper';
 import { syncTableSequence, isDuplicateKeyError } from '../database/sequenceSync';
@@ -16,6 +16,10 @@ export interface NormalizedJadwal {
   waktuSelesai: string | null; // Format HH:mm
   lokasi: string;
   pejabatHadir: string;
+  pendamping?: string;
+  peserta?: string;
+  arahan?: string;
+  catatan?: string;
   pic: string;
   statusDisposisi?: string;
   statusDisposisiCode?: number | null;
@@ -310,8 +314,8 @@ export class JadwalService {
       }
     }
 
-    const rawTitle = cleanHtml(event.title) || 'Agenda Kegiatan Protokol';
-    const cleanTitle = rawTitle.replace(/\r?\n+/g, ' ').replace(/\s+/g, ' ').trim();
+    const extracted = extractEventTitleDetails(event.title);
+    const cleanTitle = extracted.cleanTitle || 'Agenda Kegiatan Protokol';
     const picInfo =
       event.pic_name && event.pic_phonenumber && !event.pic_name.includes(event.pic_phonenumber)
         ? `${event.pic_name} (${event.pic_phonenumber})`
@@ -335,7 +339,11 @@ export class JadwalService {
       waktuMulai,
       waktuSelesai,
       lokasi: lokasi || '-',
-      pejabatHadir: '-',
+      pejabatHadir: extracted.pendamping || '-',
+      pendamping: extracted.pendamping,
+      peserta: extracted.peserta,
+      arahan: extracted.arahan,
+      catatan: extracted.catatan,
       pic: picInfo,
       statusDisposisi,
       statusDisposisiCode,
@@ -689,6 +697,10 @@ export class JadwalService {
         item.surat?.nomorSurat || '',
         item.surat?.nomorAgenda || '',
         item.pejabatHadir || '',
+        item.pendamping || '',
+        item.peserta || '',
+        item.arahan || '',
+        item.catatan || '',
       ];
 
       const relevance = calculateRelevanceScore(expansion, title, metadata);

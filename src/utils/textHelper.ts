@@ -608,6 +608,180 @@ export function formatStatusBadge(status?: string | null, statusCode?: number | 
   return status || '🟡 Diagendakan';
 }
 
+export interface ExtractedEventTitle {
+  cleanTitle: string;
+  pendamping?: string;
+  peserta?: string;
+  arahan?: string;
+  catatan?: string;
+}
 
+/**
+ * Memisahkan dan merapikan komponen di dalam title event yang sering kali memuat
+ * daftar pendamping, peserta rapat, arahan pimpinan, dan catatan teknis di database.
+ */
+export function extractEventTitleDetails(rawTitle: string | null | undefined): ExtractedEventTitle {
+  if (!rawTitle) {
+    return { cleanTitle: 'Agenda Kegiatan Protokol' };
+  }
 
+  // 1. Bersihkan HTML tags namun pertahankan jeda baris/paragraf
+  const textWithBreaks = rawTitle
+    .replace(/<br\s*[\/]?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&quot;/gi, '"')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&#39;/gi, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&#13;/gi, '')
+    .replace(/\r/g, '');
 
+  const rawLines = textWithBreaks.split('\n').map((l) => l.trim()).filter(Boolean);
+
+  if (rawLines.length === 0) {
+    return { cleanTitle: 'Agenda Kegiatan Protokol' };
+  }
+
+  const titleParts: string[] = [];
+  const arahanParts: string[] = [];
+  const pendampingList: string[] = [];
+  const pesertaList: string[] = [];
+  const catatanList: string[] = [];
+
+  type ParseSection = 'TITLE' | 'ARAHAN' | 'PENDAMPING' | 'PESERTA' | 'CATATAN';
+  let currentSection: ParseSection = 'TITLE';
+
+  const cleanItem = (item: string) => {
+    return item.replace(/^[-•*–—]\s*/, '').replace(/^\d+[\.)]\s*/, '').replace(/;$/, '').trim();
+  };
+
+  for (let i = 0; i < rawLines.length; i++) {
+    const line = rawLines[i];
+
+    // Deteksi Header Pendamping
+    const pendampingHeaderMatch = line.match(/^(?:pejabat\s+|staf\s+)?(?:pendamping|didampingi(?:\s+oleh)?)\s*:?\s*(.*)$/i);
+    if (pendampingHeaderMatch) {
+      currentSection = 'PENDAMPING';
+      const remainder = cleanItem(pendampingHeaderMatch[1]);
+      if (remainder) {
+        const subItems = remainder.split(/[;,]/).map(cleanItem).filter(Boolean);
+        pendampingList.push(...subItems);
+      }
+      continue;
+    }
+
+    // Deteksi Header Peserta Rapat / Dihadiri
+    const pesertaHeaderMatch = line.match(/^(?:daftar\s+)?(?:peserta(?:\s+rapat)?|dihadiri(?:\s+oleh)?)\s*:?\s*(.*)$/i);
+    if (pesertaHeaderMatch) {
+      currentSection = 'PESERTA';
+      const remainder = cleanItem(pesertaHeaderMatch[1]);
+      if (remainder) {
+        const subItems = remainder.split(/[;,]/).map(cleanItem).filter(Boolean);
+        pesertaList.push(...subItems);
+      }
+      continue;
+    }
+
+    // Deteksi Header Catatan
+    const catatanHeaderMatch = line.match(/^(?:catatan(?:\s+khusus)?|note)\s*:?\s*(.*)$/i);
+    if (catatanHeaderMatch) {
+      currentSection = 'CATATAN';
+      const remainder = cleanItem(catatanHeaderMatch[1]);
+      if (remainder) {
+        catatanList.push(remainder);
+      }
+      continue;
+    }
+
+    // Deteksi Arahan Menaker / Disposisi Menaker di awal/tengah baris
+    const arahanMatch = line.match(/^[\(\[]?\s*(?:arahan|disposisi|dispo)\s+(?:menaker|pimpinan|menteri)\s*:?\s*([^\]\)]*)[\)\]]?(.*)$/i);
+    if (arahanMatch) {
+      const coreArahan = arahanMatch[1].trim();
+      const extraNote = cleanItem(arahanMatch[2].trim());
+      const fullArahan = extraNote ? `${coreArahan}. ${extraNote}` : coreArahan;
+      if (fullArahan) {
+        arahanParts.push(fullArahan);
+      }
+      continue;
+    }
+
+    // Deteksi baris "Info dari ..." atau info agenda terpisah
+    if (/^info\s+dari\s+/i.test(line) || /^\(agenda\s+kunker\s+dibuat\s+terpisah\)/i.test(line)) {
+      catatanList.push(cleanItem(line));
+      continue;
+    }
+
+    // Pemrosesan berdasarkan section aktif
+    if (currentSection === 'PENDAMPING') {
+      const item = cleanItem(line);
+      if (item) pendampingList.push(item);
+    } else if (currentSection === 'PESERTA') {
+      const item = cleanItem(line);
+      if (item) pesertaList.push(item);
+    } else if (currentSection === 'CATATAN') {
+      const item = cleanItem(line);
+      if (item) catatanList.push(item);
+    } else {
+      // Masih di TITLE
+      const inlineArahanMatch = line.match(/^(.*?)\s*[\(\[]\s*(?:arahan|disposisi|dispo)\s+(?:menaker|pimpinan|menteri)\s*:?\s*([^\]\)]*)[\)\]](.*)$/i);
+      if (inlineArahanMatch) {
+        const titlePart = inlineArahanMatch[1].trim();
+        const coreArahan = inlineArahanMatch[2].trim();
+        const extraNote = cleanItem(inlineArahanMatch[3].trim());
+        const fullArahan = extraNote ? `${coreArahan}. ${extraNote}` : coreArahan;
+        if (titlePart) titleParts.push(titlePart);
+        if (fullArahan) arahanParts.push(fullArahan);
+      } else {
+        titleParts.push(line);
+      }
+    }
+  }
+
+  let cleanTitle = titleParts.join(' ').replace(/\s+/g, ' ').trim();
+  cleanTitle = cleanTitle.replace(/[\(\[]\s*[\)\]]$/, '').trim();
+  if (!cleanTitle) {
+    cleanTitle = 'Agenda Kegiatan Protokol';
+  }
+
+  const pendamping = pendampingList.length > 0 ? pendampingList.join('; ') : undefined;
+  const peserta = pesertaList.length > 0 ? pesertaList.join('; ') : undefined;
+  const arahan = arahanParts.length > 0 ? arahanParts.join('; ') : undefined;
+  const catatan = catatanList.length > 0 ? catatanList.join('; ') : undefined;
+
+  return {
+    cleanTitle,
+    pendamping,
+    peserta,
+    arahan,
+    catatan,
+  };
+}
+
+/**
+ * Format string daftar (dipisahkan '; ') menjadi versi ringkas satu baris untuk kartu list jadwal
+ */
+export function formatListSummary(itemsStr?: string, maxItems: number = 2): string | undefined {
+  if (!itemsStr) return undefined;
+  const items = itemsStr.split(';').map((s) => s.trim()).filter(Boolean);
+  if (items.length === 0) return undefined;
+  if (items.length <= maxItems) return items.join('; ');
+  const shown = items.slice(0, maxItems).join('; ');
+  const remaining = items.length - maxItems;
+  return `${shown} (+${remaining} lainnya)`;
+}
+
+/**
+ * Format string daftar (dipisahkan '; ') menjadi multiline bullet points untuk detail jadwal
+ */
+export function formatDetailBullets(itemsStr?: string): string | undefined {
+  if (!itemsStr) return undefined;
+  const items = itemsStr.split(';').map((s) => s.trim()).filter(Boolean);
+  if (items.length === 0) return undefined;
+  return items.map((it) => `  • ${it}`).join('\n');
+}

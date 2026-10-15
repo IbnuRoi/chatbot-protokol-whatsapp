@@ -5,7 +5,7 @@ import { nluService, NluResult } from '../../services/nluService';
 import { cariSuratHandler } from './cariSuratHandler';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
-import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink, getLetterFileUrl, isPureGreeting, formatStatusBadge } from '../../utils/textHelper';
+import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink, getLetterFileUrl, isPureGreeting, formatStatusBadge, formatListSummary, formatDetailBullets } from '../../utils/textHelper';
 import { formatWaktuDisplay } from '../../utils/dateHelper';
 import { NormalizedSurat } from '../../services/suratService';
 import { NormalizedJadwal } from '../../services/jadwalService';
@@ -180,12 +180,32 @@ export class HybridSearchHandler {
         const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
         const formattedDate = formatTanggalIndo(j.tanggalKegiatan);
         const statusBadge = formatStatusBadge(j.statusDisposisi, j.statusDisposisiCode);
-        return (
-          `*${idx + 1}.* 📌 *${j.namaKegiatan}*\n` +
-          `   📅 *Tanggal* : ${formattedDate} · 🕒 ${waktu}\n` +
-          `   📍 *Lokasi*  : ${j.lokasi && j.lokasi !== '-' ? j.lokasi : 'Belum ditentukan'}\n` +
-          `   📋 *Status*  : ${statusBadge}`
-        );
+        const lines = [
+          `*${idx + 1}.* 📌 *${j.namaKegiatan}*`,
+          `   📅 *Tanggal* : ${formattedDate} · 🕒 ${waktu}`,
+          `   📍 *Lokasi*  : ${j.lokasi && j.lokasi !== '-' ? j.lokasi : 'Belum ditentukan'}`,
+          `   📋 *Status*  : ${statusBadge}`,
+        ];
+
+        if (j.arahan && j.arahan.trim() !== '') {
+          lines.push(`   📝 *Arahan*  : ${j.arahan.trim()}`);
+        }
+        if (j.peserta && j.peserta.trim() !== '') {
+          const pSummary = formatListSummary(j.peserta, 2);
+          if (pSummary) lines.push(`   👥 *Peserta* : ${pSummary}`);
+        }
+        if (j.pendamping && j.pendamping.trim() !== '') {
+          const pdSummary = formatListSummary(j.pendamping, 2);
+          if (pdSummary) lines.push(`   🤝 *Pendamping* : ${pdSummary}`);
+        } else if (j.pejabatHadir && j.pejabatHadir !== '-') {
+          lines.push(`   👥 *Hadir*   : ${j.pejabatHadir}`);
+        }
+        if (j.catatan && j.catatan.trim() !== '') {
+          const cSummary = formatListSummary(j.catatan, 1);
+          if (cSummary) lines.push(`   ℹ️ *Catatan* : ${cSummary}`);
+        }
+
+        return lines.join('\n');
       })
       .join('\n\n');
 
@@ -238,17 +258,50 @@ export class HybridSearchHandler {
       }
     }
 
+    const statusBadge = formatStatusBadge(item.statusDisposisi, item.statusDisposisiCode);
+    const arahanLine = item.arahan && item.arahan.trim() !== '' ? `\n• *Arahan Pimpinan*     : ${item.arahan.trim()}` : '';
+    const picLine = item.pic && item.pic.trim() !== '-' ? `\n• *PIC & Kontak*        : ${item.pic.trim()}` : '';
+
+    let pesertaSection = '';
+    if (item.peserta && item.peserta.trim() !== '') {
+      const bullets = formatDetailBullets(item.peserta);
+      if (bullets) {
+        pesertaSection = `\n\n👥 *Daftar Peserta Rapat*:\n${bullets}`;
+      }
+    }
+
+    let pendampingSection = '';
+    if (item.pendamping && item.pendamping.trim() !== '') {
+      const bullets = formatDetailBullets(item.pendamping);
+      if (bullets) {
+        pendampingSection = `\n\n🤝 *Daftar Pendamping*:\n${bullets}`;
+      }
+    } else if (item.pejabatHadir && item.pejabatHadir.trim() !== '-') {
+      pendampingSection = `\n• *Pejabat Hadir*       : ${item.pejabatHadir.trim()}`;
+    }
+
+    let catatanSection = '';
+    if (item.catatan && item.catatan.trim() !== '') {
+      const bullets = formatDetailBullets(item.catatan);
+      if (bullets) {
+        catatanSection = `\n\nℹ️ *Catatan Khusus*:\n${bullets}`;
+      }
+    }
+
     return {
       text:
         `📌 *RINCIAN AGENDA KEGIATAN*\n\n` +
-        `• *Kegiatan*            : ${item.namaKegiatan}\n` +
+        `• *Kegiatan*            : *${item.namaKegiatan}*\n` +
         `• *Tanggal Pelaksanaan* : ${formattedDate}\n` +
         `• *Waktu*               : ${waktu} WIB\n` +
-        `• *Lokasi*              : ${item.lokasi}\n` +
-        `• *Status Disposisi*    : ${item.statusDisposisi || 'Diagendakan'}\n` +
-        `• *Pejabat Hadir*       : ${item.pejabatHadir || '-'}\n` +
-        `• *PIC*                 : ${item.pic || '-'}` +
+        `• *Lokasi*              : ${item.lokasi && item.lokasi !== '-' ? item.lokasi : 'Belum ditentukan'}\n` +
+        `• *Status Disposisi*    : ${statusBadge}` +
+        arahanLine +
+        picLine +
         suratNote +
+        pesertaSection +
+        pendampingSection +
+        catatanSection +
         `\n\nBila Anda ingin melihat dokumen surat terkait atau mencari agenda lainnya, silakan beri tahu saya ya. 😊`,
     };
   }
