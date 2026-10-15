@@ -4,7 +4,15 @@ import { nluService } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { riwayatHandler } from './riwayatHandler';
 import { BotResponse } from '../types';
-import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink, getLetterFileUrl, isPureGreeting } from '../../utils/textHelper';
+import {
+  scoreTextMatch,
+  cleanQueryForSelection,
+  formatNomorAgendaLink,
+  getLetterFileUrl,
+  isPureGreeting,
+  formatSuratListItem,
+  formatSuratDetail,
+} from '../../utils/textHelper';
 import { formatWaktuInputIndo } from '../../utils/dateHelper';
 
 export class CariSuratHandler {
@@ -121,30 +129,17 @@ export class CariSuratHandler {
     const keyword = session.searchKeyword || '';
 
     const listText = results
-      .map((s, idx) => {
-        const itemNumber = idx + 1;
-        const statusIcon = s.disposisi?.status === 'SUDAH_DISPOSISI' ? '🟢 Sudah Disposisi' : '🟡 Belum Disposisi';
-        const nomorSuratLine = s.nomorSurat && s.nomorSurat !== '-' ? `\n   ✉️ *No. Surat*  : ${s.nomorSurat}` : '';
-        const instansiLine = s.asalInstansi && s.asalInstansi !== '-' && s.asalInstansi !== s.asalSurat ? ` (${s.asalInstansi})` : '';
-
-        return (
-          `*${itemNumber}.* 📑 *${s.perihal || 'Surat Masuk'}*\n` +
-          `   📄 *No. Agenda* : ${s.nomorAgenda || '-'}` +
-          nomorSuratLine + '\n' +
-          `   🏢 *Pengirim*   : ${s.asalSurat || '-'}${instansiLine}\n` +
-          `   📅 *Tanggal*    : ${s.tanggalSurat}\n` +
-          `   📋 *Status*     : ${statusIcon}`
-        );
-      })
+      .map((s, idx) => formatSuratListItem(s, idx + 1))
       .join('\n\n');
 
     const text =
       `🔎 *HASIL PENCARIAN SURAT MASUK*\n` +
-      `Ditemukan *${results.length} surat* untuk kata kunci *"${keyword}"*:\n\n` +
+      `Ditemukan *${results.length} surat masuk* untuk kata kunci *"${keyword}"*:\n\n` +
       `${listText}\n\n` +
       `─────────────────────────\n` +
-      `💡 *Petunjuk:*\n` +
-      `Silakan ketik nomor surat (contoh: *surat 1*), atau sebutkan *perihal surat* untuk melihat rincian & berkas dokumen ya. 😊`;
+      `💡 *Petunjuk Cepat:*\n` +
+      `• Ketik *nomor* (contoh: *1* atau *surat 1*) untuk melihat rincian lengkap & disposisi.\n` +
+      `• Atau ketik kata kunci perihal/pengirim lain untuk mencari arsip surat baru. 😊`;
 
     return { text };
   }
@@ -260,32 +255,8 @@ export class CariSuratHandler {
     session.selectedSuratId = surat.id;
     sessionService.setState(session.whatsappNumber, BotState.CARI_SURAT_DETAIL);
 
-    const disposisi = surat.disposisi;
-    const statusDisp = disposisi?.status === 'SUDAH_DISPOSISI' ? '🟢 SUDAH DISPOSISI' : '🟡 BELUM DISPOSISI';
     const waktuInputStr = formatWaktuInputIndo(surat.createdAt);
-    const fileUrl = getLetterFileUrl(surat.fileName);
-
-    const noSuratLine = surat.nomorSurat && surat.nomorSurat !== '-' ? `• *Nomor Surat*      : ${surat.nomorSurat}\n` : '';
-    const instansiLine = surat.asalInstansi && surat.asalInstansi !== '-' && surat.asalInstansi !== surat.asalSurat ? ` (${surat.asalInstansi})` : '';
-    const eventLine = surat.event && surat.event !== '-' ? `• *Acara / Kegiatan* : ${surat.event}\n` : '';
-    const picLine = surat.picPengirim && surat.picPengirim !== '-' ? `• *PIC Pengirim*     : ${surat.picPengirim}\n` : '';
-    const fileLine = fileUrl ? `• *Link Berkas*      : ${fileUrl}\n` : '';
-
-    const text =
-      `📋 *RINCIAN SURAT MASUK*\n\n` +
-      `• *Perihal*          : *${surat.perihal}*\n` +
-      `• *Nomor Agenda*     : ${surat.nomorAgenda}\n` +
-      noSuratLine +
-      `• *Pengirim*         : ${surat.asalSurat}${instansiLine}\n` +
-      `• *Kategori / Jenis* : ${surat.jenisSurat} (${surat.tipeSurat})\n` +
-      `• *Tanggal Surat*    : ${surat.tanggalSurat}\n` +
-      eventLine +
-      picLine +
-      `• *Status Disposisi* : ${statusDisp}\n` +
-      fileLine +
-      `• *Waktu Registrasi* : ${waktuInputStr} (Oleh: ${surat.userInput?.nama || 'Petugas Protokol'})\n\n` +
-      `─────────────────────────\n` +
-      `💡 Ketik *1* untuk melihat isi disposisi surat ini, atau sebutkan pencarian lainnya. 😊`;
+    const text = formatSuratDetail(surat, waktuInputStr);
 
     return { text };
   }

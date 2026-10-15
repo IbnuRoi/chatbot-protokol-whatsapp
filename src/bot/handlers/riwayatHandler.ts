@@ -2,7 +2,15 @@ import { sessionService, BotState, UserSession } from '../../services/sessionSer
 import { suratService } from '../../services/suratService';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
-import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink, getLetterFileUrl, isPureGreeting } from '../../utils/textHelper';
+import {
+  scoreTextMatch,
+  cleanQueryForSelection,
+  formatNomorAgendaLink,
+  getLetterFileUrl,
+  isPureGreeting,
+  formatSuratListItem,
+  formatSuratDetail,
+} from '../../utils/textHelper';
 import { formatWaktuInputIndo } from '../../utils/dateHelper';
 
 export class RiwayatHandler {
@@ -28,22 +36,10 @@ export class RiwayatHandler {
     const currentPageDisplay = page + 1;
 
     const listText = result.items
-      .map((s, idx) => {
-        const itemNumber = idx + 1;
-        const statusIcon = s.disposisi?.status === 'SUDAH_DISPOSISI' ? '🟢 Disposisi' : '🟡 Belum Disposisi';
-        const fileUrl = getLetterFileUrl(s.fileName);
-        const linkLine = fileUrl ? `\n   • Link File: ${fileUrl}` : '';
-        return (
-          `*${itemNumber}.* 📑 *${s.nomorAgenda || '-'}*\n` +
-          `   • Dari: ${s.asalSurat}\n` +
-          `   • Perihal: ${s.perihal}\n` +
-          `   • Status: ${statusIcon}` +
-          linkLine
-        );
-      })
+      .map((s, idx) => formatSuratListItem(s, page * 5 + idx + 1))
       .join('\n\n');
 
-    let navHelp = `Silakan sebutkan nomor surat (contoh: _surat 1_), atau cukup sebutkan *perihal surat* jika Anda ingin melihat rincian lengkapnya ya. 😊`;
+    let navHelp = `Silakan sebutkan nomor surat (contoh: *1* atau *surat 1*), atau sebutkan *perihal surat* jika ingin melihat rincian lengkapnya ya. 😊`;
     if (result.hasNextPage) {
       navHelp += ` Ketik *N* untuk halaman berikutnya.`;
     }
@@ -54,6 +50,7 @@ export class RiwayatHandler {
     const text =
       `📜 *RIWAYAT SURAT MASUK (Hal. ${currentPageDisplay}/${totalPages || 1})*\n\n` +
       `${listText}\n\n` +
+      `─────────────────────────\n` +
       `${navHelp}`;
 
     return { text };
@@ -149,27 +146,8 @@ export class RiwayatHandler {
     session.selectedSuratId = surat.id;
     sessionService.setState(session.whatsappNumber, BotState.RIWAYAT_DETAIL);
 
-    const disposisi = surat.disposisi;
-    const statusDisp = disposisi?.status === 'SUDAH_DISPOSISI' ? '🟢 SUDAH DISPOSISI' : '🟡 BELUM DISPOSISI';
     const waktuInputStr = formatWaktuInputIndo(surat.createdAt);
-    const fileUrl = getLetterFileUrl(surat.fileName);
-    const fileLine = fileUrl ? `• *Link Berkas Surat*: ${fileUrl}\n` : '';
-
-    const text =
-      `📋 *DETAIL SURAT MASUK*\n\n` +
-      `• *Nomor Agenda*   : ${surat.nomorAgenda}\n` +
-      `• *Jenis / Tipe*    : ${surat.jenisSurat} / ${surat.tipeSurat}\n` +
-      `• *Tanggal Surat*   : ${surat.tanggalSurat}\n` +
-      `• *Asal Instansi*   : ${surat.asalInstansi}\n` +
-      `• *Pengirim*        : ${surat.asalSurat}\n` +
-      `• *Event / Acara*   : ${surat.event || '-'}\n` +
-      `• *PIC & Kontak*    : ${surat.picPengirim || '-'}\n` +
-      `• *Perihal*         : ${surat.perihal}\n` +
-      `• *Status Disposisi*: ${statusDisp}\n` +
-      fileLine +
-      `• *Diinput Oleh*    : ${surat.userInput?.nama || 'Petugas Protokol'}\n` +
-      `• *Waktu Input*     : ${waktuInputStr}\n\n` +
-      `Beri tahu saya jika Anda ingin melihat rincian disposisi atau ingin memeriksa surat lainnya.`;
+    const text = formatSuratDetail(surat, waktuInputStr);
 
     return { text };
   }

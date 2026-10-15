@@ -5,7 +5,17 @@ import { nluService, NluResult } from '../../services/nluService';
 import { cariSuratHandler } from './cariSuratHandler';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
-import { scoreTextMatch, cleanQueryForSelection, formatNomorAgendaLink, getLetterFileUrl, isPureGreeting, formatStatusBadge, formatListSummary, formatDetailBullets } from '../../utils/textHelper';
+import {
+  scoreTextMatch,
+  cleanQueryForSelection,
+  formatNomorAgendaLink,
+  getLetterFileUrl,
+  isPureGreeting,
+  formatStatusBadge,
+  formatListSummary,
+  formatDetailBullets,
+  formatSuratListItem,
+} from '../../utils/textHelper';
 import { formatWaktuDisplay } from '../../utils/dateHelper';
 import { NormalizedSurat } from '../../services/suratService';
 import { NormalizedJadwal } from '../../services/jadwalService';
@@ -211,16 +221,7 @@ export class HybridSearchHandler {
 
     // 2. Format bagian Arsip Surat Masuk
     const suratListText = displayedLetters
-      .map((s, idx) => {
-        const statusIcon = s.disposisi?.status === 'SUDAH_DISPOSISI' ? '🟢 Sudah Disposisi' : '🟡 Belum Disposisi';
-        const instansiLine = s.asalInstansi && s.asalInstansi !== '-' && s.asalInstansi !== s.asalSurat ? ` (${s.asalInstansi})` : '';
-        return (
-          `*${idx + 1}.* 📑 *${s.perihal || 'Surat Masuk'}*\n` +
-          `   📄 *No. Agenda* : ${s.nomorAgenda || '-'}\n` +
-          `   🏢 *Pengirim*   : ${s.asalSurat || '-'}${instansiLine} · 📅 ${s.tanggalSurat}\n` +
-          `   📋 *Status*     : ${statusIcon}`
-        );
-      })
+      .map((s, idx) => formatSuratListItem(s, idx + 1))
       .join('\n\n');
 
     const scheduleNote = schedules.length > maxItems ? ` _(Menampilkan ${maxItems} dari total ${schedules.length} kegiatan)_` : '';

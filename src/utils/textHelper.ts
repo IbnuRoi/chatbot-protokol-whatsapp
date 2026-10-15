@@ -785,3 +785,184 @@ export function formatDetailBullets(itemsStr?: string): string | undefined {
   if (items.length === 0) return undefined;
   return items.map((it) => `  • ${it}`).join('\n');
 }
+
+export interface SuratCardData {
+  id?: number | bigint;
+  nomorAgenda?: string | null;
+  nomorSurat?: string | null;
+  perihal?: string | null;
+  subject?: string | null;
+  asalSurat?: string | null;
+  asalInstansi?: string | null;
+  jenisSurat?: string | null;
+  tipeSurat?: string | null;
+  tanggalSurat?: string | null;
+  event?: string | null;
+  dateEvent?: string | null;
+  timeEvent?: string | null;
+  placeEvent?: string | null;
+  picPengirim?: string | null;
+  fileName?: string | null;
+  userInput?: { nama?: string | null; jabatan?: string | null } | null;
+  disposisi?: {
+    status?: string | null;
+    tanggalDisposisi?: Date | string | null;
+    tujuanDisposisi?: string | null;
+    instruksi?: string | null;
+    catatan?: string | null;
+  } | null;
+}
+
+/**
+ * Mengonversi kode kategori surat (seperti AU, UND, PH) ke representasi teks lengkap yang mudah dipahami
+ */
+export function formatFriendlyCategory(categoryCode?: string | null, typeName?: string | null): string {
+  if (!categoryCode || categoryCode === '-') return typeName || 'Umum';
+  const code = categoryCode.toUpperCase().trim();
+  const map: Record<string, string> = {
+    UND: 'Undangan',
+    UNR: 'Undangan Resmi',
+    PH: 'Permohonan',
+    AU: 'Audiensi',
+    WR: 'Warta / Pemberitahuan',
+    LP: 'Laporan',
+    TAP: 'Tanggapan / Jawaban',
+  };
+  const label = map[code] || code;
+  const suffix = code !== label ? ` (${code})` : '';
+  const typeStr = typeName && typeName !== '-' ? ` · ${typeName}` : '';
+  return `${label}${suffix}${typeStr}`;
+}
+
+/**
+ * Format satu kartu ringkasan surat masuk untuk tampilan daftar hasil pencarian di WhatsApp
+ */
+export function formatSuratListItem(s: SuratCardData, index: number): string {
+  const isSudah = s.disposisi?.status === 'SUDAH_DISPOSISI';
+  let statusBadge = isSudah ? '🟢 Sudah Disposisi' : '🟡 Belum Disposisi';
+  if (isSudah && s.disposisi?.tujuanDisposisi && s.disposisi.tujuanDisposisi !== '-') {
+    statusBadge += ` (Kepada: ${s.disposisi.tujuanDisposisi})`;
+  }
+
+  const cleanPerihalText = cleanHtml(s.perihal) || cleanHtml(s.subject) || 'Surat Masuk';
+
+  const lines = [
+    `*${index}.* 📑 *${cleanPerihalText}*`,
+    `   📄 *No. Agenda* : ${s.nomorAgenda || '-'}`,
+  ];
+
+  if (s.nomorSurat && s.nomorSurat !== '-' && s.nomorSurat !== s.nomorAgenda) {
+    lines.push(`   ✉️ *No. Surat*  : ${s.nomorSurat}`);
+  }
+
+  const instansiStr =
+    s.asalInstansi && s.asalInstansi !== '-' && s.asalInstansi !== s.asalSurat
+      ? ` · ${s.asalInstansi}`
+      : '';
+  lines.push(`   🏢 *Pengirim*   : ${s.asalSurat || '-'}${instansiStr}`);
+
+  const kategoriStr = formatFriendlyCategory(s.jenisSurat, s.tipeSurat);
+  if (kategoriStr) {
+    lines.push(`   🏷️ *Kategori*   : ${kategoriStr}`);
+  }
+
+  if (s.tanggalSurat && s.tanggalSurat !== '-') {
+    lines.push(`   📅 *Tgl. Surat* : ${s.tanggalSurat}`);
+  }
+
+  // Jika memuat info agenda / acara kegiatan
+  if (s.dateEvent || s.placeEvent || (s.event && s.event !== '-')) {
+    const parts = [];
+    if (s.dateEvent) parts.push(s.dateEvent);
+    if (s.timeEvent) parts.push(s.timeEvent);
+    if (s.placeEvent) parts.push(s.placeEvent);
+    else if (s.event && s.event !== '-') parts.push(s.event);
+    if (parts.length > 0) {
+      lines.push(`   📍 *Agenda*     : ${parts.join(' · ')}`);
+    }
+  }
+
+  lines.push(`   📋 *Status*     : ${statusBadge}`);
+
+  const fileUrl = getLetterFileUrl(s.fileName);
+  if (fileUrl) {
+    lines.push(`   📎 *Dokumen*    : ${fileUrl}`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Format tampilan rincian lengkap surat masuk beserta lembar disposisi dan agenda terkait
+ */
+export function formatSuratDetail(surat: SuratCardData, waktuInputStr: string): string {
+  const disposisi = surat.disposisi;
+  const isSudah = disposisi?.status === 'SUDAH_DISPOSISI';
+  const fileUrl = getLetterFileUrl(surat.fileName);
+
+  const cleanPerihalText = cleanHtml(surat.perihal) || cleanHtml(surat.subject) || 'Surat Masuk';
+  const noSuratLine =
+    surat.nomorSurat && surat.nomorSurat !== '-' ? `• *Nomor Surat*      : ${surat.nomorSurat}\n` : '';
+  const instansiLine =
+    surat.asalInstansi && surat.asalInstansi !== '-' ? `• *Asal Instansi*    : ${surat.asalInstansi}\n` : '';
+  const fileLine = fileUrl ? `• *Link Berkas PDF*  : ${fileUrl}\n` : '';
+  const kategori = formatFriendlyCategory(surat.jenisSurat, surat.tipeSurat);
+
+  let agendaSection = '';
+  const hasEventInfo =
+    (surat.event && surat.event !== '-') || surat.dateEvent || surat.placeEvent || surat.picPengirim;
+  if (hasEventInfo) {
+    const agendaLines = ['\n📅 *AGENDA / KEGIATAN TERKAIT:*'];
+    if (surat.event && surat.event !== '-') agendaLines.push(`• *Nama Acara*       : ${surat.event}`);
+    if (surat.dateEvent)
+      agendaLines.push(
+        `• *Waktu Acara*      : ${surat.dateEvent}${surat.timeEvent ? ` pukul ${surat.timeEvent}` : ''}`
+      );
+    if (surat.placeEvent) agendaLines.push(`• *Tempat / Lokasi*  : ${surat.placeEvent}`);
+    if (surat.picPengirim && surat.picPengirim !== '-')
+      agendaLines.push(`• *PIC Pengirim*     : ${surat.picPengirim}`);
+    agendaSection = agendaLines.join('\n') + '\n';
+  }
+
+  let disposisiSection = '';
+  if (isSudah && disposisi) {
+    const tgl = disposisi.tanggalDisposisi
+      ? new Date(disposisi.tanggalDisposisi).toLocaleDateString('id-ID', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+        })
+      : '-';
+    disposisiSection =
+      `\n📬 *LEMBAR DISPOSISI PIMPINAN:*\n` +
+      `🟢 *Status: Sudah Didisposisikan*\n` +
+      `• *Tanggal Disposisi*: ${tgl}\n` +
+      `• *Diteruskan Kepada*: ${disposisi.tujuanDisposisi || '-'}\n` +
+      `• *Instruksi Pimpinan*: ${cleanHtml(disposisi.instruksi) || '-'}\n` +
+      `• *Catatan Tambahan* : ${cleanHtml(disposisi.catatan) || '-'}\n`;
+  } else {
+    disposisiSection =
+      `\n📬 *LEMBAR DISPOSISI PIMPINAN:*\n` +
+      `🟡 *Status: Belum Didisposisikan*\n` +
+      `_Surat masuk ini belum menerima lembar disposisi / instruksi dari Pimpinan._\n`;
+  }
+
+  return (
+    `📋 *RINCIAN LENGKAP SURAT MASUK*\n\n` +
+    `• *Perihal*          : *${cleanPerihalText}*\n` +
+    `• *Nomor Agenda*     : ${surat.nomorAgenda || '-'}\n` +
+    noSuratLine +
+    `• *Pengirim*         : ${surat.asalSurat || '-'}\n` +
+    instansiLine +
+    `• *Kategori Surat*   : ${kategori}\n` +
+    `• *Tanggal Surat*    : ${surat.tanggalSurat || '-'}\n` +
+    fileLine +
+    `• *Waktu Registrasi* : ${waktuInputStr} (Oleh: ${surat.userInput?.nama || 'Petugas Protokol'})\n` +
+    agendaSection +
+    disposisiSection +
+    `\n─────────────────────────\n` +
+    `💡 *Petunjuk:*\n` +
+    `Ketik *0* atau *kembali* untuk kembali ke daftar hasil pencarian, atau langsung ketik kata kunci topik lainnya. 😊`
+  );
+}
+
