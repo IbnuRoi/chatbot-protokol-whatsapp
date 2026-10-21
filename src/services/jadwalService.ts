@@ -130,31 +130,127 @@ export class JadwalService {
   }
 
   /**
-   * Mengambil jadwal kegiatan pada tanggal tertentu (WIB) dari tabel events
+   * Mengambil jadwal kegiatan pada tanggal tertentu (WIB)
+   * Menggabungkan kegiatan dari:
+   * 1. Tabel events dengan event_time_start dalam rentang waktu yang sesuai (safe UTC + local boundary)
+   * 2. Tabel events yang terhubung dengan surat di mana letters.date_event jatuh pada tanggal ini
+   * 3. Tabel letters yang memiliki date_event pada tanggal ini (termasuk yang berstatus belum disposisi / belum dibuatkan event row)
    */
-  public async getJadwalByDate(dateInput: string | Date): Promise<{ items: NormalizedJadwal[]; formattedDate: string; dateStr: string }> {
-    const { startOfDay, endOfDay, dateStr } = this.getWibRangeForDate(dateInput);
+  public async getJadwalByDate(
+    dateInput: string | Date,
+    options?: { onlyDiagendakan?: boolean }
+  ): Promise<{ items: NormalizedJadwal[]; formattedDate: string; dateStr: string }> {
+    const { startOfDay, endOfDay, dateStr, year: y, month: m, day: d } = this.getWibRangeForDate(dateInput);
     const formattedDate = formatTanggalIndo(dateStr, true);
 
-    const events = await prisma.events.findMany({
+    // Rentang safe window UTC + Local:
+    // Waktu WIB 00:00 - 23:59 adalah UTC (d-1) 17:00 s.d. (d) 16:59.
+    // Jika disimpan tanpa konversi UTC: UTC (d) 00:00 s.d. (d) 23:59.
+    // Safe range mencakup (d-1) 17:00:00.000Z s.d. (d) 23:59:59.999Z.
+    const safeStart = new Date(Date.UTC(y, m - 1, d - 1, 17, 0, 0, 0));
+    const safeEnd = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
+
+    // Rentang tanggal murni untuk kolom letters.date_event (@db.Date)
+    const letterDateStart = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+    const letterDateEnd = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
+
+    // 1. Ambil events berdasarkan event_time_start
+    const eventsByTime = await prisma.events.findMany({
       where: {
         deleted_at: null,
         event_time_start: {
-          gte: startOfDay,
-          lte: endOfDay,
+          gte: safeStart,
+          lte: safeEnd,
         },
+        ...(options?.onlyDiagendakan ? { status: 1n } : {}),
       },
       orderBy: [
         { event_time_start: 'asc' },
         { id: 'asc' },
       ],
-      take: 30,
+      take: 50,
     });
 
-    const items = await this.enrichAndMapEvents(events);
+    // 2. Ambil letters pada tanggal target
+    const lettersOnDate = await prisma.letters.findMany({
+      where: {
+        deleted_at: null,
+        date_event: {
+          gte: letterDateStart,
+          lte: letterDateEnd,
+        },
+      },
+      select: {
+        id: true,
+        agenda_number: true,
+        number_or_date: true,
+        file: true,
+        date_event: true,
+        time_event: true,
+        time_event_finish: true,
+        place_event: true,
+        subject: true,
+        from: true,
+        pic_name: true,
+        pic_phone_number: true,
+        status: true,
+      },
+      take: 50,
+    });
+
+    const letterIdsOnDate = lettersOnDate.map((l) => l.id);
+
+    // 3. Ambil events yang berelasi dengan letters pada tanggal tersebut
+    let eventsByLetter: any[] = [];
+    if (letterIdsOnDate.length > 0) {
+      eventsByLetter = await prisma.events.findMany({
+        where: {
+          deleted_at: null,
+          letter_id: { in: letterIdsOnDate },
+          ...(options?.onlyDiagendakan ? { status: 1n } : {}),
+        },
+        take: 50,
+      });
+    }
+
+    // Gabungkan events dan deduplikasi berdasarkan ID event
+    const eventMap = new Map<string, any>();
+    for (const e of eventsByTime) {
+      eventMap.set(e.id.toString(), e);
+    }
+    for (const e of eventsByLetter) {
+      if (!eventMap.has(e.id.toString())) {
+        eventMap.set(e.id.toString(), e);
+      }
+    }
+
+    const mergedEvents = Array.from(eventMap.values());
+    const eventLetterIds = new Set<string>();
+    mergedEvents.forEach((e) => {
+      if (e.letter_id) eventLetterIds.add(e.letter_id.toString());
+    });
+
+    // Map events ke NormalizedJadwal
+    const normalizedEventItems = await this.enrichAndMapEvents(mergedEvents);
+
+    // 4. Cari surat pada tanggal tersebut yang belum dibuatkan row di tabel events
+    const unlinkedLetters = lettersOnDate.filter((l) => !eventLetterIds.has(l.id.toString()));
+    const unlinkedLetterItems: NormalizedJadwal[] = unlinkedLetters.map((l) => this.mapLetterToJadwal(l, dateStr));
+
+    // 5. Gabungkan dan filter tanggal agar sesuai dateStr
+    const allItems = [...normalizedEventItems, ...unlinkedLetterItems].filter((item) => {
+      return item.tanggalKegiatan === dateStr;
+    });
+
+    // 6. Urutkan berdasarkan waktuMulai (asc) lalu id (asc)
+    allItems.sort((a, b) => {
+      const timeCompare = a.waktuMulai.localeCompare(b.waktuMulai);
+      if (timeCompare !== 0) return timeCompare;
+      return a.id - b.id;
+    });
 
     return {
-      items,
+      items: allItems,
       formattedDate,
       dateStr,
     };
@@ -185,25 +281,100 @@ export class JadwalService {
 
     const label = labelText || `${daysCount} Hari ke Depan`;
 
-    const events = await prisma.events.findMany({
+    // Rentang safe window UTC + Local
+    const safeStart = new Date(Date.UTC(todayRange.year, todayRange.month - 1, todayRange.day - 1, 17, 0, 0, 0));
+    const safeEnd = new Date(Date.UTC(endRange.year, endRange.month - 1, endRange.day, 23, 59, 59, 999));
+
+    const eventsByTime = await prisma.events.findMany({
       where: {
         deleted_at: null,
         event_time_start: {
-          gte: todayRange.startOfDay,
-          lte: endRange.endOfDay,
+          gte: safeStart,
+          lte: safeEnd,
         },
       },
       orderBy: [
         { event_time_start: 'asc' },
         { id: 'asc' },
       ],
-      take: 50,
+      take: 100,
     });
 
-    const items = await this.enrichAndMapEvents(events);
+    const lettersInRange = await prisma.letters.findMany({
+      where: {
+        deleted_at: null,
+        date_event: {
+          gte: new Date(Date.UTC(todayRange.year, todayRange.month - 1, todayRange.day, 0, 0, 0, 0)),
+          lte: new Date(Date.UTC(endRange.year, endRange.month - 1, endRange.day, 23, 59, 59, 999)),
+        },
+      },
+      select: {
+        id: true,
+        agenda_number: true,
+        number_or_date: true,
+        file: true,
+        date_event: true,
+        time_event: true,
+        time_event_finish: true,
+        place_event: true,
+        subject: true,
+        from: true,
+        pic_name: true,
+        pic_phone_number: true,
+        status: true,
+      },
+      take: 100,
+    });
+
+    const letterIdsInRange = lettersInRange.map((l) => l.id);
+    let eventsByLetter: any[] = [];
+    if (letterIdsInRange.length > 0) {
+      eventsByLetter = await prisma.events.findMany({
+        where: {
+          deleted_at: null,
+          letter_id: { in: letterIdsInRange },
+        },
+        take: 100,
+      });
+    }
+
+    const eventMap = new Map<string, any>();
+    for (const e of eventsByTime) {
+      eventMap.set(e.id.toString(), e);
+    }
+    for (const e of eventsByLetter) {
+      if (!eventMap.has(e.id.toString())) {
+        eventMap.set(e.id.toString(), e);
+      }
+    }
+
+    const mergedEvents = Array.from(eventMap.values());
+    const eventLetterIds = new Set<string>();
+    mergedEvents.forEach((e) => {
+      if (e.letter_id) eventLetterIds.add(e.letter_id.toString());
+    });
+
+    const normalizedEvents = await this.enrichAndMapEvents(mergedEvents);
+
+    const unlinkedLetters = lettersInRange.filter((l) => !eventLetterIds.has(l.id.toString()));
+    const unlinkedLetterItems: NormalizedJadwal[] = unlinkedLetters.map((l) =>
+      this.mapLetterToJadwal(l, startDateStr)
+    );
+
+    const allItems = [...normalizedEvents, ...unlinkedLetterItems].filter((item) => {
+      return item.tanggalKegiatan >= startDateStr && item.tanggalKegiatan <= endDateStr;
+    });
+
+    allItems.sort((a, b) => {
+      const dateCompare = a.tanggalKegiatan.localeCompare(b.tanggalKegiatan);
+      if (dateCompare !== 0) return dateCompare;
+      const timeCompare = a.waktuMulai.localeCompare(b.waktuMulai);
+      if (timeCompare !== 0) return timeCompare;
+      return a.id - b.id;
+    });
 
     return {
-      items,
+      items: allItems,
       formattedRange,
       label,
       startDateStr,
@@ -244,6 +415,10 @@ export class JadwalService {
           time_event_finish: true,
           place_event: true,
           subject: true,
+          from: true,
+          pic_name: true,
+          pic_phone_number: true,
+          status: true,
         },
       });
       for (const l of letters) {
@@ -263,74 +438,102 @@ export class JadwalService {
     let waktuSelesai: string | null = null;
     let lokasi = cleanHtml(event.location) || '-';
 
-    let hasRescheduledDate = false;
-    if (event.event_time_start) {
-      const y = event.event_time_start.getUTCFullYear();
-      const m = String(event.event_time_start.getUTCMonth() + 1).padStart(2, '0');
-      const d = String(event.event_time_start.getUTCDate()).padStart(2, '0');
+    // 1. Tentukan tanggal kegiatan
+    if (letter && letter.date_event && event.status !== 2n) {
+      // Prioritaskan tanggal resmi dari surat kecuali event secara eksplisit di-reschedule
+      const dt = new Date(letter.date_event);
+      const y = dt.getUTCFullYear();
+      const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(dt.getUTCDate()).padStart(2, '0');
       tglKegiatan = `${y}-${m}-${d}`;
+    } else if (event.event_time_start) {
+      const rawHour = event.event_time_start.getUTCHours();
+      let dateObj = event.event_time_start;
+      if (rawHour < 6 || rawHour >= 17) {
+        dateObj = new Date(event.event_time_start.getTime() + 7 * 3600000);
+      }
+      const y = dateObj.getUTCFullYear();
+      const m = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(dateObj.getUTCDate()).padStart(2, '0');
+      tglKegiatan = `${y}-${m}-${d}`;
+    }
 
-      const hh = String(event.event_time_start.getUTCHours()).padStart(2, '0');
-      const mm = String(event.event_time_start.getUTCMinutes()).padStart(2, '0');
+    // 2. Tentukan waktu mulai
+    if (letter && letter.time_event) {
+      // Prioritaskan jam resmi yang tercatat pada surat
+      const hh = String(letter.time_event.getUTCHours()).padStart(2, '0');
+      const mm = String(letter.time_event.getUTCMinutes()).padStart(2, '0');
       waktuMulai = `${hh}:${mm}`;
-
-      if (event.event_time_finish) {
-        const fHh = String(event.event_time_finish.getUTCHours()).padStart(2, '0');
-        const fMm = String(event.event_time_finish.getUTCMinutes()).padStart(2, '0');
-        waktuSelesai = `${fHh}:${fMm}`;
-      }
-
-      if (letter && letter.date_event) {
-        const letterDateStr = letter.date_event.toISOString().slice(0, 10);
-        if (letterDateStr !== tglKegiatan) {
-          hasRescheduledDate = true;
-        }
-      }
+    } else if (event.event_time_start) {
+      const rawHour = event.event_time_start.getUTCHours();
+      const rawMin = event.event_time_start.getUTCMinutes();
+      // Jika tersimpan sebagai UTC murni (jam subuh < 6), konversikan ke WIB (+7 jam)
+      const finalH = rawHour < 6 ? (rawHour + 7) % 24 : rawHour;
+      const hh = String(finalH).padStart(2, '0');
+      const mm = String(rawMin).padStart(2, '0');
+      waktuMulai = `${hh}:${mm}`;
     }
 
-    if (letter) {
-      // Jika surat memiliki data waktu resmi dan event tidak di-reschedule ke tanggal lain
-      if (!tglKegiatan && letter.date_event) {
-        const dt = new Date(letter.date_event);
-        const y = dt.getUTCFullYear();
-        const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
-        const d = String(dt.getUTCDate()).padStart(2, '0');
-        tglKegiatan = `${y}-${m}-${d}`;
-      }
-
-      // Jika waktu mulai belum ada di event_time_start
-      if (!event.event_time_start && letter.time_event) {
-        const hh = String(letter.time_event.getUTCHours()).padStart(2, '0');
-        const mm = String(letter.time_event.getUTCMinutes()).padStart(2, '0');
-        waktuMulai = `${hh}:${mm}`;
-      }
-      if (!event.event_time_finish && letter.time_event_finish) {
-        const hh = String(letter.time_event_finish.getUTCHours()).padStart(2, '0');
-        const mm = String(letter.time_event_finish.getUTCMinutes()).padStart(2, '0');
-        waktuSelesai = `${hh}:${mm}`;
-      }
-      if (letter.place_event && (!event.location || event.location === '-')) {
-        lokasi = cleanHtml(letter.place_event);
-      }
+    // 3. Tentukan waktu selesai
+    if (letter && letter.time_event_finish) {
+      const hh = String(letter.time_event_finish.getUTCHours()).padStart(2, '0');
+      const mm = String(letter.time_event_finish.getUTCMinutes()).padStart(2, '0');
+      waktuSelesai = `${hh}:${mm}`;
+    } else if (event.event_time_finish) {
+      const rawHour = event.event_time_finish.getUTCHours();
+      const rawMin = event.event_time_finish.getUTCMinutes();
+      const finalH = rawHour < 6 ? (rawHour + 7) % 24 : rawHour;
+      const hh = String(finalH).padStart(2, '0');
+      const mm = String(rawMin).padStart(2, '0');
+      waktuSelesai = `${hh}:${mm}`;
     }
 
+    // 4. Lokasi
+    if (lokasi === '-' && letter && letter.place_event) {
+      lokasi = cleanHtml(letter.place_event) || '-';
+    }
+
+    // 5. Judul & Rincian
     const extracted = extractEventTitleDetails(event.title);
     const cleanTitle = extracted.cleanTitle || 'Agenda Kegiatan Protokol';
-    const picInfo =
-      event.pic_name && event.pic_phonenumber && !event.pic_name.includes(event.pic_phonenumber)
-        ? `${event.pic_name} (${event.pic_phonenumber})`
-        : (event.pic_name || event.pic_phonenumber || '-');
+
+    // 6. PIC
+    let picInfo = '-';
+    if (event.pic_name && event.pic_phonenumber && !event.pic_name.includes(event.pic_phonenumber)) {
+      picInfo = `${event.pic_name} (${event.pic_phonenumber})`;
+    } else if (event.pic_name || event.pic_phonenumber) {
+      picInfo = event.pic_name || event.pic_phonenumber || '-';
+    } else if (letter && (letter.pic_name || letter.pic_phone_number)) {
+      picInfo =
+        letter.pic_name && letter.pic_phone_number && !letter.pic_name.includes(letter.pic_phone_number)
+          ? `${letter.pic_name} (${letter.pic_phone_number})`
+          : (letter.pic_name || letter.pic_phone_number || '-');
+    }
 
     const letterInfo = letter
       ? {
-          nomorAgenda: letter.agenda_number,
+          nomorAgenda: letter.agenda_number || '-',
           nomorSurat: letter.number_or_date || '-',
           fileName: letter.file || null,
         }
       : null;
 
-    const statusDisposisi = formatStatusDisposisi(event.status);
-    const statusDisposisiCode = event.status !== null && event.status !== undefined ? Number(event.status) : null;
+    let statusDisposisi = formatStatusDisposisi(event.status);
+    let statusDisposisiCode = event.status !== null && event.status !== undefined ? Number(event.status) : null;
+
+    if (statusDisposisiCode === null && letter) {
+      const sLet = letter.status !== null && letter.status !== undefined ? Number(letter.status) : null;
+      if (sLet === 2) {
+        statusDisposisi = 'Diwakilkan';
+        statusDisposisiCode = 3;
+      } else if (sLet === 1) {
+        statusDisposisi = 'Diagendakan';
+        statusDisposisiCode = 1;
+      } else {
+        statusDisposisi = 'Belum ada disposisi';
+        statusDisposisiCode = null;
+      }
+    }
 
     return {
       id: Number(event.id),
@@ -352,72 +555,104 @@ export class JadwalService {
   }
 
   /**
-   * Mengambil jadwal kegiatan besok (H+1) dari tabel events
+   * Mengonversi baris tabel letters menjadi interface NormalizedJadwal jika belum dibuatkan baris events
    */
-  public async getJadwalBesok(): Promise<NormalizedJadwal[]> {
-    const { startOfDay, endOfDay } = this.getWibDayRange(1);
+  private mapLetterToJadwal(letter: any, defaultDateStr: string): NormalizedJadwal {
+    let tglKegiatan = defaultDateStr;
+    if (letter.date_event) {
+      const dt = new Date(letter.date_event);
+      const y = dt.getUTCFullYear();
+      const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(dt.getUTCDate()).padStart(2, '0');
+      tglKegiatan = `${y}-${m}-${d}`;
+    }
 
-    const events = await prisma.events.findMany({
-      where: {
-        deleted_at: null,
-        event_time_start: {
-          gte: startOfDay,
-          lte: endOfDay,
-        },
+    let waktuMulai = '09:00';
+    let waktuSelesai: string | null = null;
+    if (letter.time_event) {
+      const hh = String(letter.time_event.getUTCHours()).padStart(2, '0');
+      const mm = String(letter.time_event.getUTCMinutes()).padStart(2, '0');
+      waktuMulai = `${hh}:${mm}`;
+    }
+    if (letter.time_event_finish) {
+      const hh = String(letter.time_event_finish.getUTCHours()).padStart(2, '0');
+      const mm = String(letter.time_event_finish.getUTCMinutes()).padStart(2, '0');
+      waktuSelesai = `${hh}:${mm}`;
+    }
+
+    const lokasi = cleanHtml(letter.place_event) || '-';
+    const extracted = extractEventTitleDetails(letter.subject || 'Agenda Kegiatan Protokol');
+    const cleanTitle = extracted.cleanTitle || 'Agenda Kegiatan Protokol';
+
+    const picInfo =
+      letter.pic_name && letter.pic_phone_number && !letter.pic_name.includes(letter.pic_phone_number)
+        ? `${letter.pic_name} (${letter.pic_phone_number})`
+        : (letter.pic_name || letter.pic_phone_number || '-');
+
+    const sLet = letter.status !== null && letter.status !== undefined ? Number(letter.status) : null;
+    let statusDisposisi = 'Belum ada disposisi';
+    let statusDisposisiCode: number | null = null;
+    if (sLet === 2) {
+      statusDisposisi = 'Diwakilkan';
+      statusDisposisiCode = 3;
+    } else if (sLet === 1) {
+      statusDisposisi = 'Diagendakan';
+      statusDisposisiCode = 1;
+    }
+
+    return {
+      id: Number(letter.id),
+      namaKegiatan: cleanTitle,
+      tanggalKegiatan: tglKegiatan,
+      waktuMulai,
+      waktuSelesai,
+      lokasi: lokasi || '-',
+      pejabatHadir: extracted.pendamping || '-',
+      pendamping: extracted.pendamping,
+      peserta: extracted.peserta,
+      arahan: extracted.arahan,
+      catatan: extracted.catatan,
+      pic: picInfo,
+      statusDisposisi,
+      statusDisposisiCode,
+      surat: {
+        nomorAgenda: letter.agenda_number || '-',
+        nomorSurat: letter.number_or_date || '-',
+        fileName: letter.file || null,
       },
-      orderBy: [
-        { event_time_start: 'asc' },
-        { id: 'asc' },
-      ],
-      take: 20,
-    });
-
-    return this.enrichAndMapEvents(events);
+    };
   }
 
   /**
-   * Mengambil jadwal kegiatan hari ini dari tabel events
+   * Mengambil jadwal kegiatan besok (H+1) dari basis data
+   */
+  public async getJadwalBesok(): Promise<NormalizedJadwal[]> {
+    const tomorrowStr = this.getTomorrowString();
+    const result = await this.getJadwalByDate(tomorrowStr);
+    return result.items;
+  }
+
+  /**
+   * Mengambil jadwal kegiatan hari ini dari basis data
    * @param onlyUpcoming jika true, hanya ambil kegiatan yang waktu mulainya belum lewat hari ini
    * @param onlyDiagendakan jika true, hanya ambil kegiatan dengan status disposisi 'Diagendakan' (status = 1)
    */
   public async getJadwalHariIni(
     onlyUpcoming: boolean = false,
-    onlyDiagendakan: boolean = true
+    onlyDiagendakan: boolean = false
   ): Promise<NormalizedJadwal[]> {
-    const { startOfDay, endOfDay } = this.getWibDayRange(0);
-    const nowWibMs = Date.now() + 7 * 3600000;
-    const nowWib = new Date(nowWibMs);
-    const dbNow = new Date(Date.UTC(
-      nowWib.getUTCFullYear(),
-      nowWib.getUTCMonth(),
-      nowWib.getUTCDate(),
-      nowWib.getUTCHours(),
-      nowWib.getUTCMinutes(),
-      nowWib.getUTCSeconds()
-    ));
+    const todayStr = this.getTodayString();
+    const result = await this.getJadwalByDate(todayStr, { onlyDiagendakan });
+    let items = result.items;
 
-    const whereClause: Prisma.eventsWhereInput = {
-      deleted_at: null,
-      event_time_start: {
-        gte: onlyUpcoming ? dbNow : startOfDay,
-        lte: endOfDay,
-      },
-    };
-
-    if (onlyDiagendakan) {
-      whereClause.status = 1n; // 1: onschedule (Diagendakan)
+    if (onlyUpcoming) {
+      const nowWibMs = Date.now() + 7 * 3600000;
+      const nowWib = new Date(nowWibMs);
+      const curHhMm = `${String(nowWib.getUTCHours()).padStart(2, '0')}:${String(nowWib.getUTCMinutes()).padStart(2, '0')}`;
+      items = items.filter((j) => (j.waktuSelesai || j.waktuMulai) >= curHhMm);
     }
 
-    const events = await prisma.events.findMany({
-      where: whereClause,
-      orderBy: [
-        { event_time_start: 'asc' },
-        { id: 'asc' },
-      ],
-      take: 20,
-    });
-
-    return this.enrichAndMapEvents(events);
+    return items;
   }
 
   /**

@@ -84,8 +84,8 @@ export class JadwalHandler {
     const todayUpper = todayFormatted.toUpperCase();
     const greeting = getGreetingWib();
 
-    // Ambil jadwal hari ini (hanya yang status disposisinya diagendakan)
-    const jadwalsHariIni = await jadwalService.getJadwalHariIni(false, true);
+    // Ambil seluruh agenda kegiatan hari ini
+    const jadwalsHariIni = await jadwalService.getJadwalHariIni(false, false);
 
     if (jadwalsHariIni.length === 0) {
       const text =
