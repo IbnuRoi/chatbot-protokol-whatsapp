@@ -114,6 +114,48 @@ export function formatWaktuDisplay(waktuMulai: string, waktuSelesai?: string | n
 }
 
 /**
+ * Mengembalikan sapaan waktu bahasa Indonesia sesuai zona WIB
+ * - 04.00 - 10.59: "Selamat pagi."
+ * - 11.00 - 14.59: "Selamat siang."
+ * - 15.00 - 18.29: "Selamat sore."
+ * - 18.30 - 03.59: "Selamat malam."
+ */
+export function getGreetingWib(): string {
+  const now = new Date();
+  const wibHours = (now.getUTCHours() + 7) % 24;
+  const wibMinutes = now.getUTCMinutes();
+  const totalMinutes = wibHours * 60 + wibMinutes;
+
+  if (totalMinutes >= 4 * 60 && totalMinutes < 11 * 60) return 'Selamat pagi.';
+  if (totalMinutes >= 11 * 60 && totalMinutes < 15 * 60) return 'Selamat siang.';
+  if (totalMinutes >= 15 * 60 && totalMinutes < 18 * 60 + 30) return 'Selamat sore.';
+  return 'Selamat malam.';
+}
+
+/**
+ * Format waktu standar protokol kegiatan (contoh: "08.30–11.00 WIB" atau "09.00 WIB")
+ */
+export function formatWaktuProtokol(waktuMulai: string, waktuSelesai?: string | null): string {
+  const clean = (t: string | null | undefined): string => {
+    if (!t) return '';
+    return t.replace(':', '.').replace(/\s*wib/i, '').trim();
+  };
+
+  const start = clean(waktuMulai);
+  const finish = clean(waktuSelesai);
+
+  if (!start || (start === '00.00' && (!finish || finish === '00.00'))) {
+    return 'Sepanjang Hari';
+  }
+
+  if (finish && finish !== start && finish !== '00.00') {
+    return `${start}–${finish} WIB`;
+  }
+
+  return `${start} WIB`;
+}
+
+/**
  * Memformat tanggal dan waktu input surat ke format bahasa Indonesia (WIB)
  * Contoh output: "Senin, 28 September 2026 pukul 08:30 WIB"
  */

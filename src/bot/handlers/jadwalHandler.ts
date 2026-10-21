@@ -5,93 +5,113 @@ import { menuHandler } from './menuHandler';
 import { cariSuratHandler } from './cariSuratHandler';
 import { BotResponse } from '../types';
 import { scoreTextMatch, cleanQueryForSelection, formatNomorSuratLink, getLetterFileUrl, isPureGreeting, formatStatusBadge, formatListSummary, formatDetailBullets } from '../../utils/textHelper';
-import { extractDateFromText, extractDateRangeFromText, formatWaktuDisplay } from '../../utils/dateHelper';
+import { extractDateFromText, extractDateRangeFromText, formatWaktuDisplay, getGreetingWib, formatWaktuProtokol } from '../../utils/dateHelper';
 
 export class JadwalHandler {
   /**
-   * Merender format kartu satu agenda kegiatan dalam daftar agar rapi, padat, dan mudah dipindai
+   * Merender format kartu satu agenda kegiatan dalam daftar sesuai standar resmi protokol
    */
-  private formatJadwalItem(j: NormalizedJadwal, index: number, showTanggal: boolean = true): string {
-    const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
-    const statusBadge = formatStatusBadge(j.statusDisposisi, j.statusDisposisiCode);
-    const lines = [
-      `*${index}.* 📌 *${j.namaKegiatan}*`,
-    ];
+  private formatJadwalItem(j: NormalizedJadwal, index: number, showTanggal: boolean = false): string {
+    const waktuStr = formatWaktuProtokol(j.waktuMulai, j.waktuSelesai);
 
+    let headerItem = `*${index}. Pukul ${waktuStr}*`;
     if (showTanggal) {
-      const formattedDate = formatTanggalIndo(j.tanggalKegiatan);
-      lines.push(`   📅 *Tanggal* : ${formattedDate}`);
+      const tglIndo = formatTanggalIndo(j.tanggalKegiatan, true);
+      headerItem = `*${index}. ${tglIndo} | Pukul ${waktuStr}*`;
     }
 
-    lines.push(`   🕒 *Waktu*   : ${waktu}`);
-    lines.push(`   📍 *Lokasi*  : ${j.lokasi && j.lokasi !== '-' ? j.lokasi : 'Belum ditentukan'}`);
-    lines.push(`   📋 *Status*  : ${statusBadge}`);
+    // Status disposisi / arahan pimpinan (muncul di akhir nama kegiatan dalam kurung)
+    let statusKeterangan = '';
+    const statusLower = (j.statusDisposisi || '').toLowerCase();
+    const arahanLower = (j.arahan || '').toLowerCase();
 
-    if (j.arahan && j.arahan.trim() !== '') {
-      lines.push(`   📝 *Arahan*  : ${j.arahan.trim()}`);
-    }
-
-    if (j.peserta && j.peserta.trim() !== '') {
-      const pesertaSummary = formatListSummary(j.peserta, 2);
-      if (pesertaSummary) {
-        lines.push(`   👥 *Peserta* : ${pesertaSummary}`);
+    if (j.statusDisposisiCode === 3 || statusLower.includes('diwakilkan')) {
+      if (j.pejabatHadir && j.pejabatHadir !== '-' && !j.pejabatHadir.toLowerCase().includes('diwakilkan')) {
+        statusKeterangan = ` *(Diwakilkan ${j.pejabatHadir.trim()})*`;
+      } else if (j.arahan && j.arahan.trim() !== '') {
+        const arahanClean = j.arahan.trim().replace(/^[\(\[]|[\)\]]$/g, '');
+        statusKeterangan = ` *(${arahanClean})*`;
+      } else {
+        statusKeterangan = ` *(Diwakilkan)*`;
       }
+    } else if (j.statusDisposisiCode === 2 || statusLower.includes('reschedule') || statusLower.includes('jadwalkan ulang')) {
+      statusKeterangan = ` *(Dijadwalkan Ulang)*`;
+    } else if (j.statusDisposisiCode === 4 || statusLower.includes('cancel') || statusLower.includes('batal')) {
+      statusKeterangan = ` *(Dibatalkan)*`;
+    } else if (
+      j.statusDisposisiCode === null ||
+      statusLower.includes('belum') ||
+      statusLower.includes('tidak ada') ||
+      (!j.statusDisposisi && !j.arahan)
+    ) {
+      statusKeterangan = ` *(Belum ada disposisi)*`;
+    } else if (j.arahan && j.arahan.trim() !== '' && !arahanLower.includes('agendakan')) {
+      const arahanClean = j.arahan.trim().replace(/^[\(\[]|[\)\]]$/g, '');
+      statusKeterangan = ` *(${arahanClean})*`;
     }
 
-    if (j.pendamping && j.pendamping.trim() !== '') {
-      const pendampingSummary = formatListSummary(j.pendamping, 2);
-      if (pendampingSummary) {
-        lines.push(`   🤝 *Pendamping* : ${pendampingSummary}`);
-      }
-    } else if (j.pejabatHadir && j.pejabatHadir.trim() !== '-' && j.pejabatHadir.trim() !== '') {
-      lines.push(`   👥 *Hadir*   : ${j.pejabatHadir.trim()}`);
+    // Nama kegiatan menggunakan blockquote ('> ')
+    let cleanNama = j.namaKegiatan.trim();
+    if (!cleanNama.endsWith('.') && !cleanNama.endsWith('!') && !cleanNama.endsWith('?')) {
+      cleanNama += '.';
     }
+    const quoteLines = `> ${cleanNama}${statusKeterangan}`;
 
-    if (j.catatan && j.catatan.trim() !== '') {
-      const catatanSummary = formatListSummary(j.catatan, 1);
-      if (catatanSummary) {
-        lines.push(`   ℹ️ *Catatan* : ${catatanSummary}`);
-      }
-    }
+    // Baris Lokasi
+    const rawLokasi = j.lokasi && j.lokasi !== '-' ? j.lokasi.trim() : 'Belum ditentukan';
+    const lokasiStr = rawLokasi.endsWith('.') ? rawLokasi : `${rawLokasi}.`;
+    const lokasiLine = `*Lokasi:* ${lokasiStr}`;
 
+    // Baris PIC
+    let picLine = '';
     if (j.pic && j.pic.trim() !== '-' && j.pic.trim() !== '') {
-      lines.push(`   📞 *PIC*     : ${j.pic.trim()}`);
+      const rawPic = j.pic.trim();
+      const picStr = rawPic.endsWith('.') ? rawPic : `${rawPic}.`;
+      picLine = `\n*PIC:* ${picStr}`;
     }
 
-    return lines.join('\n');
+    return `${headerItem}\n${quoteLines}\n\n${lokasiLine}${picLine}`;
   }
 
   /**
-   * Menampilkan menu Jadwal Kegiatan
+   * Menampilkan menu Jadwal Kegiatan (Hari Ini)
    */
   public async showJadwalMenu(session: UserSession): Promise<BotResponse> {
     sessionService.setState(session.whatsappNumber, BotState.JADWAL_MENU);
 
     const todayStr = jadwalService.getTodayString();
-    const todayFormatted = formatTanggalIndo(todayStr);
+    const todayFormatted = formatTanggalIndo(todayStr, true);
+    const todayUpper = todayFormatted.toUpperCase();
+    const greeting = getGreetingWib();
 
     // Ambil jadwal hari ini (hanya yang status disposisinya diagendakan)
     const jadwalsHariIni = await jadwalService.getJadwalHariIni(false, true);
 
-    let listText = '';
     if (jadwalsHariIni.length === 0) {
-      listText = `_Tidak ada agenda kegiatan dengan status diagendakan untuk hari ini (${todayFormatted})._\n`;
-    } else {
-      session.jadwalSearchResults = jadwalsHariIni;
-      session.jadwalSearchKeyword = 'Agenda Hari Ini';
-      sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
-
-      listText = jadwalsHariIni
-        .map((j, idx) => this.formatJadwalItem(j, idx + 1, false))
-        .join('\n\n');
+      const text =
+        `*JADWAL KEGIATAN PROTOKOL*\n` +
+        `*${todayUpper}*\n\n` +
+        `${greeting}\n` +
+        `Mohon izin menyampaikan bahwa tidak ada agenda kegiatan protokol yang terdaftar untuk hari ini (${todayFormatted}).\n\n` +
+        `Demikian informasi kami sampaikan. Terima kasih.`;
+      return { text };
     }
 
+    session.jadwalSearchResults = jadwalsHariIni;
+    session.jadwalSearchKeyword = 'Agenda Hari Ini';
+    sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
+
+    const listText = jadwalsHariIni
+      .map((j, idx) => this.formatJadwalItem(j, idx + 1, false))
+      .join('\n\n');
+
     const text =
-      `📅 *JADWAL KEGIATAN PROTOKOL HARI INI*\n` +
-      `📅 *Tanggal:* ${todayFormatted}\n\n` +
+      `*JADWAL KEGIATAN PROTOKOL*\n` +
+      `*${todayUpper}*\n\n` +
+      `${greeting}\n` +
+      `Mohon izin menyampaikan jadwal kegiatan protokol untuk hari ini, ${todayFormatted}, sebagai berikut:\n\n` +
       `${listText}\n\n` +
-      `─────────────────────────\n` +
-      `Silakan beri tahu saya jika Anda ingin melihat kegiatan terdekat berikutnya atau agenda beberapa hari ke depan ya.`;
+      `Demikian informasi kami sampaikan. Terima kasih.`;
 
     return { text };
   }
@@ -103,33 +123,41 @@ export class JadwalHandler {
     sessionService.setState(session.whatsappNumber, BotState.JADWAL_MENU);
 
     const tomorrowStr = jadwalService.getTomorrowString();
-    const tomorrowFormatted = formatTanggalIndo(tomorrowStr);
+    const tomorrowFormatted = formatTanggalIndo(tomorrowStr, true);
+    const tomorrowUpper = tomorrowFormatted.toUpperCase();
+    const greeting = getGreetingWib();
 
     const jadwalsBesok = await jadwalService.getJadwalBesok();
 
-    let listText = '';
     if (jadwalsBesok.length === 0) {
       const nextResult = await jadwalService.getJadwalBerikutnyaTerdekat();
       const nextInfo = nextResult
-        ? `\n\n💡 *Agenda terdekat berikutnya:* ${nextResult.item.namaKegiatan} pada hari *${formatTanggalIndo(nextResult.item.tanggalKegiatan)}* pukul ${formatWaktuDisplay(nextResult.item.waktuMulai, nextResult.item.waktuSelesai)}.`
+        ? `\n\n💡 *Agenda terdekat berikutnya:* ${nextResult.item.namaKegiatan} pada hari *${formatTanggalIndo(nextResult.item.tanggalKegiatan)}* pukul ${formatWaktuProtokol(nextResult.item.waktuMulai, nextResult.item.waktuSelesai)}.`
         : '';
-      listText = `_Tidak ada agenda kegiatan terdaftar untuk besok (${tomorrowFormatted})._${nextInfo}`;
-    } else {
-      session.jadwalSearchResults = jadwalsBesok;
-      session.jadwalSearchKeyword = 'Agenda Besok';
-      sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
-
-      listText = jadwalsBesok
-        .map((j, idx) => this.formatJadwalItem(j, idx + 1, false))
-        .join('\n\n');
+      const text =
+        `*JADWAL KEGIATAN PROTOKOL*\n` +
+        `*${tomorrowUpper}*\n\n` +
+        `${greeting}\n` +
+        `Mohon izin menyampaikan bahwa tidak ada agenda kegiatan protokol yang terdaftar untuk besok (${tomorrowFormatted}).${nextInfo}\n\n` +
+        `Demikian informasi kami sampaikan. Terima kasih.`;
+      return { text };
     }
 
+    session.jadwalSearchResults = jadwalsBesok;
+    session.jadwalSearchKeyword = 'Agenda Besok';
+    sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
+
+    const listText = jadwalsBesok
+      .map((j, idx) => this.formatJadwalItem(j, idx + 1, false))
+      .join('\n\n');
+
     const text =
-      `📅 *JADWAL KEGIATAN PROTOKOL BESOK*\n` +
-      `📅 *Tanggal:* ${tomorrowFormatted}\n\n` +
+      `*JADWAL KEGIATAN PROTOKOL*\n` +
+      `*${tomorrowUpper}*\n\n` +
+      `${greeting}\n` +
+      `Mohon izin menyampaikan jadwal kegiatan protokol untuk besok, ${tomorrowFormatted}, sebagai berikut:\n\n` +
       `${listText}\n\n` +
-      `─────────────────────────\n` +
-      `Silakan beri tahu saya jika Anda ingin memeriksa jadwal kegiatan lainnya ya.`;
+      `Demikian informasi kami sampaikan. Terima kasih.`;
 
     return { text };
   }
@@ -143,14 +171,17 @@ export class JadwalHandler {
 
     const result = await jadwalService.getJadwalByDate(targetDateStr);
     const { items, formattedDate } = result;
+    const greeting = getGreetingWib();
+    const formattedDateUpper = formattedDate.toUpperCase();
 
     if (items.length === 0) {
       sessionService.setState(session.whatsappNumber, BotState.JADWAL_MENU);
       const text =
-        `📅 *JADWAL KEGIATAN PROTOKOL*\n` +
-        `📅 *Tanggal:* ${formattedDate}\n\n` +
-        `_Tidak ada agenda kegiatan terdaftar untuk tanggal tersebut._\n\n` +
-        `Silakan beri tahu saya jika Anda ingin mencari tanggal lain atau kegiatan tertentu ya. 😊`;
+        `*JADWAL KEGIATAN PROTOKOL*\n` +
+        `*${formattedDateUpper}*\n\n` +
+        `${greeting}\n` +
+        `Mohon izin menyampaikan bahwa tidak ada agenda kegiatan protokol yang terdaftar untuk ${formattedDate}.\n\n` +
+        `Demikian informasi kami sampaikan. Terima kasih.`;
       return { text };
     }
 
@@ -163,13 +194,12 @@ export class JadwalHandler {
       .join('\n\n');
 
     const text =
-      `📅 *JADWAL KEGIATAN PROTOKOL*\n` +
-      `📅 *Tanggal:* ${formattedDate}\n\n` +
-      `Ditemukan *${items.length} agenda kegiatan*:\n\n` +
+      `*JADWAL KEGIATAN PROTOKOL*\n` +
+      `*${formattedDateUpper}*\n\n` +
+      `${greeting}\n` +
+      `Mohon izin menyampaikan jadwal kegiatan protokol untuk ${formattedDate}, sebagai berikut:\n\n` +
       `${listText}\n\n` +
-      `─────────────────────────\n` +
-      `💡 *Petunjuk:*\n` +
-      `Silakan ketik nomor kegiatan (contoh: _jadwal 1_), atau sebutkan *nama kegiatan* yang ingin Anda lihat rinciannya ya. 😊`;
+      `Demikian informasi kami sampaikan. Terima kasih.`;
 
     return { text };
   }
@@ -184,14 +214,17 @@ export class JadwalHandler {
   ): Promise<BotResponse> {
     const result = await jadwalService.getJadwalRentangHari(daysCount, labelText);
     const { items, formattedRange, label } = result;
+    const greeting = getGreetingWib();
+    const labelUpper = label.toUpperCase();
 
     if (items.length === 0) {
       sessionService.setState(session.whatsappNumber, BotState.JADWAL_MENU);
       const text =
-        `📅 *JADWAL KEGIATAN PROTOKOL (${label.toUpperCase()})*\n` +
-        `📅 *Periode:* ${formattedRange}\n\n` +
-        `_Tidak ada agenda kegiatan terdaftar untuk periode ${label.toLowerCase()} tersebut._\n\n` +
-        `Silakan beri tahu saya jika Anda ingin mencari tanggal lain atau kegiatan tertentu ya. 😊`;
+        `*JADWAL KEGIATAN PROTOKOL*\n` +
+        `*PERIODE: ${formattedRange.toUpperCase()} (${labelUpper})*\n\n` +
+        `${greeting}\n` +
+        `Mohon izin menyampaikan bahwa tidak ada agenda kegiatan protokol yang terdaftar untuk periode ${label.toLowerCase()} (${formattedRange}).\n\n` +
+        `Demikian informasi kami sampaikan. Terima kasih.`;
       return { text };
     }
 
@@ -204,13 +237,12 @@ export class JadwalHandler {
       .join('\n\n');
 
     const text =
-      `📅 *JADWAL KEGIATAN PROTOKOL (${label.toUpperCase()})*\n` +
-      `📅 *Periode:* ${formattedRange}\n\n` +
-      `Ditemukan *${items.length} agenda kegiatan*:\n\n` +
+      `*JADWAL KEGIATAN PROTOKOL*\n` +
+      `*PERIODE: ${formattedRange.toUpperCase()} (${labelUpper})*\n\n` +
+      `${greeting}\n` +
+      `Mohon izin menyampaikan jadwal kegiatan protokol untuk periode ${label.toLowerCase()} (${formattedRange}), sebagai berikut:\n\n` +
       `${listText}\n\n` +
-      `─────────────────────────\n` +
-      `💡 *Petunjuk:*\n` +
-      `Silakan ketik nomor kegiatan (contoh: _jadwal 1_), atau sebutkan *nama kegiatan* yang ingin Anda lihat rinciannya ya. 😊`;
+      `Demikian informasi kami sampaikan. Terima kasih.`;
 
     return { text };
   }
@@ -344,14 +376,16 @@ export class JadwalHandler {
     const listText = results
       .map((j, idx) => this.formatJadwalItem(j, idx + 1, true))
       .join('\n\n');
+    const greeting = getGreetingWib();
+    const keywordUpper = keyword.toUpperCase();
 
     const text =
-      `🔍 *HASIL PENCARIAN JADWAL KEGIATAN*\n` +
-      `Ditemukan *${results.length} agenda kegiatan* untuk kata kunci *"${keyword}"*:\n\n` +
+      `*JADWAL KEGIATAN PROTOKOL*\n` +
+      `*HASIL PENCARIAN: "${keywordUpper}"*\n\n` +
+      `${greeting}\n` +
+      `Mohon izin menyampaikan jadwal kegiatan protokol terkait "${keyword}", sebagai berikut:\n\n` +
       `${listText}\n\n` +
-      `─────────────────────────\n` +
-      `💡 *Petunjuk:*\n` +
-      `Silakan ketik nomor kegiatan (contoh: _jadwal 1_), atau sebutkan *nama kegiatan* yang ingin Anda lihat rinciannya ya. 😊`;
+      `Demikian informasi kami sampaikan. Terima kasih.`;
 
     return { text };
   }
@@ -623,12 +657,16 @@ export class JadwalHandler {
       const listText = mendatang
         .map((j, idx) => this.formatJadwalItem(j, idx + 1, true))
         .join('\n\n');
+      const greeting = getGreetingWib();
 
       return {
         text:
-          `🗓️ *AGENDA PROTOKOL MENDATANG*\n\n` +
+          `*JADWAL KEGIATAN PROTOKOL*\n` +
+          `*AGENDA MENDATANG*\n\n` +
+          `${greeting}\n` +
+          `Mohon izin menyampaikan jadwal kegiatan protokol untuk beberapa hari ke depan, sebagai berikut:\n\n` +
           `${listText}\n\n` +
-          `Silakan ketik nomor kegiatan (contoh: _jadwal 1_), atau sebutkan *nama kegiatan* yang ingin Anda lihat rinciannya ya. 😊`,
+          `Demikian informasi kami sampaikan. Terima kasih.`,
       };
     } else if (nlu?.intent === 'JADWAL_CARI' || clean === '3' || lower.includes('cari')) {
       if (nlu?.entities?.tanggal) {

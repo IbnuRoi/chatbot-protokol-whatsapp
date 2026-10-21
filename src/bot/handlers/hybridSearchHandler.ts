@@ -16,7 +16,7 @@ import {
   formatDetailBullets,
   formatSuratListItem,
 } from '../../utils/textHelper';
-import { formatWaktuDisplay } from '../../utils/dateHelper';
+import { formatWaktuDisplay, getGreetingWib, formatWaktuProtokol } from '../../utils/dateHelper';
 import { NormalizedSurat } from '../../services/suratService';
 import { NormalizedJadwal } from '../../services/jadwalService';
 
@@ -127,37 +127,72 @@ export class HybridSearchHandler {
     if (letters.length === 0 && schedules.length > 0) {
       sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
 
+      const greeting = getGreetingWib();
       const listText = schedules
         .map((j, idx) => {
-          const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
-          const formattedDate = formatTanggalIndo(j.tanggalKegiatan);
-          const statusBadge = formatStatusBadge(j.statusDisposisi, j.statusDisposisiCode);
-          const lines = [
-            `*${idx + 1}.* 📌 *${j.namaKegiatan}*`,
-            `   📅 *Tanggal* : ${formattedDate}`,
-            `   🕒 *Waktu*   : ${waktu}`,
-            `   📍 *Lokasi*  : ${j.lokasi && j.lokasi !== '-' ? j.lokasi : 'Belum ditentukan'}`,
-            `   📋 *Status*  : ${statusBadge}`,
-          ];
-          if (j.pejabatHadir && j.pejabatHadir.trim() !== '-' && j.pejabatHadir.trim() !== '') {
-            lines.push(`   👥 *Hadir*   : ${j.pejabatHadir.trim()}`);
+          const waktuStr = formatWaktuProtokol(j.waktuMulai, j.waktuSelesai);
+          const tglIndo = formatTanggalIndo(j.tanggalKegiatan, true);
+          const headerItem = `*${idx + 1}. ${tglIndo} | Pukul ${waktuStr}*`;
+
+          let statusKeterangan = '';
+          const statusLower = (j.statusDisposisi || '').toLowerCase();
+          const arahanLower = (j.arahan || '').toLowerCase();
+
+          if (j.statusDisposisiCode === 3 || statusLower.includes('diwakilkan')) {
+            if (j.pejabatHadir && j.pejabatHadir !== '-' && !j.pejabatHadir.toLowerCase().includes('diwakilkan')) {
+              statusKeterangan = ` *(Diwakilkan ${j.pejabatHadir.trim()})*`;
+            } else if (j.arahan && j.arahan.trim() !== '') {
+              const arahanClean = j.arahan.trim().replace(/^[\(\[]|[\)\]]$/g, '');
+              statusKeterangan = ` *(${arahanClean})*`;
+            } else {
+              statusKeterangan = ` *(Diwakilkan)*`;
+            }
+          } else if (j.statusDisposisiCode === 2 || statusLower.includes('reschedule') || statusLower.includes('jadwalkan ulang')) {
+            statusKeterangan = ` *(Dijadwalkan Ulang)*`;
+          } else if (j.statusDisposisiCode === 4 || statusLower.includes('cancel') || statusLower.includes('batal')) {
+            statusKeterangan = ` *(Dibatalkan)*`;
+          } else if (
+            j.statusDisposisiCode === null ||
+            statusLower.includes('belum') ||
+            statusLower.includes('tidak ada') ||
+            (!j.statusDisposisi && !j.arahan)
+          ) {
+            statusKeterangan = ` *(Belum ada disposisi)*`;
+          } else if (j.arahan && j.arahan.trim() !== '' && !arahanLower.includes('agendakan')) {
+            const arahanClean = j.arahan.trim().replace(/^[\(\[]|[\)\]]$/g, '');
+            statusKeterangan = ` *(${arahanClean})*`;
           }
+
+          let cleanNama = j.namaKegiatan.trim();
+          if (!cleanNama.endsWith('.') && !cleanNama.endsWith('!') && !cleanNama.endsWith('?')) {
+            cleanNama += '.';
+          }
+          const quoteLines = `> ${cleanNama}${statusKeterangan}`;
+
+          const rawLokasi = j.lokasi && j.lokasi !== '-' ? j.lokasi.trim() : 'Belum ditentukan';
+          const lokasiStr = rawLokasi.endsWith('.') ? rawLokasi : `${rawLokasi}.`;
+          const lokasiLine = `*Lokasi:* ${lokasiStr}`;
+
+          let picLine = '';
           if (j.pic && j.pic.trim() !== '-' && j.pic.trim() !== '') {
-            lines.push(`   📞 *PIC*     : ${j.pic.trim()}`);
+            const rawPic = j.pic.trim();
+            const picStr = rawPic.endsWith('.') ? rawPic : `${rawPic}.`;
+            picLine = `\n*PIC:* ${picStr}`;
           }
-          return lines.join('\n');
+
+          return `${headerItem}\n${quoteLines}\n\n${lokasiLine}${picLine}`;
         })
         .join('\n\n');
 
       return {
         text:
           `${timeNotice}` +
-          `🔍 *HASIL PENCARIAN JADWAL KEGIATAN*\n` +
-          `Ditemukan *${schedules.length} agenda kegiatan* untuk pencarian *"${clean}"*:\n\n` +
+          `*JADWAL KEGIATAN PROTOKOL*\n` +
+          `*HASIL PENCARIAN: "${clean.toUpperCase()}"*\n\n` +
+          `${greeting}\n` +
+          `Mohon izin menyampaikan jadwal kegiatan protokol terkait "${clean}", sebagai berikut:\n\n` +
           `${listText}\n\n` +
-          `─────────────────────────\n` +
-          `💡 *Petunjuk:*\n` +
-          `Silakan ketik nomor kegiatan (contoh: _jadwal 1_), atau sebutkan *nama kegiatan* untuk melihat rinciannya ya. 😊`,
+          `Demikian informasi kami sampaikan. Terima kasih.`,
       };
     }
 
