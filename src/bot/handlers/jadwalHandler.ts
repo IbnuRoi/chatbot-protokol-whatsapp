@@ -66,7 +66,7 @@ export class JadwalHandler {
     let picLine = '';
     if (j.pic && j.pic.trim() !== '-' && j.pic.trim() !== '') {
       const rawPic = j.pic.trim();
-      const picStr = rawPic.endsWith('.') ? rawPic : `${rawPic}.`;
+      const picStr = rawPic.endsWith('.') || rawPic.endsWith(')') ? rawPic : `${rawPic}.`;
       picLine = `\n*PIC:* ${picStr}`;
     }
 

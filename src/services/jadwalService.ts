@@ -1,6 +1,6 @@
 import { prisma } from '../database/prisma';
 import { Prisma } from '@prisma/client';
-import { cleanHtml, splitPicNameAndPhone, extractEventTitleDetails } from '../utils/textHelper';
+import { cleanHtml, splitPicNameAndPhone, extractEventTitleDetails, formatPicWithWhatsApp } from '../utils/textHelper';
 import { expandSearchTermsWithAcronyms, calculateRelevanceScore } from '../utils/acronymHelper';
 import { formatTanggalIndo, formatWaktuDisplay, parseIndonesianDateToDate, parseIndonesianTimeToDates, isValidDate } from '../utils/dateHelper';
 import { syncTableSequence, isDuplicateKeyError } from '../database/sequenceSync';
@@ -193,6 +193,7 @@ export class JadwalService {
         from: true,
         pic_name: true,
         pic_phone_number: true,
+        pic_json: true,
         status: true,
       },
       take: 50,
@@ -321,6 +322,7 @@ export class JadwalService {
         from: true,
         pic_name: true,
         pic_phone_number: true,
+        pic_json: true,
         status: true,
       },
       take: 100,
@@ -418,6 +420,7 @@ export class JadwalService {
           from: true,
           pic_name: true,
           pic_phone_number: true,
+          pic_json: true,
           status: true,
         },
       });
@@ -498,17 +501,10 @@ export class JadwalService {
     const cleanTitle = extracted.cleanTitle || 'Agenda Kegiatan Protokol';
 
     // 6. PIC
-    let picInfo = '-';
-    if (event.pic_name && event.pic_phonenumber && !event.pic_name.includes(event.pic_phonenumber)) {
-      picInfo = `${event.pic_name} (${event.pic_phonenumber})`;
-    } else if (event.pic_name || event.pic_phonenumber) {
-      picInfo = event.pic_name || event.pic_phonenumber || '-';
-    } else if (letter && (letter.pic_name || letter.pic_phone_number)) {
-      picInfo =
-        letter.pic_name && letter.pic_phone_number && !letter.pic_name.includes(letter.pic_phone_number)
-          ? `${letter.pic_name} (${letter.pic_phone_number})`
-          : (letter.pic_name || letter.pic_phone_number || '-');
-    }
+    const rawPicName = event.pic_name || letter?.pic_name || null;
+    const rawPicPhone = event.pic_phonenumber || letter?.pic_phone_number || null;
+    const rawPicJson = event.pic_json || letter?.pic_json || null;
+    const picInfo = formatPicWithWhatsApp(rawPicName, rawPicPhone, rawPicJson);
 
     const letterInfo = letter
       ? {
@@ -584,10 +580,7 @@ export class JadwalService {
     const extracted = extractEventTitleDetails(letter.subject || 'Agenda Kegiatan Protokol');
     const cleanTitle = extracted.cleanTitle || 'Agenda Kegiatan Protokol';
 
-    const picInfo =
-      letter.pic_name && letter.pic_phone_number && !letter.pic_name.includes(letter.pic_phone_number)
-        ? `${letter.pic_name} (${letter.pic_phone_number})`
-        : (letter.pic_name || letter.pic_phone_number || '-');
+    const picInfo = formatPicWithWhatsApp(letter.pic_name, letter.pic_phone_number, letter.pic_json);
 
     const sLet = letter.status !== null && letter.status !== undefined ? Number(letter.status) : null;
     let statusDisposisi = 'Belum ada disposisi';

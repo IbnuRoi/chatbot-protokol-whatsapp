@@ -176,7 +176,7 @@ export class HybridSearchHandler {
           let picLine = '';
           if (j.pic && j.pic.trim() !== '-' && j.pic.trim() !== '') {
             const rawPic = j.pic.trim();
-            const picStr = rawPic.endsWith('.') ? rawPic : `${rawPic}.`;
+            const picStr = rawPic.endsWith('.') || rawPic.endsWith(')') ? rawPic : `${rawPic}.`;
             picLine = `\n*PIC:* ${picStr}`;
           }
 
@@ -244,6 +244,9 @@ export class HybridSearchHandler {
           if (pdSummary) lines.push(`   🤝 *Pendamping* : ${pdSummary}`);
         } else if (j.pejabatHadir && j.pejabatHadir !== '-') {
           lines.push(`   👥 *Hadir*   : ${j.pejabatHadir}`);
+        }
+        if (j.pic && j.pic.trim() !== '-' && j.pic.trim() !== '') {
+          lines.push(`   👤 *PIC*     : ${j.pic.trim()}`);
         }
         if (j.catatan && j.catatan.trim() !== '') {
           const cSummary = formatListSummary(j.catatan, 1);

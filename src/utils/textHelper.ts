@@ -639,6 +639,154 @@ export function formatCombinedPic(name: string | null | undefined, phone: string
 }
 
 /**
+ * Memformat nomor telepon menjadi format internasional dan tautan WhatsApp langsung (wa.me)
+ * Contoh:
+ * - "0813-2906-6115" -> { display: "+62 813-2906-6115", waLink: "https://wa.me/6281329066115", waDigits: "6281329066115" }
+ * - "+6281234567890" -> { display: "+62 812-3456-7890", waLink: "https://wa.me/6281234567890", waDigits: "6281234567890" }
+ */
+export function formatWhatsAppPhone(rawPhone: string | null | undefined): {
+  display: string;
+  waLink: string;
+  waDigits: string;
+} | null {
+  if (!rawPhone || !rawPhone.trim() || rawPhone.trim() === '-') return null;
+
+  const digits = rawPhone.replace(/\D/g, '');
+  if (digits.length < 8) return null;
+
+  let waDigits = digits;
+  if (waDigits.startsWith('0')) {
+    waDigits = '62' + waDigits.slice(1);
+  } else if (!waDigits.startsWith('62')) {
+    if (waDigits.startsWith('8')) {
+      waDigits = '62' + waDigits;
+    }
+  }
+
+  if (waDigits.length < 9 || waDigits.length > 16) {
+    return null;
+  }
+
+  const waLink = `https://wa.me/${waDigits}`;
+
+  let display = `+${waDigits}`;
+  if (waDigits.startsWith('628')) {
+    const rest = waDigits.slice(2);
+    const p1 = rest.slice(0, 3);
+    const p2 = rest.slice(3, 7);
+    const p3 = rest.slice(7);
+    display = `+62 ${p1}${p2 ? '-' + p2 : ''}${p3 ? '-' + p3 : ''}`;
+  } else if (waDigits.startsWith('62')) {
+    const rest = waDigits.slice(2);
+    display = `+62 ${rest}`;
+  }
+
+  return { display, waLink, waDigits };
+}
+
+function formatSinglePicContact(rawName?: string | null, rawPhone?: string | null): string {
+  let cleanName = (rawName || '').trim();
+  let cleanPhone = (rawPhone || '').trim();
+
+  if (cleanName === '-' || cleanName.toLowerCase() === 'null') cleanName = '';
+  if (cleanPhone === '-' || cleanPhone.toLowerCase() === 'null') cleanPhone = '';
+
+  if (cleanName.includes('wa.me/')) {
+    return cleanName;
+  }
+
+  if (!cleanPhone && cleanName) {
+    const splitted = splitPicNameAndPhone(cleanName);
+    if (splitted.phone && splitted.phone !== '-') {
+      cleanPhone = splitted.phone;
+      cleanName = splitted.name !== '-' ? splitted.name : '';
+    }
+  } else if (cleanPhone && cleanName) {
+    const splitted = splitPicNameAndPhone(cleanName);
+    if (splitted.name && splitted.name !== '-') {
+      cleanName = splitted.name;
+    }
+  }
+
+  let formattedPhoneStr = '';
+  if (cleanPhone.includes('/') || cleanPhone.includes(',')) {
+    const parts = cleanPhone.split(/[/,]/).map((p) => p.trim()).filter(Boolean);
+    const formattedParts = parts
+      .map((p) => {
+        const parsed = formatWhatsAppPhone(p);
+        return parsed ? `${parsed.display} | ${parsed.waLink}` : null;
+      })
+      .filter((p): p is string => Boolean(p));
+
+    if (formattedParts.length > 0) {
+      formattedPhoneStr = formattedParts.join(' / ');
+    }
+  } else {
+    const parsed = formatWhatsAppPhone(cleanPhone);
+    if (parsed) {
+      formattedPhoneStr = `${parsed.display} | ${parsed.waLink}`;
+    }
+  }
+
+  const hasName = cleanName && cleanName !== '-' && cleanName.length >= 2;
+  const hasPhone = Boolean(formattedPhoneStr);
+
+  if (hasName && hasPhone) {
+    return `${cleanName} (${formattedPhoneStr})`;
+  }
+  if (hasName) {
+    return cleanName;
+  }
+  if (hasPhone) {
+    return formattedPhoneStr;
+  }
+  return '-';
+}
+
+/**
+ * Memformat nama PIC, nomor telepon, dan data JSON PIC menjadi format standar protokol
+ * yang dilengkapi tautan WhatsApp langsung (wa.me) yang dapat langsung diklik.
+ *
+ * Contoh hasil:
+ * - "Sdri. Rizky Y (+62 813-2906-6115 | https://wa.me/6281329066115)"
+ * - "Bpk. Bambang Sutrisno (+62 812-9988-7766 | https://wa.me/6281299887766)"
+ * - Jika nomor tidak ada: "Biro Humas"
+ * - Jika tidak ada data sama sekali: "-"
+ */
+export function formatPicWithWhatsApp(
+  name?: string | null,
+  phone?: string | null,
+  picJson?: string | null
+): string {
+  if (picJson && picJson.trim() && picJson.trim() !== '-') {
+    try {
+      const parsed = typeof picJson === 'string' ? JSON.parse(picJson) : picJson;
+      const list = Array.isArray(parsed) ? parsed : [parsed];
+      const formattedItems: string[] = [];
+
+      for (const item of list) {
+        if (!item) continue;
+        const itemName = (item.name || item.pic_name || item.pic || '').trim();
+        const itemPhone = (item.phone || item.phonenumber || item.phone_number || item.no_hp || '').trim();
+        const singleFormatted = formatSinglePicContact(itemName, itemPhone);
+        if (singleFormatted && singleFormatted !== '-') {
+          formattedItems.push(singleFormatted);
+        }
+      }
+
+      if (formattedItems.length > 0) {
+        return formattedItems.join(', ');
+      }
+    } catch {
+      // Abaikan error JSON parsing dan lanjutkan ke format nama & telepon biasa
+    }
+  }
+
+  return formatSinglePicContact(name, phone);
+}
+
+
+/**
  * Membersihkan template awalan permohonan/undangan surat masuk
  * menjadi kalimat aktif judul kegiatan protokol (sebagaimana pola judul di database).
  *
