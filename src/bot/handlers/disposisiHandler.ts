@@ -297,21 +297,25 @@ export class DisposisiHandler {
       };
     }
 
-    // Pilihan 2: Koreksi
-    if (clean === '2' || clean === 'koreksi' || clean === 'ubah' || clean === 'edit') {
-      sessionService.setState(session.whatsappNumber, BotState.DISPOSISI_EDIT_FIELD);
+    // Jika pengguna langsung mengirim teks template koreksi saat di tahap review
+    if (input.includes(':') && this.hasDisposisiTemplateFields(input)) {
+      return this.handleDisposisiEditTemplateInput(session, input);
+    }
 
-      return {
-        text:
-          `✏️ *KOREKSI DATA DISPOSISI*\n\n` +
-          `Pilih bagian data yang ingin Anda koreksi:\n\n` +
-          `1️⃣ *Nomor Agenda* (Hubungkan ke surat masuk lain)\n` +
-          `2️⃣ *Diteruskan Kepada* (Daftar pejabat tujuan)\n` +
-          `3️⃣ *Arahan Pimpinan* (Instruksi pimpinan)\n` +
-          `4️⃣ *Catatan Khusus* (Catatan tulisan tangan/arahan)\n` +
-          `5️⃣ *Tanggal Disposisi*\n\n` +
-          `Ketik angka *1 - 5* untuk memilih bagian yang ingin diubah, atau ketik *Kembali* untuk kembali ke menu review:`,
-      };
+    // Pilihan 2: Koreksi
+    if (
+      clean === '2' ||
+      clean === 'koreksi' ||
+      clean === 'ubah' ||
+      clean === 'edit' ||
+      clean === 'salah' ||
+      clean === 'tidak' ||
+      clean.includes('ada yang salah') ||
+      clean === 'ganti'
+    ) {
+      sessionService.setState(session.whatsappNumber, BotState.DISPOSISI_EDIT_TEMPLATE);
+      session.state = BotState.DISPOSISI_EDIT_TEMPLATE;
+      return this.renderDisposisiEditTemplate(session);
     }
 
     return {
@@ -321,6 +325,307 @@ export class DisposisiHandler {
         `• *2* atau *Koreksi* untuk mengubah data\n` +
         `• *Batal* untuk membatalkan proses`,
     };
+  }
+
+  /**
+   * Menampilkan template teks koreksi lembar disposisi yang bisa disalin langsung oleh pengguna.
+   * Arahan dipisahkan ke bubble chat tersendiri (Bubble 1) dan template murni bersih di bubble chat tersendiri (Bubble 2),
+   * sehingga pengguna di WhatsApp tinggal menyalin Bubble 2 tanpa perlu menghapus arahan/catatan manual.
+   */
+  public renderDisposisiEditTemplate(session: UserSession, customGuidePrefix?: string): BotResponse {
+    const draft = session.draftDisposisi;
+    const ext = draft?.extractedData;
+
+    const diteruskanStr = ext?.diteruskanKepada && ext.diteruskanKepada.length > 0
+      ? ext.diteruskanKepada.join(', ')
+      : '-';
+
+    const arahanStr = ext?.arahanDisposisi && ext.arahanDisposisi.length > 0
+      ? ext.arahanDisposisi.join(', ')
+      : '-';
+
+    // Bubble 1: Petunjuk dan Catatan Pengisian
+    const guideText =
+      (customGuidePrefix ? `${customGuidePrefix}\n\n` : `✏️ *PANDUAN KOREKSI DATA DISPOSISI*\n\n`) +
+      `Silakan *salin (copy)* pesan template di bawah ini, ubah data pada bagian yang salah, lalu *langsung kirimkan kembali* ke chat ini tanpa perlu memilih menu:\n\n` +
+      `📌 *Catatan Pengisian:*\n` +
+      `• *Nomor Agenda*: Nomor agenda surat masuk induk yang didisposisikan\n` +
+      `• *Pemberi Disposisi*: Jabatan/Nama pemberi disposisi (contoh: Menteri Ketenagakerjaan RI)\n` +
+      `• *Sifat Disposisi*: Biasa, Segera, Sangat Segera, Rahasia, Penting\n` +
+      `• *Diteruskan Kepada*: Pejabat/unit kerja tujuan, pisahkan koma jika lebih dari satu (contoh: Sekjen, Dirjen PHI)\n` +
+      `• *Arahan Pimpinan*: Arahan/instruksi pimpinan, pisahkan koma jika lebih dari satu (contoh: Agendakan, Hadiri)\n` +
+      `• *Catatan Khusus*: Catatan khusus pimpinan (isi *-* jika tidak ada)\n` +
+      `• *Tanggal Disposisi*: Tanggal lembar disposisi (contoh: 5 Oktober 2026 atau 2026-10-05)\n` +
+      `• *Tanggal Acara*: Tanggal kegiatan jika ada acara terkait (isi *-* jika tidak ada)\n\n` +
+      `_(Ketik *batal* jika ingin membatalkan)_`;
+
+    // Bubble 2: Template Bersih (Murni Key-Value, Tanpa Arahan/Catatan agar 100% siap disalin dan diedit)
+    const cleanTemplateText =
+      `Nomor Agenda: ${ext?.nomorAgenda || '-'}\n` +
+      `Pemberi Disposisi: ${ext?.pemberiDisposisi || 'Menteri Ketenagakerjaan RI'}\n` +
+      `Sifat Disposisi: ${ext?.sifat || '-'}\n` +
+      `Diteruskan Kepada: ${diteruskanStr}\n` +
+      `Arahan Pimpinan: ${arahanStr}\n` +
+      `Catatan Khusus: ${ext?.catatan || '-'}\n` +
+      `Tanggal Disposisi: ${ext?.tanggalDisposisi || '-'}\n` +
+      `Tanggal Acara: ${ext?.tanggalAcara || '-'}`;
+
+    return {
+      text: `${guideText}\n\n${cleanTemplateText}`,
+      messages: [guideText, cleanTemplateText],
+    };
+  }
+
+  /**
+   * Menangani input template koreksi disposisi yang diedit dan dikirim kembali oleh pengguna
+   */
+  public async handleDisposisiEditTemplateInput(session: UserSession, input: string): Promise<BotResponse> {
+    const clean = input.trim();
+    const lower = clean.toLowerCase();
+
+    if (lower === 'batal' || lower === '/cancel' || lower.includes('cancel')) {
+      if (session.draftDisposisi?.tempFilePath) {
+        pdfService.deleteTempPdf(session.draftDisposisi.tempFilePath);
+      }
+      sessionService.clearDisposisiDraft(session.whatsappNumber);
+      sessionService.resetSession(session.whatsappNumber);
+      return menuHandler.getConversationalGreeting(
+        session,
+        `Baik *${session.userName}*, proses pencatatan disposisi telah dibatalkan.`
+      );
+    }
+
+    const draft = session.draftDisposisi;
+    if (!draft || !draft.extractedData) {
+      sessionService.resetSession(session.whatsappNumber);
+      return menuHandler.getMainGreeting(session);
+    }
+
+    const parsed = this.parseDisposisiTemplate(clean);
+    const updatedKeys: string[] = [];
+
+    // Jika Nomor Agenda diubah -> Cek dan tautkan ulang surat induk
+    if (parsed.nomorAgenda !== undefined) {
+      const cleanAgenda = parsed.nomorAgenda.trim();
+      draft.extractedData.nomorAgenda = cleanAgenda;
+      updatedKeys.push('Nomor Agenda');
+
+      if (cleanAgenda && cleanAgenda !== '-') {
+        const matched = await disposisiService.findLetterByAgenda(cleanAgenda);
+        if (matched) {
+          draft.matchedLetter = {
+            id: Number(matched.id),
+            agendaNumber: matched.agenda_number,
+            from: matched.from,
+            subject: matched.subject || '-',
+            perihal: matched.note || matched.subject || '-',
+            dateLetter: matched.date_letter ? String(matched.date_letter) : undefined,
+            file: matched.file || undefined,
+          };
+          const existingDisp = await disposisiService.findExistingDispositionByLetterId(matched.id);
+          draft.existingDispositionId = existingDisp ? Number(existingDisp.id) : undefined;
+          if ((!draft.extractedData.tanggalDisposisi || draft.extractedData.tanggalDisposisi === '-') && matched.date_letter) {
+            draft.extractedData.tanggalDisposisi = formatTanggalIndo(matched.date_letter, false);
+          }
+        } else {
+          draft.matchedLetter = undefined;
+          draft.existingDispositionId = undefined;
+        }
+      } else {
+        draft.matchedLetter = undefined;
+        draft.existingDispositionId = undefined;
+      }
+    }
+
+    if (parsed.pemberiDisposisi !== undefined) {
+      const val = parsed.pemberiDisposisi.trim();
+      draft.extractedData.pemberiDisposisi = val && val !== '-' ? val : 'Menteri Ketenagakerjaan RI';
+      updatedKeys.push('Pemberi Disposisi');
+    }
+
+    if (parsed.sifat !== undefined) {
+      const val = parsed.sifat.trim();
+      draft.extractedData.sifat = val && val !== '-' ? val : '-';
+      updatedKeys.push('Sifat Disposisi');
+    }
+
+    if (parsed.diteruskanKepada !== undefined) {
+      const val = parsed.diteruskanKepada.trim();
+      if (!val || val === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(val)) {
+        draft.extractedData.diteruskanKepada = [];
+      } else {
+        draft.extractedData.diteruskanKepada = val.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean);
+      }
+      updatedKeys.push('Diteruskan Kepada');
+    }
+
+    if (parsed.arahanDisposisi !== undefined) {
+      const val = parsed.arahanDisposisi.trim();
+      if (!val || val === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(val)) {
+        draft.extractedData.arahanDisposisi = [];
+      } else {
+        draft.extractedData.arahanDisposisi = val.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean);
+      }
+      updatedKeys.push('Arahan Pimpinan');
+    }
+
+    if (parsed.catatan !== undefined) {
+      const val = parsed.catatan.trim();
+      draft.extractedData.catatan = !val || val === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(val) ? '-' : val;
+      updatedKeys.push('Catatan Khusus');
+    }
+
+    if (parsed.tanggalDisposisi !== undefined) {
+      const val = parsed.tanggalDisposisi.trim();
+      draft.extractedData.tanggalDisposisi = val && val !== '-' ? val : '-';
+      updatedKeys.push('Tanggal Disposisi');
+    }
+
+    if (parsed.tanggalAcara !== undefined) {
+      const val = parsed.tanggalAcara.trim();
+      draft.extractedData.tanggalAcara = !val || val === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(val) ? undefined : val;
+      updatedKeys.push('Tanggal Acara');
+    }
+
+    // Jika pengguna tidak menggunakan format key-value atau tidak ada field yang terdeteksi
+    if (updatedKeys.length === 0) {
+      const isSimpan = clean === '1' || lower === 'ya' || lower === 'simpan' || lower === 'sudah' || lower === 'sesuai' || lower === 'ok';
+      if (isSimpan) {
+        return this.handleReviewResponse(session, clean);
+      }
+
+      return this.renderDisposisiEditTemplate(session, `⚠️ *Format perubahan belum dikenali.*\nPastikan menggunakan format *Bagian: Nilai baru*.`);
+    }
+
+    sessionService.updateDisposisiDraft(session.whatsappNumber, draft);
+    sessionService.setState(session.whatsappNumber, BotState.DISPOSISI_REVIEW_DATA);
+    session.state = BotState.DISPOSISI_REVIEW_DATA;
+    session.draftDisposisi = draft;
+
+    return this.renderDisposisiReview(session);
+  }
+
+  /**
+   * Mengecek apakah teks mengandung kata kunci field lembar disposisi
+   */
+  public hasDisposisiTemplateFields(text: string): boolean {
+    const lower = text.toLowerCase();
+    return (
+      lower.includes('nomor agenda') ||
+      lower.includes('agenda') ||
+      lower.includes('pemberi disposisi') ||
+      lower.includes('pemberi') ||
+      lower.includes('sifat disposisi') ||
+      lower.includes('sifat') ||
+      lower.includes('diteruskan kepada') ||
+      lower.includes('diteruskan') ||
+      lower.includes('tujuan') ||
+      lower.includes('arahan pimpinan') ||
+      lower.includes('arahan') ||
+      lower.includes('instruksi') ||
+      lower.includes('catatan khusus') ||
+      lower.includes('catatan') ||
+      lower.includes('tanggal disposisi') ||
+      lower.includes('tgl disposisi') ||
+      lower.includes('tanggal acara') ||
+      lower.includes('tgl acara')
+    );
+  }
+
+  /**
+   * Parsing teks template berformat key: value untuk koreksi lembar disposisi
+   */
+  public parseDisposisiTemplate(text: string): {
+    nomorAgenda?: string;
+    pemberiDisposisi?: string;
+    sifat?: string;
+    diteruskanKepada?: string;
+    arahanDisposisi?: string;
+    catatan?: string;
+    tanggalDisposisi?: string;
+    tanggalAcara?: string;
+  } {
+    const result: {
+      nomorAgenda?: string;
+      pemberiDisposisi?: string;
+      sifat?: string;
+      diteruskanKepada?: string;
+      arahanDisposisi?: string;
+      catatan?: string;
+      tanggalDisposisi?: string;
+      tanggalAcara?: string;
+    } = {};
+
+    const lines = text.split('\n');
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      // Abaikan baris pembungkus markdown atau instruksi dalam kurung
+      if (/^_\s*\(.*?\)\s*_$/.test(line) || /^\(.*?\)$/.test(line)) continue;
+
+      // Bersihkan dekorator awal baris seperti bullet, underscore, tanda bintang
+      const lowerClean = line.toLowerCase().replace(/[\*\_•\-]/g, '').trim();
+      if (
+        lowerClean.startsWith('format ') ||
+        lowerClean.startsWith('pilihan ') ||
+        lowerClean.startsWith('panduan ') ||
+        lowerClean.startsWith('catatan pengisian') ||
+        lowerClean.startsWith('petunjuk ') ||
+        lowerClean.startsWith('contoh ') ||
+        lowerClean.startsWith('keterangan ') ||
+        lowerClean.startsWith('silakan ') ||
+        lowerClean.startsWith('cukup salin') ||
+        lowerClean.startsWith('template ') ||
+        lowerClean.startsWith('ketik ') ||
+        lowerClean.startsWith('atau ketik ')
+      ) {
+        continue;
+      }
+
+      // Baris field harus memiliki tanda titik dua ':'
+      const colonIdx = line.indexOf(':');
+      if (colonIdx === -1) continue;
+
+      const rawKey = line.slice(0, colonIdx).replace(/[\*\_•\-]/g, '').trim().toLowerCase();
+      const rawVal = line.slice(colonIdx + 1).replace(/^[\*\_]+|[\*\_]+$/g, '').trim();
+
+      if (!rawVal) continue;
+
+      // Abaikan jika key diawali kata panduan/catatan
+      if (
+        rawKey.startsWith('format ') ||
+        rawKey.startsWith('pilihan ') ||
+        rawKey.startsWith('panduan ') ||
+        rawKey.startsWith('catatan pengisian') ||
+        rawKey.startsWith('petunjuk ') ||
+        rawKey.startsWith('contoh ') ||
+        rawKey.startsWith('keterangan ') ||
+        rawKey.startsWith('nb')
+      ) {
+        continue;
+      }
+
+      if (rawKey.includes('agenda')) {
+        result.nomorAgenda = rawVal;
+      } else if (rawKey.includes('pemberi')) {
+        result.pemberiDisposisi = rawVal;
+      } else if (rawKey.includes('sifat')) {
+        result.sifat = rawVal;
+      } else if (rawKey.includes('diteruskan') || rawKey.includes('tujuan') || rawKey.includes('kepada')) {
+        result.diteruskanKepada = rawVal;
+      } else if (rawKey.includes('arahan') || rawKey.includes('instruksi') || rawKey.includes('tindakan')) {
+        result.arahanDisposisi = rawVal;
+      } else if (rawKey.includes('catatan') || rawKey.includes('keterangan')) {
+        result.catatan = rawVal;
+      } else if (rawKey.includes('tanggal disposisi') || rawKey.includes('tgl disposisi')) {
+        result.tanggalDisposisi = rawVal;
+      } else if (rawKey.includes('tanggal acara') || rawKey.includes('tgl acara') || rawKey.includes('tanggal kegiatan') || rawKey.includes('tgl kegiatan')) {
+        result.tanggalAcara = rawVal;
+      }
+    }
+
+    return result;
   }
 
   /**

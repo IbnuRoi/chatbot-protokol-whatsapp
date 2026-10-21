@@ -342,13 +342,14 @@ export class NluService {
           confidence: 1.0,
           conversationalReply: isConfirm
             ? `Baik ${userName}, memproses penyimpanan lembar disposisi...`
-            : `Silakan pilih bagian data yang ingin Anda koreksi:`,
+            : `Silakan perbaiki data pada template lembar disposisi berikut:`,
           entities: {},
         };
       }
     }
 
     if (
+      currentState === 'DISPOSISI_EDIT_TEMPLATE' ||
       currentState === 'DISPOSISI_EDIT_FIELD' ||
       currentState === 'DISPOSISI_INPUT_NILAI_KOREKSI' ||
       currentState === 'DISPOSISI_INPUT_AGENDA_MANUAL'
@@ -907,6 +908,23 @@ export class NluService {
         intent: 'SUBMIT_STEP',
         confidence: 0.9,
         conversationalReply: `Menerapkan koreksi template data surat...`,
+        entities: {},
+      };
+    }
+
+    if (currentState === 'DISPOSISI_EDIT_TEMPLATE') {
+      if (lower === 'batal' || lower === 'cancel') {
+        return {
+          intent: 'BATAL',
+          confidence: 0.95,
+          conversationalReply: `Baik ${userName}, pencatatan disposisi telah dibatalkan.`,
+          entities: {},
+        };
+      }
+      return {
+        intent: 'SUBMIT_STEP',
+        confidence: 0.9,
+        conversationalReply: `Menerapkan koreksi template lembar disposisi...`,
         entities: {},
       };
     }

@@ -243,6 +243,64 @@ export class MessageRouter {
       }
     }
 
+    // 4.6. Fast-path: Input Template Koreksi Lembar Disposisi (Bypass NLU LLM agar respon instan <10ms)
+    const isDisposisiTemplateInput =
+      session.state === BotState.DISPOSISI_EDIT_TEMPLATE ||
+      (session.state === BotState.DISPOSISI_REVIEW_DATA &&
+        textInput.includes(':') &&
+        disposisiHandler.hasDisposisiTemplateFields(textInput));
+
+    if (isDisposisiTemplateInput) {
+      if (lower === 'batal' || lower === 'cancel') {
+        if (session.draftDisposisi?.tempFilePath) {
+          pdfService.deleteTempPdf(session.draftDisposisi.tempFilePath);
+        }
+        sessionService.clearDisposisiDraft(session.whatsappNumber);
+        sessionService.resetSession(session.whatsappNumber);
+        return {
+          text: `🚫 *PENCATATAN DISPOSISI DIBATALKAN*\n\nDraft pencatatan lembar disposisi telah dibatalkan.`,
+        };
+      }
+      return disposisiHandler.handleDisposisiEditTemplateInput(session, textInput);
+    }
+
+    // Fast-path: Respon cepat konfirmasi atau permintaan koreksi di tahap DISPOSISI_REVIEW_DATA (Bypass NLU LLM)
+    if (session.state === BotState.DISPOSISI_REVIEW_DATA) {
+      const isReviewKoreksi =
+        textInput === '2' ||
+        lower === 'salah' ||
+        lower === 'tidak' ||
+        lower === 't' ||
+        lower === 'koreksi' ||
+        lower === 'ubah' ||
+        lower === 'edit' ||
+        lower.includes('ada yang salah') ||
+        lower === 'ganti';
+
+      if (isReviewKoreksi) {
+        sessionService.setState(session.whatsappNumber, BotState.DISPOSISI_EDIT_TEMPLATE);
+        return disposisiHandler.renderDisposisiEditTemplate(session);
+      }
+
+      const isReviewSimpan =
+        textInput === '1' ||
+        lower === 'ya' ||
+        lower === 'y' ||
+        lower === 'benar' ||
+        lower === 'betul' ||
+        lower === 'simpan' ||
+        lower === 'oke' ||
+        lower === 'ok' ||
+        lower === 'sudah benar' ||
+        lower === 'sudah sesuai' ||
+        lower === 'sesuai' ||
+        lower === 'pas';
+
+      if (isReviewSimpan) {
+        return disposisiHandler.handleReviewResponse(session, textInput);
+      }
+    }
+
     // 5. Analisis NLU (OpenRouter AI) untuk setiap pesan teks percakapan
     const nlu = await nluService.processNaturalLanguage(textInput, session.userName, session.state);
 
@@ -286,6 +344,7 @@ export class MessageRouter {
       session.state === BotState.SURAT_MASUK_INPUT_NILAI_KOREKSI ||
       session.state === BotState.SURAT_MASUK_INPUT_PERIHAL_MANUAL ||
       session.state === BotState.SURAT_MASUK_INPUT_AGENDA_MANUAL ||
+      session.state === BotState.DISPOSISI_EDIT_TEMPLATE ||
       session.state === BotState.DISPOSISI_INPUT_NILAI_KOREKSI ||
       session.state === BotState.DISPOSISI_INPUT_AGENDA_MANUAL ||
       session.state === BotState.DISPOSISI_EDIT_FIELD ||
@@ -511,6 +570,9 @@ export class MessageRouter {
       case BotState.DISPOSISI_REVIEW_DATA:
         return disposisiHandler.handleReviewResponse(session, textInput);
 
+      case BotState.DISPOSISI_EDIT_TEMPLATE:
+        return disposisiHandler.handleDisposisiEditTemplateInput(session, textInput);
+
       case BotState.DISPOSISI_EDIT_FIELD:
         return disposisiHandler.handleEditChoice(session, textInput);
 
@@ -609,6 +671,7 @@ export class MessageRouter {
       session.state === BotState.SURAT_MASUK_INPUT_NILAI_KOREKSI ||
       session.state === BotState.SURAT_MASUK_INPUT_PERIHAL_MANUAL ||
       session.state === BotState.SURAT_MASUK_INPUT_AGENDA_MANUAL ||
+      session.state === BotState.DISPOSISI_EDIT_TEMPLATE ||
       session.state === BotState.DISPOSISI_INPUT_NILAI_KOREKSI ||
       session.state === BotState.DISPOSISI_INPUT_AGENDA_MANUAL ||
       session.state === BotState.DISPOSISI_EDIT_FIELD ||
