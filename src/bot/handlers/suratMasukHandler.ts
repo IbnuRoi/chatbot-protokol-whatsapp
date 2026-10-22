@@ -6,7 +6,7 @@ import { aiService, formatPerihalByTemplate, generateSubjectSummary, formatAsalS
 import { NluResult } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
-import { cleanHtml, formatNomorAgendaLink, getLetterFileUrl, generateLetterFileName, splitPicNameAndPhone, formatCombinedPic, sanitizePlaceEvent, buildNarasiPenayanganTap } from '../../utils/textHelper';
+import { cleanHtml, formatNomorAgendaLink, getLetterFileUrl, generateLetterFileName, splitPicNameAndPhone, formatCombinedPic, sanitizePlaceEvent, buildNarasiPenayanganTap, normalizeUnicodeText, cleanPhoneNumber } from '../../utils/textHelper';
 import { formatTanggalIndo, formatWaktuInputIndo, parseIndonesianDateEventRange, parseIndonesianTimeToDates, cleanDateStringFromTime } from '../../utils/dateHelper';
 
 export const KATEGORI_LABEL_MAP: Record<string, string> = {
@@ -811,17 +811,19 @@ export class SuratMasukHandler {
       updatedKeys.push('Tempat Acara');
     }
     if (parsed.picName) {
-      session.draftSurat.extractedData.picName = parsed.picName.trim().slice(0, 100);
+      session.draftSurat.extractedData.picName = normalizeUnicodeText(parsed.picName).slice(0, 100);
       updatedKeys.push('Nama PIC');
     }
     if (parsed.picPhoneNumber) {
-      session.draftSurat.extractedData.picPhoneNumber = parsed.picPhoneNumber.trim().slice(0, 50);
+      const cleanPhone = cleanPhoneNumber(parsed.picPhoneNumber);
+      session.draftSurat.extractedData.picPhoneNumber = (cleanPhone !== '-' ? cleanPhone : normalizeUnicodeText(parsed.picPhoneNumber)).slice(0, 50);
       updatedKeys.push('Nomor PIC');
     }
     if (parsed.picPengirim && !parsed.picName && !parsed.picPhoneNumber) {
       const splitted = splitPicNameAndPhone(parsed.picPengirim);
       session.draftSurat.extractedData.picName = splitted.name.slice(0, 100);
-      session.draftSurat.extractedData.picPhoneNumber = splitted.phone.slice(0, 50);
+      const cleanPhone = cleanPhoneNumber(splitted.phone);
+      session.draftSurat.extractedData.picPhoneNumber = (cleanPhone !== '-' ? cleanPhone : splitted.phone).slice(0, 50);
       session.draftSurat.extractedData.picPengirim = parsed.picPengirim.trim().slice(0, 100);
       updatedKeys.push('PIC');
     } else if (parsed.picName || parsed.picPhoneNumber) {
@@ -924,7 +926,8 @@ export class SuratMasukHandler {
       picPhoneNumber?: string;
     } = {};
 
-    const lines = text.split('\n');
+    const normalizedText = normalizeUnicodeText(text);
+    const lines = normalizedText.split('\n');
     for (const rawLine of lines) {
       const line = rawLine.trim();
       if (!line) continue;
@@ -955,8 +958,8 @@ export class SuratMasukHandler {
       const colonIdx = line.indexOf(':');
       if (colonIdx === -1) continue;
 
-      const rawKey = line.slice(0, colonIdx).replace(/[\*\_•\-]/g, '').trim().toLowerCase();
-      const rawVal = line.slice(colonIdx + 1).replace(/^[\*\_]+|[\*\_]+$/g, '').trim();
+      const rawKey = normalizeUnicodeText(line.slice(0, colonIdx)).replace(/[\.\*\_•\-]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const rawVal = normalizeUnicodeText(line.slice(colonIdx + 1)).replace(/^[\*\_]+|[\*\_]+$/g, '').trim();
 
       if (!rawVal) continue;
 
@@ -1150,14 +1153,19 @@ export class SuratMasukHandler {
         rawKey === 'nama pic' ||
         rawKey === 'pic name' ||
         rawKey === 'nama kontak' ||
-        rawKey === 'nama narahubung'
+        rawKey === 'nama narahubung' ||
+        rawKey === 'nama cp' ||
+        rawKey === 'nama pic / narahubung' ||
+        rawKey === 'nama pic/narahubung'
       ) {
-        const splitted = splitPicNameAndPhone(rawVal);
-        if (splitted.phone !== '-' && !result.picPhoneNumber) {
-          result.picPhoneNumber = splitted.phone;
-          result.picName = splitted.name !== '-' ? splitted.name : rawVal;
-        } else {
-          result.picName = rawVal;
+        if (rawVal !== '-') {
+          const splitted = splitPicNameAndPhone(rawVal);
+          if (splitted.phone !== '-' && !result.picPhoneNumber) {
+            result.picPhoneNumber = cleanPhoneNumber(splitted.phone);
+            result.picName = splitted.name !== '-' ? splitted.name : rawVal;
+          } else {
+            result.picName = rawVal;
+          }
         }
       }
       // 10. Nomor PIC
@@ -1165,6 +1173,8 @@ export class SuratMasukHandler {
         rawKey === 'nomor pic' ||
         rawKey === 'no pic' ||
         rawKey === 'telepon pic' ||
+        rawKey === 'no telp pic' ||
+        rawKey === 'telp pic' ||
         rawKey === 'hp pic' ||
         rawKey === 'wa pic' ||
         rawKey === 'kontak pic' ||
@@ -1172,25 +1182,55 @@ export class SuratMasukHandler {
         rawKey === 'nomor hp pic' ||
         rawKey === 'pic phone' ||
         rawKey === 'pic phone number' ||
+        rawKey === 'nomor kontak pic' ||
+        rawKey === 'no kontak pic' ||
         rawKey === 'nomor kontak' ||
         rawKey === 'no kontak' ||
         rawKey === 'nomor hp' ||
-        rawKey === 'no hp'
+        rawKey === 'no hp' ||
+        rawKey === 'nomor wa' ||
+        rawKey === 'no wa' ||
+        rawKey === 'nomor telp' ||
+        rawKey === 'no telp' ||
+        rawKey === 'nomor telepon' ||
+        rawKey === 'no telepon' ||
+        rawKey === 'whatsapp pic' ||
+        rawKey === 'telepon' ||
+        rawKey === 'hp' ||
+        rawKey === 'wa'
       ) {
-        result.picPhoneNumber = rawVal;
+        if (rawVal !== '-') {
+          const splitted = splitPicNameAndPhone(rawVal);
+          if (splitted.phone !== '-') {
+            result.picPhoneNumber = cleanPhoneNumber(splitted.phone);
+            if (splitted.name !== '-' && !result.picName) {
+              result.picName = splitted.name;
+            }
+          } else {
+            const cleaned = cleanPhoneNumber(rawVal);
+            result.picPhoneNumber = cleaned !== '-' ? cleaned : rawVal;
+          }
+        }
       }
-      // 11. PIC gabungan
+      // 11. PIC gabungan / Kontak
       else if (
         rawKey === 'pic' ||
         rawKey === 'kontak' ||
         rawKey === 'narahubung' ||
+        rawKey === 'cp' ||
+        rawKey === 'contact person' ||
         rawKey === 'pic pengirim' ||
-        rawKey === 'pic & kontak'
+        rawKey === 'pic & kontak' ||
+        rawKey === 'pic kontak'
       ) {
-        result.picPengirim = rawVal;
-        const splitted = splitPicNameAndPhone(rawVal);
-        if (splitted.name && !result.picName) result.picName = splitted.name;
-        if (splitted.phone && !result.picPhoneNumber) result.picPhoneNumber = splitted.phone;
+        if (rawVal !== '-') {
+          result.picPengirim = rawVal;
+          const splitted = splitPicNameAndPhone(rawVal);
+          if (splitted.name && splitted.name !== '-' && !result.picName) result.picName = splitted.name;
+          if (splitted.phone && splitted.phone !== '-' && !result.picPhoneNumber) {
+            result.picPhoneNumber = cleanPhoneNumber(splitted.phone);
+          }
+        }
       }
     }
 
@@ -1413,24 +1453,32 @@ export class SuratMasukHandler {
         const splitted = splitPicNameAndPhone(val);
         if (splitted.phone !== '-' && (!session.draftSurat.extractedData.picPhoneNumber || session.draftSurat.extractedData.picPhoneNumber === '-')) {
           session.draftSurat.extractedData.picName = splitted.name.slice(0, 100);
-          session.draftSurat.extractedData.picPhoneNumber = splitted.phone.slice(0, 50);
-          session.draftSurat.extractedData.picPengirim = formatCombinedPic(splitted.name, splitted.phone);
+          const cleanPhone = cleanPhoneNumber(splitted.phone);
+          session.draftSurat.extractedData.picPhoneNumber = (cleanPhone !== '-' ? cleanPhone : splitted.phone).slice(0, 50);
+          session.draftSurat.extractedData.picPengirim = formatCombinedPic(splitted.name, session.draftSurat.extractedData.picPhoneNumber);
         } else {
-          const cleanPicName = val.slice(0, 100);
+          const cleanPicName = normalizeUnicodeText(val).slice(0, 100);
           session.draftSurat.extractedData.picName = cleanPicName;
           const curPhone = session.draftSurat.extractedData.picPhoneNumber || '';
           session.draftSurat.extractedData.picPengirim = formatCombinedPic(cleanPicName, curPhone);
         }
       } else if (field === 'picPhoneNumber') {
-        const cleanPicPhone = val.slice(0, 50);
-        session.draftSurat.extractedData.picPhoneNumber = cleanPicPhone;
+        const splitted = splitPicNameAndPhone(val);
+        const candidatePhone = splitted.phone !== '-' ? splitted.phone : val;
+        const cleanPhone = cleanPhoneNumber(candidatePhone);
+        const finalPhone = (cleanPhone !== '-' ? cleanPhone : val).trim().slice(0, 50);
+        session.draftSurat.extractedData.picPhoneNumber = finalPhone;
+        if (splitted.name !== '-' && (!session.draftSurat.extractedData.picName || session.draftSurat.extractedData.picName === '-')) {
+          session.draftSurat.extractedData.picName = splitted.name.slice(0, 100);
+        }
         const curName = session.draftSurat.extractedData.picName || '';
-        session.draftSurat.extractedData.picPengirim = formatCombinedPic(curName, cleanPicPhone);
+        session.draftSurat.extractedData.picPengirim = formatCombinedPic(curName, finalPhone);
       } else if (field === 'picPengirim') {
         const splitted = splitPicNameAndPhone(val);
         session.draftSurat.extractedData.picName = splitted.name.slice(0, 100);
-        session.draftSurat.extractedData.picPhoneNumber = splitted.phone.slice(0, 50);
-        session.draftSurat.extractedData.picPengirim = formatCombinedPic(splitted.name, splitted.phone);
+        const cleanPhone = cleanPhoneNumber(splitted.phone);
+        session.draftSurat.extractedData.picPhoneNumber = (cleanPhone !== '-' ? cleanPhone : splitted.phone).slice(0, 50);
+        session.draftSurat.extractedData.picPengirim = formatCombinedPic(splitted.name, session.draftSurat.extractedData.picPhoneNumber);
       } else if (field === 'nomorSurat') {
         const candidateNomor = val.trim().slice(0, 100);
         if (candidateNomor && candidateNomor !== '-' && candidateNomor.length >= 3) {

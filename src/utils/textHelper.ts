@@ -539,6 +539,55 @@ export function isFormConfirmationInput(text: string | null | undefined): boolea
 }
 
 /**
+ * Membersihkan teks dari karakter kontrol, invisible Unicode, spasi anomali,
+ * dan varian tanda hubung non-standar (misal non-breaking hyphen \u2011, NBSP \u00A0 dari copy-paste WhatsApp)
+ */
+export function normalizeUnicodeText(text: string | null | undefined): string {
+  if (!text) return '';
+  return text
+    // 1. Hapus zero-width, invisible, and bidirectional control characters
+    // U+200B - U+200F (ZWSP, ZWNJ, ZWJ, LRM, RLM)
+    // U+202A - U+202E (LRE, RLE, PDF, LRO, RLO)
+    // U+2060 - U+206F (Word Joiner, Invisible operators)
+    // U+FEFF (BOM / Zero Width No-Break Space)
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, '')
+    // 2. Normalisasi semua variasi tanda hubung/dash (non-breaking hyphen \u2011, figure dash, en-dash, em-dash, minus sign, dll.) menjadi tanda strip ASCII biasa '-'
+    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
+    // 3. Normalisasi semua variasi whitespace (non-breaking space \u00A0, thin space, em space, dll.) menjadi spasi biasa ' '
+    .replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, ' ')
+    // 4. Normalisasi spasi ganda berturut-turut menjadi satu spasi
+    .replace(/[ \t]+/g, ' ')
+    .trim();
+}
+
+/**
+ * Membersihkan dan menstandardisasi format nomor telepon yang diinput pengguna.
+ * Menghapus teks instruksi / prefiks, normalisasi karakter Unicode WhatsApp,
+ * dan mengembalikan format nomor standar yang bersih (misal: "+62 895-3351-81888" atau "0812-3456-7890").
+ */
+export function cleanPhoneNumber(rawPhone: string | null | undefined): string {
+  if (!rawPhone) return '-';
+  const normalized = normalizeUnicodeText(rawPhone);
+  if (!normalized || normalized === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(normalized)) {
+    return '-';
+  }
+
+  // Coba format menggunakan formatWhatsAppPhone jika valid
+  const parsed = formatWhatsAppPhone(normalized);
+  if (parsed) {
+    return parsed.display;
+  }
+
+  // Jika input berupa nomor telepon dengan digit cukup
+  const digitsOnly = normalized.replace(/\D/g, '');
+  if (digitsOnly.length >= 7) {
+    return normalized.replace(/[^\d+\-\s()./]/g, '').trim().slice(0, 50) || '-';
+  }
+
+  return '-';
+}
+
+/**
  * Memisahkan string gabungan PIC menjadi Nama PIC dan Nomor Telepon PIC
  * Contoh:
  * - "Budi Santoso (081234567890)" -> { name: "Budi Santoso", phone: "081234567890" }
@@ -551,14 +600,17 @@ export function splitPicNameAndPhone(raw: string | null | undefined): { name: st
     return { name: '-', phone: '-' };
   }
 
-  let clean = raw.trim();
+  let clean = normalizeUnicodeText(raw);
+  if (!clean || clean === '-') {
+    return { name: '-', phone: '-' };
+  }
 
   // Bersihkan awalan seperti "PIC:", "Narahubung:", "Contact Person:", "Kontak:"
-  clean = clean.replace(/^(?:pic|narahubung|contact\s+person|cp|kontak|telp|hp)\s*[:.-]?\s*/i, '').trim();
+  clean = clean.replace(/^(?:pic|narahubung|contact\s+person|cp|kontak|telp|hp|wa|whatsapp)\s*[:.-]?\s*/i, '').trim();
 
   // Regex untuk mendeteksi nomor telepon (Indonesia: 08xx, +62xx, 62xx, (021)xx, dll.)
-  // Minimal 8 digit angka
-  const phoneRegex = /(?:\+?62|08|02[1-9]|03[1-9]|04[1-9]|05[1-9]|06[1-9]|07[1-9]|09[1-9])[0-9\-\s/.()]{7,25}/;
+  // Minimal 7 digit angka
+  const phoneRegex = /(?:\+?62|08|02[1-9]|03[1-9]|04[1-9]|05[1-9]|06[1-9]|07[1-9]|09[1-9])[0-9\-\s/.()]{6,25}/;
 
   const phoneMatch = clean.match(phoneRegex);
 
@@ -585,8 +637,14 @@ export function splitPicNameAndPhone(raw: string | null | undefined): { name: st
       name = remainingName;
     }
   } else {
-    // Tidak ditemukan nomor telepon, seluruh string dianggap nama
-    name = clean;
+    // Tidak ditemukan nomor telepon via regex Indonesia, periksa apakah seluruh string adalah nomor telepon umum
+    const digitsOnly = clean.replace(/\D/g, '');
+    if (digitsOnly.length >= 7 && /^[+\d\s\-_()./]+$/.test(clean)) {
+      phone = clean.replace(/[^\d+]/g, '').trim();
+      name = '-';
+    } else {
+      name = clean;
+    }
   }
 
   // Jika nama hanya berisi angka atau simbol, kosongkan jadi '-'
@@ -617,14 +675,14 @@ export function splitPicNameAndPhone(raw: string | null | undefined): { name: st
  * - formatCombinedPic("-", "-") -> "-"
  */
 export function formatCombinedPic(name: string | null | undefined, phone: string | null | undefined): string {
-  const cleanName = (name || '').trim();
-  const cleanPhone = (phone || '').trim();
+  const cleanName = normalizeUnicodeText(name || '');
+  const cleanPhone = normalizeUnicodeText(phone || '');
   const hasName = cleanName && cleanName !== '-' && cleanName.length >= 2;
   const hasPhone = cleanPhone && cleanPhone !== '-' && cleanPhone.replace(/\D/g, '').length >= 7;
 
   if (hasName && hasPhone) {
     // Jika nama sudah memuat nomor telepon, tidak perlu digabungkan lagi
-    if (cleanName.includes(cleanPhone)) {
+    if (cleanName.includes(cleanPhone) || cleanName.includes(cleanPhone.replace(/\D/g, ''))) {
       return cleanName.slice(0, 100);
     }
     return `${cleanName} (${cleanPhone})`.slice(0, 100);
@@ -685,8 +743,8 @@ export function formatWhatsAppPhone(rawPhone: string | null | undefined): {
 }
 
 function formatSinglePicContact(rawName?: string | null, rawPhone?: string | null): string {
-  let cleanName = (rawName || '').trim();
-  let cleanPhone = (rawPhone || '').trim();
+  let cleanName = normalizeUnicodeText(rawName || '');
+  let cleanPhone = normalizeUnicodeText(rawPhone || '');
 
   if (cleanName === '-' || cleanName.toLowerCase() === 'null') cleanName = '';
   if (cleanPhone === '-' || cleanPhone.toLowerCase() === 'null') cleanPhone = '';

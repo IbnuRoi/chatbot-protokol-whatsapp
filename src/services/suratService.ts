@@ -2,7 +2,7 @@ import { prisma } from '../database/prisma';
 import { Prisma, letters } from '@prisma/client';
 import { pdfService } from './pdfService';
 import { SuratDraftData } from './sessionService';
-import { cleanHtml, formatCombinedPic, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone, sanitizePlaceEvent, formatInitialEventTitle, buildNarasiPenayanganTap } from '../utils/textHelper';
+import { cleanHtml, formatCombinedPic, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone, sanitizePlaceEvent, formatInitialEventTitle, buildNarasiPenayanganTap, cleanPhoneNumber, normalizeUnicodeText } from '../utils/textHelper';
 import { parseIndonesianDateToDate, formatTanggalIndo, parseIndonesianTimeToDates, parseIndonesianDateEventRange, isValidDate, extractWaktuAcaraFromText } from '../utils/dateHelper';
 import { generateEventTitleFromSurat, generateSubjectSummary } from './aiService';
 import { syncTableSequence, isDuplicateKeyError } from '../database/sequenceSync';
@@ -539,8 +539,8 @@ export class SuratService {
       const creatorName = (userName || '').trim() || 'Petugas Protokol';
 
       // Pisahkan antara nama PIC dan nomor teleponnya
-      let rawPicName = (draft.extractedData.picName || '').trim();
-      let rawPicPhone = (draft.extractedData.picPhoneNumber || '').trim();
+      let rawPicName = normalizeUnicodeText(draft.extractedData.picName || '');
+      let rawPicPhone = cleanPhoneNumber(draft.extractedData.picPhoneNumber || '');
 
       if ((!rawPicName || rawPicName === '-' || !rawPicPhone || rawPicPhone === '-') && draft.extractedData.picPengirim) {
         const splitted = splitPicNameAndPhone(draft.extractedData.picPengirim);
@@ -548,7 +548,7 @@ export class SuratService {
           rawPicName = splitted.name;
         }
         if ((!rawPicPhone || rawPicPhone === '-') && splitted.phone !== '-') {
-          rawPicPhone = splitted.phone;
+          rawPicPhone = cleanPhoneNumber(splitted.phone);
         }
       }
 
