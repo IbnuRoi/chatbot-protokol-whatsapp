@@ -4,7 +4,7 @@ import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
 import { ENV } from '../config/env';
 import { ExtractedSuratData, ExtractedDisposisiData } from './sessionService';
-import { splitPicNameAndPhone, sanitizePlaceEvent, cleanTemplatePrefix } from '../utils/textHelper';
+import { splitPicNameAndPhone, sanitizePlaceEvent, cleanTemplatePrefix, buildNarasiPenayanganTap } from '../utils/textHelper';
 import { parseIndonesianDateToDate, formatTanggalIndo, isValidDate, extractWaktuAcaraFromText } from '../utils/dateHelper';
 import { imageService } from './imageService';
 import { pdfService } from './pdfService';
@@ -15,7 +15,7 @@ import { pdfService } from './pdfService';
  * - PH - Permohonan Memberikan (Sesi Acara(Sambutan/Keynote Speech/Arahan dll) pada kegiatan (Nama Acara) dengan tema (Tema Acara) yang diselenggarakan oleh (Penyelenggara)
  * - UNR - Undangan Menghadiri Pernikahan (Nama Mempelai) (Putri Bapak … dan Ibu …) dengan (Nama Mempelai) (Putri Bapak … dan Ibu …)
  * - WR, AU - Permohonan Wawancara/Audiensi dari (Nama Instansi) terkait (Pokok Bahasan)
- * - TAP - Permohonan Memberikan Video Ucapan dalam rangka ….
+ * - TAP - Permohonan Memberikan Video Ucapan dalam rangka …. yang akan ditayangkan pada ….
  */
 function escapeRegExp(string: string): string {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -267,7 +267,18 @@ export function formatPerihalByTemplate(data: Partial<ExtractedSuratData>): stri
 
     case 'TAP': {
       const rangka = data.rangkaUcapan && data.rangkaUcapan !== '-' ? data.rangkaUcapan.trim() : (namaAcara || 'Peringatan Hari Besar');
-      result = `Permohonan Memberikan Video Ucapan dalam rangka ${rangka}`;
+      let base = `Permohonan Memberikan Video Ucapan dalam rangka ${rangka}`;
+      if (!base.toLowerCase().includes('ditayangkan')) {
+        const narasiTayang = buildNarasiPenayanganTap({
+          dateEvent: data.dateEvent,
+          timeEvent: data.timeEvent,
+          placeEvent: data.placeEvent,
+        });
+        if (data.dateEvent && data.dateEvent !== '-') {
+          base = `${base} yang ${narasiTayang}`;
+        }
+      }
+      result = base;
       break;
     }
 

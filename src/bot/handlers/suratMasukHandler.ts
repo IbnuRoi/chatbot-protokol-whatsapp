@@ -6,7 +6,7 @@ import { aiService, formatPerihalByTemplate, generateSubjectSummary, formatAsalS
 import { NluResult } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
-import { cleanHtml, formatNomorAgendaLink, getLetterFileUrl, generateLetterFileName, splitPicNameAndPhone, formatCombinedPic, sanitizePlaceEvent } from '../../utils/textHelper';
+import { cleanHtml, formatNomorAgendaLink, getLetterFileUrl, generateLetterFileName, splitPicNameAndPhone, formatCombinedPic, sanitizePlaceEvent, buildNarasiPenayanganTap } from '../../utils/textHelper';
 import { formatTanggalIndo, formatWaktuInputIndo, parseIndonesianDateEventRange, parseIndonesianTimeToDates, cleanDateStringFromTime } from '../../utils/dateHelper';
 
 export const KATEGORI_LABEL_MAP: Record<string, string> = {
@@ -417,6 +417,15 @@ export class SuratMasukHandler {
 
     const title = isUpdated ? `📄 *DATA SURAT BERHASIL DIPERBARUI*` : `📄 *HASIL ANALISIS & EKSTRAKSI DOKUMEN*`;
 
+    const isTap = jenisCode === 'TAP' || (agendaDisplay || '').toUpperCase().includes('/TAP/');
+    const narasiTayang = isTap
+      ? buildNarasiPenayanganTap({
+          dateEvent: data?.dateEvent,
+          timeEvent: data?.timeEvent,
+          placeEvent: data?.placeEvent,
+        })
+      : '';
+
     const text =
       `${title}\n\n` +
       `Sistem telah membaca isi surat dan menentukan kategori serta perihalnya:\n\n` +
@@ -431,6 +440,7 @@ export class SuratMasukHandler {
       (data?.dateEvent && data.dateEvent !== '-' ? `• 🗓️ *Tanggal Acara*   : ${data.dateEvent}\n` : '') +
       (data?.timeEvent && data.timeEvent !== '-' ? `• ⏰ *Jam Acara*       : ${data.timeEvent}\n` : '') +
       (data?.placeEvent && data.placeEvent !== '-' ? `• 📍 *Tempat Acara*    : ${data.placeEvent}\n` : '') +
+      (isTap ? `• 🎬 *Rencana Tayang*: ${narasiTayang}\n` : '') +
       `• 👤 *Nama PIC*      : ${picName}\n` +
       `• 📞 *Nomor PIC*     : ${picPhone}\n` +
       `• 👤 *Petugas Input* : ${session.userName || 'Petugas Protokol'}\n\n` +
@@ -515,6 +525,21 @@ export class SuratMasukHandler {
             `_Jadwal tetap berhasil didaftarkan ke sistem dengan jam yang sama persis sesuai surat masuk._\n`;
         }
 
+        const isTap = result.isTapCategory || jenisCode === 'TAP' || (result.nomorAgenda || '').toUpperCase().includes('/TAP/');
+        const narasiTayang = result.narasiPenayangan || buildNarasiPenayanganTap({
+          dateEvent: savedData?.dateEvent,
+          timeEvent: savedData?.timeEvent,
+          placeEvent: savedData?.placeEvent,
+        });
+
+        const jadwalLine = isTap
+          ? `• 🎬 *Rencana Tayang*: ${narasiTayang}\n• 📅 *Jadwal Acara*  : ⚪ Tidak Masuk Kalender Kegiatan (Kategori TAP / Video Ucapan)\n`
+          : `• 📅 *Jadwal Acara*  : 🟢 Otomatis Terjadwal (Diagendakan)\n`;
+
+        const noteFooter = isTap
+          ? `\n_Catatan: Khusus surat kategori TAP (Video Ucapan / Taping), jadwal tidak langsung dimasukkan ke kalender kegiatan dan ${narasiTayang}._\n\n`
+          : `\n_Catatan: Surat telah tersimpan di database dan otomatis langsung masuk ke agenda jadwal kegiatan protokol._\n\n`;
+
         return {
           text:
             `✅ *SURAT BERHASIL DISIMPAN KE DATABASE!*\n\n` +
@@ -532,12 +557,12 @@ export class SuratMasukHandler {
             (savedData?.placeEvent && savedData.placeEvent !== '-' ? `• 📍 *Tempat Acara*    : ${savedData.placeEvent}\n` : '') +
             `• 👤 *Nama PIC*     : ${picName}\n` +
             `• 📞 *Nomor PIC*    : ${picPhone}\n` +
-            `• 📅 *Jadwal Acara*  : 🟢 Otomatis Terjadwal (Diagendakan)\n` +
+            jadwalLine +
             `• 📂 *Status Disposisi*: 🟡 Belum Ada Disposisi\n` +
             `• 👤 *Diinput Oleh*  : ${userPenginput}\n` +
             `• ⏰ *Waktu Input*   : ${waktuInputStr}\n` +
             conflictNote +
-            `\n_Catatan: Surat telah tersimpan di database dan otomatis langsung masuk ke agenda jadwal kegiatan protokol._\n\n` +
+            noteFooter +
             `Bila ada hal lain yang ingin Anda kelola atau cari, silakan beri tahu saya ya. 😊`,
         };
       } else {
@@ -1636,18 +1661,33 @@ export class SuratMasukHandler {
             `_Jadwal tetap berhasil didaftarkan ke sistem dengan jam yang sama persis sesuai surat masuk._\n`;
         }
 
+        const isTap = result.isTapCategory || (result.nomorAgenda || '').toUpperCase().includes('/TAP/');
+        const narasiTayang = result.narasiPenayangan || buildNarasiPenayanganTap({
+          dateEvent: session.draftSurat?.extractedData?.dateEvent,
+          timeEvent: session.draftSurat?.extractedData?.timeEvent,
+          placeEvent: session.draftSurat?.extractedData?.placeEvent,
+        });
+
+        const jadwalLine = isTap
+          ? `• 🎬 *Rencana Tayang*: ${narasiTayang}\n• 📅 *Jadwal Acara*    : ⚪ Tidak Masuk Kalender Kegiatan (Kategori TAP / Video Ucapan)\n`
+          : `• 📅 *Jadwal Acara*    : 🟢 Otomatis Terjadwal (Diagendakan)\n`;
+
+        const noteFooter = isTap
+          ? `\nBerkas PDF telah disimpan di sistem. Khusus surat kategori TAP (Video Ucapan / Taping), jadwal tidak langsung dimasukkan ke kalender kegiatan dan ${narasiTayang}. Silakan beri tahu saya jika ada hal lain yang bisa dibantu.`
+          : `\nBerkas PDF telah disimpan dan otomatis diagendakan pada jadwal kegiatan protokol. Silakan beri tahu saya jika ada hal lain yang bisa dibantu.`;
+
         return {
           text:
             `✅ *REGISTRASI SURAT BERHASIL!*\n\n` +
             `Surat telah resmi tercatat di sistem:\n` +
             `• 📌 *Nomor Agenda*   : ${result.nomorAgenda}\n` +
             fileLine +
-            `• 📅 *Jadwal Acara*    : 🟢 Otomatis Terjadwal (Diagendakan)\n` +
+            jadwalLine +
             `• 📂 *Status Disposisi*: 🟡 Belum Ada Disposisi\n` +
             `• 👤 *Diinput Oleh*    : ${userPenginput}\n` +
             `• ⏰ *Waktu Input*     : ${waktuInputStr}\n` +
             conflictNote +
-            `\nBerkas PDF telah disimpan dan otomatis diagendakan pada jadwal kegiatan protokol. Silakan beri tahu saya jika ada hal lain yang bisa dibantu.`,
+            noteFooter,
         };
       } else {
         if (result.isDuplicateNomorSurat && result.duplicateLetter) {

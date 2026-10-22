@@ -785,6 +785,61 @@ export function formatPicWithWhatsApp(
   return formatSinglePicContact(name, phone);
 }
 
+/**
+ * Membangun narasi rencana penayangan video untuk surat kategori TAP (Video Ucapan / Taping).
+ * Pola narasi: "akan ditayangkan pada [Hari/Tanggal] [pukul [Jam]] [di/melalui [Tempat]]"
+ * Sesuai pola narasi resmi yang tersimpan di basis data protokol Kemnaker.
+ *
+ * Contoh:
+ * - "akan ditayangkan pada hari Rabu, 21 Oktober 2026 pukul 09.00 WIB di Kanal YouTube Kemnaker"
+ * - "akan ditayangkan pada tanggal 15 Oktober 2026 pukul 10.00 WIB"
+ * - "akan ditayangkan pada tanggal 28 Oktober 2026"
+ */
+export function buildNarasiPenayanganTap(data?: {
+  dateEvent?: string | null;
+  timeEvent?: string | null;
+  placeEvent?: string | null;
+}): string {
+  if (!data) return 'akan ditayangkan pada waktu yang ditentukan penyelenggara';
+
+  const parts: string[] = [];
+  if (data.dateEvent && data.dateEvent.trim() !== '-' && data.dateEvent.trim() !== '') {
+    const rawDate = data.dateEvent.trim();
+    if (/^(?:hari|tanggal|tgl)\b/i.test(rawDate)) {
+      parts.push(rawDate);
+    } else if (/^(?:senin|selasa|rabu|kamis|jumat|sabtu|minggu)\b/i.test(rawDate)) {
+      parts.push(`hari ${rawDate}`);
+    } else {
+      parts.push(`tanggal ${rawDate}`);
+    }
+  }
+
+  if (data.timeEvent && data.timeEvent.trim() !== '-' && data.timeEvent.trim() !== '') {
+    const rawTime = data.timeEvent.trim().replace(/:/g, '.');
+    if (/^(?:pukul|jam)\b/i.test(rawTime)) {
+      parts.push(rawTime);
+    } else {
+      parts.push(`pukul ${rawTime}`);
+    }
+  }
+
+  if (data.placeEvent && data.placeEvent.trim() !== '-' && data.placeEvent.trim() !== '') {
+    const rawPlace = data.placeEvent.trim();
+    if (/^(?:di|pada|melalui|lewat|via)\b/i.test(rawPlace)) {
+      parts.push(rawPlace);
+    } else {
+      parts.push(`di ${rawPlace}`);
+    }
+  }
+
+  if (parts.length > 0) {
+    return `akan ditayangkan pada ${parts.join(' ')}`;
+  }
+
+  return 'akan ditayangkan pada waktu yang ditentukan penyelenggara';
+}
+
+
 
 /**
  * Membersihkan template awalan permohonan/undangan surat masuk
@@ -1240,7 +1295,7 @@ export function formatFriendlyCategory(categoryCode?: string | null, typeName?: 
     AU: 'Audiensi',
     WR: 'Warta / Pemberitahuan',
     LP: 'Laporan',
-    TAP: 'Tanggapan / Jawaban',
+    TAP: 'Video Ucapan / Taping',
   };
   const label = map[code] || code;
   const suffix = code !== label ? ` (${code})` : '';

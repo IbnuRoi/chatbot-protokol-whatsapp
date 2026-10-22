@@ -2,7 +2,7 @@ import { prisma } from '../database/prisma';
 import { Prisma, letters } from '@prisma/client';
 import { pdfService } from './pdfService';
 import { SuratDraftData } from './sessionService';
-import { cleanHtml, formatCombinedPic, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone, sanitizePlaceEvent, formatInitialEventTitle } from '../utils/textHelper';
+import { cleanHtml, formatCombinedPic, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone, sanitizePlaceEvent, formatInitialEventTitle, buildNarasiPenayanganTap } from '../utils/textHelper';
 import { parseIndonesianDateToDate, formatTanggalIndo, parseIndonesianTimeToDates, parseIndonesianDateEventRange, isValidDate, extractWaktuAcaraFromText } from '../utils/dateHelper';
 import { generateEventTitleFromSurat, generateSubjectSummary } from './aiService';
 import { syncTableSequence, isDuplicateKeyError } from '../database/sequenceSync';
@@ -28,6 +28,8 @@ export interface SuratRegistrationResult {
     eventTimeFinish?: Date | null;
     location?: string | null;
   }>;
+  isTapCategory?: boolean;
+  narasiPenayangan?: string;
 }
 
 export const LETTER_CATEGORY_MAP: Record<string, bigint> = {
@@ -503,7 +505,28 @@ export class SuratService {
       }
 
       // ID ditangani otomatis oleh PostgreSQL Sequence (autoincrement) agar selalu sinkron dengan website
-      const finalPerihal = draft.finalPerihal || draft.extractedData.perihal || '-';
+      let finalPerihal = draft.finalPerihal || draft.extractedData.perihal || '-';
+
+      // Deteksi kategori surat apakah TAP (Permohonan Video Ucapan / Taping)
+      const rawKategori = (
+        draft.jenisSurat ||
+        draft.extractedData?.kategoriSurat ||
+        ''
+      ).toUpperCase().trim();
+      const isTapCategory = rawKategori === 'TAP' || (draft.nomorAgenda || '').toUpperCase().includes('/TAP/');
+
+      // Khusus kategori TAP, pastikan narasi penayangan ("akan ditayangkan pada ...") disertakan pada perihal jika ada info tanggal
+      if (isTapCategory && finalPerihal !== '-' && !finalPerihal.toLowerCase().includes('ditayangkan')) {
+        const narasiTayang = buildNarasiPenayanganTap({
+          dateEvent: draft.extractedData.dateEvent,
+          timeEvent: draft.extractedData.timeEvent,
+          placeEvent: draft.extractedData.placeEvent,
+        });
+        if (draft.extractedData.dateEvent && draft.extractedData.dateEvent !== '-') {
+          finalPerihal = `${finalPerihal} yang ${narasiTayang}`;
+        }
+      }
+
       const finalSubject = (
         draft.finalSubject ||
         draft.extractedData.subject ||
@@ -700,13 +723,16 @@ export class SuratService {
       }
 
       // Otomatis masukkan ke jadwal kegiatan (tabel events) walaupun belum ada lembar disposisi
+      // Khusus surat kategori TAP: JANGAN langsung masukkan ke tabel events (hanya diarsipkan, belum masuk jadwal)
       let createdEvent: any = null;
       let eventTimeStart: Date | null = null;
       let eventTimeFinish: Date | null = null;
-      try {
-        // 1. Waktu kegiatan (hanya diisi jika memang ada tanggal kegiatan pada surat/hasil ekstraksi)
-        let untilFinish = 0;
-        let safeEventTimeZone: string | null = null;
+
+      if (!isTapCategory) {
+        try {
+          // 1. Waktu kegiatan (hanya diisi jika memang ada tanggal kegiatan pada surat/hasil ekstraksi)
+          let untilFinish = 0;
+          let safeEventTimeZone: string | null = null;
 
         if (isValidDate(parsedDateEvent)) {
           const eventYear = parsedDateEvent.getUTCFullYear();
@@ -925,10 +951,13 @@ export class SuratService {
       } catch (eventErr: any) {
         console.error('[SuratService] Gagal membuat jadwal kegiatan otomatis dari surat:', eventErr);
       }
+    } else {
+      console.log(`[SuratService] Surat ${surat.agenda_number} adalah kategori TAP (Video Ucapan). Tidak dibuatkan jadwal di tabel events.`);
+    }
 
       // Cek apakah ada jadwal lain yang bentrok / bersamaan waktunya (bersifat informatif, tidak membatalkan)
       let conflictingEvents: any[] = [];
-      if (eventTimeStart && isValidDate(eventTimeStart)) {
+      if (!isTapCategory && eventTimeStart && isValidDate(eventTimeStart)) {
         conflictingEvents = await this.findConflictingEvents(
           eventTimeStart,
           eventTimeFinish,
@@ -938,7 +967,9 @@ export class SuratService {
 
       return {
         success: true,
-        message: 'Surat berhasil disimpan ke sistem.',
+        message: isTapCategory
+          ? 'Surat kategori TAP berhasil disimpan ke sistem (tidak dijadwalkan otomatis ke kalender kegiatan).'
+          : 'Surat berhasil disimpan ke sistem.',
         nomorAgenda: surat.agenda_number,
         suratId: Number(surat.id),
         eventId: createdEvent ? Number(createdEvent.id) : undefined,
@@ -947,6 +978,14 @@ export class SuratService {
         createdAt: surat.created_at || new Date(),
         hasTimeConflict: conflictingEvents.length > 0,
         conflictingEvents,
+        isTapCategory,
+        narasiPenayangan: isTapCategory
+          ? buildNarasiPenayanganTap({
+              dateEvent: draft.extractedData.dateEvent,
+              timeEvent: draft.extractedData.timeEvent,
+              placeEvent: draft.extractedData.placeEvent,
+            })
+          : undefined,
       };
     } catch (err: any) {
       console.error('Database error saving surat:', err);

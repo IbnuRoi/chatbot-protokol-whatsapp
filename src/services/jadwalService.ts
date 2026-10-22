@@ -234,8 +234,10 @@ export class JadwalService {
     // Map events ke NormalizedJadwal
     const normalizedEventItems = await this.enrichAndMapEvents(mergedEvents);
 
-    // 4. Cari surat pada tanggal tersebut yang belum dibuatkan row di tabel events
-    const unlinkedLetters = lettersOnDate.filter((l) => !eventLetterIds.has(l.id.toString()));
+    // 4. Cari surat pada tanggal tersebut yang belum dibuatkan row di tabel events (kecuali surat TAP / video ucapan yang belum ada event)
+    const unlinkedLetters = lettersOnDate.filter(
+      (l) => !eventLetterIds.has(l.id.toString()) && !(l.agenda_number || '').toUpperCase().includes('/TAP/')
+    );
     const unlinkedLetterItems: NormalizedJadwal[] = unlinkedLetters.map((l) => this.mapLetterToJadwal(l, dateStr));
 
     // 5. Gabungkan dan filter tanggal agar sesuai dateStr
@@ -358,7 +360,10 @@ export class JadwalService {
 
     const normalizedEvents = await this.enrichAndMapEvents(mergedEvents);
 
-    const unlinkedLetters = lettersInRange.filter((l) => !eventLetterIds.has(l.id.toString()));
+    // Cari surat yang belum dibuatkan row di tabel events (kecuali surat TAP / video ucapan yang belum ada event)
+    const unlinkedLetters = lettersInRange.filter(
+      (l) => !eventLetterIds.has(l.id.toString()) && !(l.agenda_number || '').toUpperCase().includes('/TAP/')
+    );
     const unlinkedLetterItems: NormalizedJadwal[] = unlinkedLetters.map((l) =>
       this.mapLetterToJadwal(l, startDateStr)
     );
