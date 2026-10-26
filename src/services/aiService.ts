@@ -243,13 +243,28 @@ export function formatPerihalByTemplate(data: Partial<ExtractedSuratData>): stri
     case 'UNR': {
       const m1 = data.mempelai1 && data.mempelai1 !== '-' ? data.mempelai1.trim() : '';
       const m2 = data.mempelai2 && data.mempelai2 !== '-' ? data.mempelai2.trim() : '';
+      let weddingDesc = '';
       if (m1 && m2) {
-        result = `Undangan Menghadiri Pernikahan ${m1} dengan ${m2}`;
+        weddingDesc = `${m1} dengan ${m2}`;
       } else if (m1 || m2) {
-        result = `Undangan Menghadiri Pernikahan ${m1 || m2}`;
+        weddingDesc = m1 || m2;
       } else {
-        result = `Undangan Menghadiri Pernikahan ${namaAcara}`;
+        weddingDesc = namaAcara;
       }
+
+      // Pastikan referensi orang tua / keluarga pengundang tidak hilang
+      const hasParentInfo =
+        /\b(?:putra|putri|anak|bapak|ibu|bpk|keluarga|bin|binti)\b/i.test(weddingDesc) ||
+        /\(.*?\)/.test(weddingDesc);
+
+      if (!hasParentInfo && data?.asalSurat && data.asalSurat !== '-') {
+        const pengundang = data.asalSurat.split(' - ')[0]?.trim();
+        if (pengundang && !weddingDesc.toLowerCase().includes(pengundang.toLowerCase())) {
+          weddingDesc = weddingDesc ? `${weddingDesc} (Keluarga ${pengundang})` : `Keluarga ${pengundang}`;
+        }
+      }
+
+      result = `Undangan Menghadiri Pernikahan ${weddingDesc}`;
       break;
     }
 
@@ -380,14 +395,47 @@ export function generateEventTitleFromSurat(
     }
 
     case 'UNR': {
-      const m1 = (data?.mempelai1 || '').replace(/\s*\(.*?\)/g, '').trim();
-      const m2 = (data?.mempelai2 || '').replace(/\s*\(.*?\)/g, '').trim();
+      // Pertahankan nama orang tua secara utuh tanpa menghilangkan tanda kurung
+      const m1 = data?.mempelai1 && data.mempelai1 !== '-' ? data.mempelai1.trim() : '';
+      const m2 = data?.mempelai2 && data.mempelai2 !== '-' ? data.mempelai2.trim() : '';
+
+      const cleanFallbackPerihal = (fallbackPerihal || '').trim();
+      let weddingDesc = '';
+
       if (m1 && m2) {
-        eventTitle = `Menghadiri acara Resepsi Pernikahan ${m1} dengan ${m2}`;
+        weddingDesc = `${m1} dengan ${m2}`;
       } else if (m1 || m2) {
-        eventTitle = `Menghadiri acara Resepsi Pernikahan ${m1 || m2}`;
+        weddingDesc = m1 || m2;
+      } else if (cleanFallbackPerihal && /pernikahan|resepsi/i.test(cleanFallbackPerihal)) {
+        weddingDesc = cleanFallbackPerihal
+          .replace(/^(?:undangan\s+(?:menghadiri\s+)?)?(?:acara\s+)?(?:resepsi\s+)?(?:pernikahan\s+)?/i, '')
+          .trim();
+      } else if (namaAcara && namaAcara !== 'Surat Masuk' && namaAcara !== 'Undangan Acara') {
+        weddingDesc = namaAcara
+          .replace(/^(?:undangan\s+(?:menghadiri\s+)?)?(?:acara\s+)?(?:resepsi\s+)?(?:pernikahan\s+)?/i, '')
+          .trim();
+      }
+
+      // Pastikan acuan orang tua/pengundang disertakan jika belum ada
+      const hasParentInfo =
+        /\b(?:putra|putri|anak|bapak|ibu|bpk|keluarga|bin|binti)\b/i.test(weddingDesc) ||
+        /\(.*?\)/.test(weddingDesc);
+
+      if (!hasParentInfo && data?.asalSurat && data.asalSurat !== '-') {
+        const pengundang = data.asalSurat.split(' - ')[0]?.trim();
+        if (pengundang && !weddingDesc.toLowerCase().includes(pengundang.toLowerCase())) {
+          weddingDesc = weddingDesc ? `${weddingDesc} (Keluarga ${pengundang})` : `Keluarga ${pengundang}`;
+        }
+      }
+
+      if (weddingDesc) {
+        if (/^(?:resepsi\s+pernikahan|acara\s+resepsi)/i.test(weddingDesc)) {
+          eventTitle = `Menghadiri ${weddingDesc}`;
+        } else {
+          eventTitle = `Menghadiri acara Resepsi Pernikahan ${weddingDesc}`;
+        }
       } else {
-        eventTitle = `Menghadiri acara Resepsi Pernikahan ${namaAcara}`;
+        eventTitle = 'Menghadiri acara Resepsi Pernikahan';
       }
       break;
     }
@@ -763,12 +811,41 @@ export function generateSubjectSummary(perihal: string, data?: Partial<Extracted
       break;
     }
     case 'UNR': {
-      const m1 = (data?.mempelai1 || '').replace(/\s*\(.*?\)/g, '').trim();
-      const m2 = (data?.mempelai2 || '').replace(/\s*\(.*?\)/g, '').trim();
+      const m1 = data?.mempelai1 && data.mempelai1 !== '-' ? data.mempelai1.trim() : '';
+      const m2 = data?.mempelai2 && data.mempelai2 !== '-' ? data.mempelai2.trim() : '';
+      let weddingSummary = '';
       if (m1 && m2) {
-        summary = `Undangan Pernikahan ${m1} & ${m2}`;
+        weddingSummary = `${m1} & ${m2}`;
+      } else if (m1 || m2) {
+        weddingSummary = m1 || m2;
       } else {
-        summary = `Undangan Pernikahan ${shortAcara}`;
+        weddingSummary = shortAcara;
+      }
+
+      const hasParentInfo =
+        /\b(?:putra|putri|anak|bapak|ibu|bpk|keluarga|bin|binti)\b/i.test(weddingSummary) ||
+        /\(.*?\)/.test(weddingSummary);
+
+      if (!hasParentInfo && data?.asalSurat && data.asalSurat !== '-') {
+        const pengundang = data.asalSurat.split(' - ')[0]?.trim();
+        if (pengundang && !weddingSummary.toLowerCase().includes(pengundang.toLowerCase())) {
+          weddingSummary = weddingSummary ? `${weddingSummary} (Keluarga ${pengundang})` : `Keluarga ${pengundang}`;
+        }
+      }
+
+      const fullSummary = `Undangan Pernikahan ${weddingSummary}`;
+      if (fullSummary.length <= 195) {
+        summary = fullSummary;
+      } else {
+        // Jika melebihi batas 200 karakter, sederhanakan nama mempelai namun tetap cantumkan keluarga pengundang
+        const cleanM1 = m1.replace(/\s*\(.*?\)/g, '').trim();
+        const cleanM2 = m2.replace(/\s*\(.*?\)/g, '').trim();
+        const pengundang = data?.asalSurat?.split(' - ')[0]?.trim();
+        if (pengundang && pengundang !== '-') {
+          summary = `Undangan Pernikahan ${cleanM1} & ${cleanM2} (Keluarga ${pengundang})`.slice(0, 200);
+        } else {
+          summary = fullSummary.slice(0, 200);
+        }
       }
       break;
     }
@@ -933,13 +1010,13 @@ TUGAS UTAMA:
    - "tanggalSurat": "tanggal surat dibuat dalam bahasa Indonesia (misal: '15 September 2026')"
    - "namaPengirim": "nama lengkap orang/pejabat pengirim yang menandatangani surat di bagian paling bawah surat beserta gelarnya jika ada (CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM' atau 'Budi Santoso, S.E.'). BUKAN instansi! JIKA ADA BEBERAPA ORANG PENANDATANGAN (misal: Ketua dan Sekretaris, atau beberapa pimpinan): PILIH SALAH SATU NAMA SAJA (utamakan penandatangan pertama/jabatan tertinggi). JANGAN menggabungkan beberapa nama!"
    - "jabatanPengirim": "jabatan resmi orang/pejabat yang menandatangani surat di bagian paling bawah surat yang SESUAI DENGAN namaPengirim yang dipilih (CONTOH: 'Deputi Bidang Koordinasi Ekonomi Digital' atau 'Direktur Utama' atau 'Ketua Umum'). BUKAN instansi!"
-   - "asalSurat": "gabungan nama pengirim yang bertanda tangan di paling bawah, jabatannya, dan asal instansi dengan format 'Nama Pengirim - Jabatan Singkatan Instansi' (pemisah strip HANYA di antara nama pengirim dan jabatan instansi, TIDAK ADA strip antara jabatan dan instansi, serta jika nama instansi memiliki singkatan gunakan singkatannya saja, CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital Kemenko Perekonomian' atau 'Budi Santoso, S.E. - Direktur Utama PT Telkom' atau 'Prof. Dr. Ir. Arif Satria, S.P., M.Si. - Rektor IPB'). JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA BESERTA JABATAN DAN ASAL INSTANSINYA (jangan gabungkan beberapa nama orang)!"
+   - "asalSurat": "gabungan nama pengirim yang bertanda tangan di paling bawah, jabatannya, dan asal instansi dengan format 'Nama Pengirim - Jabatan Singkatan Instansi' (pemisah strip HANYA di antara nama pengirim dan jabatan instansi, TIDAK ADA strip antara jabatan dan instansi, serta jika nama instansi memiliki singkatan gunakan singkatannya saja, CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital Kemenko Perekonomian' atau 'Budi Santoso, S.E. - Direktur Utama PT Telkom' atau 'Prof. Dr. Ir. Arif Satria, S.P., M.Si. - Rektor IPB'). Khusus UNR (Undangan Pernikahan), asalSurat adalah nama orang tua / pihak keluarga yang mengundang Menteri/Pimpinan Kemnaker beserta jabatan dan instansinya jika ada. JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA BESERTA JABATAN DAN ASAL INSTANSINYA (jangan gabungkan beberapa nama orang)!"
    - "penyelenggara": "nama lembaga/instansi/organisasi pengirim atau penyelenggara acara dari KOP SURAT teratas atau stempel resmi (CONTOH: 'Kementerian Koordinator Bidang Perekonomian' atau 'PT Telekomunikasi Indonesia Tbk' atau 'Institut Pertanian Bogor')"
    - "namaAcara": "nama murni acara/kegiatan saja (CONTOH: 'Rapat Kerja Nasional (Rakornas) VII Tahun 2026' atau 'Forum Koordinasi Ketenagakerjaan Nasional 2026'). HAPUS dan JANGAN masukkan kata pengantar permohonan seperti 'Permohonan Sambutan pada Pembukaan' atau 'Undangan Menghadiri' atau nama instansi penyelenggara di bagian akhir acara!"
    - "temaAcara": "tema spesifik acara jika ada tertulis (misal: 'Transformasi Tenaga Kerja Menuju Indonesia Emas 2045', atau '-' jika tidak ada tema)"
    - "sesiAcara": "khusus kategori PH, peran/sesi yang dimohonkan kepada Menteri / Pimpinan Kemnaker (CONTOH: 'Sambutan', 'Keynote Speech', 'Sambutan dan Arahan', 'Membuka Acara', 'Narasumber'). HANYA sebutkan jenis perannya saja, JANGAN memasukkan nama acara atau nama penyelenggara ke dalam sesiAcara (misal: isi 'Sambutan', BUKAN 'Sambutan dalam Pembukaan Rakornas FSPTI')!"
-   - "mempelai1": "jika UNR, nama mempelai 1 dan orang tua (misal: 'Anisa Rahmawati (Putri Bapak Ahmad dan Ibu Siti)', atau '-')"
-   - "mempelai2": "jika UNR, nama mempelai 2 dan orang tua (misal: 'Dimas Pratama (Putra Bapak Bambang dan Ibu Sri)', atau '-')"
+   - "mempelai1": "KHUSUS UNR: nama mempelai 1 BESERTA nama orang tua lengkapnya di dalam tanda kurung (misal: 'Anisa Rahmawati, S.E. (Putri Bapak Ahmad dan Ibu Siti)', atau '-'). WAJIB: Jangan pernah hilangkan nama orang tua karena acuan utama pengundang protokol adalah orang tuanya!"
+   - "mempelai2": "KHUSUS UNR: nama mempelai 2 BESERTA nama orang tua lengkapnya di dalam tanda kurung (misal: 'Dimas Pratama, S.T. (Putra Bapak Bambang dan Ibu Sri)', atau '-'). WAJIB: Jangan pernah hilangkan nama orang tua!"
    - "pokokBahasan": "jika WR/AU, pokok bahasan audiensi atau wawancara (atau '-')"
    - "rangkaUcapan": "jika TAP, rangka pembuatan video ucapan (misal: 'Hari Ulang Tahun ke-75 PT Aneka Tambang Tbk', atau '-')"
    - "picName": "nama lengkap orang PIC / Narahubung / Contact Person jika tertera di surat (CONTOH: 'Sdr. Ahmad Fauzi' atau 'Budi Santoso'). BUKAN nomor telepon! Jika tidak ada, isi '-'"
@@ -1043,13 +1120,13 @@ Bacalah seluruh isi dokumen surat dinas terlampir secara teliti dan menyeluruh d
    - "tanggalSurat": "tanggal surat dibuat/diterbitkan yang tertulis pada gambar dalam bahasa Indonesia (misal: '15 September 2026')"
    - "namaPengirim": "nama lengkap orang/pejabat pengirim yang menandatangani surat di bagian paling bawah surat beserta gelar lengkapnya (CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM' atau 'Budi Santoso, S.E.'). BUKAN instansi! JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA (utamakan penandatangan pertama/jabatan tertinggi). JANGAN menggabungkan beberapa nama!"
    - "jabatanPengirim": "jabatan resmi orang/pejabat yang menandatangani surat di bagian paling bawah surat yang SESUAI DENGAN namaPengirim yang dipilih (CONTOH: 'Deputi Bidang Koordinasi Ekonomi Digital' atau 'Direktur Utama' atau 'Ketua Umum'). BUKAN instansi!"
-   - "asalSurat": "gabungan nama pengirim yang bertanda tangan di paling bawah, jabatannya, dan asal instansi dengan format 'Nama Pengirim - Jabatan Singkatan Instansi' (pemisah strip HANYA di antara nama pengirim dan jabatan instansi, TIDAK ADA strip antara jabatan dan instansi, serta jika nama instansi memiliki singkatan gunakan singkatannya saja, CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital Kemenko Perekonomian' atau 'Budi Santoso, S.E. - Direktur Utama PT Telkom' atau 'Prof. Dr. Ir. Arif Satria, S.P., M.Si. - Rektor IPB'). JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA BESERTA JABATAN DAN ASAL INSTANSINYA!"
+   - "asalSurat": "gabungan nama pengirim yang bertanda tangan di paling bawah, jabatannya, dan asal instansi dengan format 'Nama Pengirim - Jabatan Singkatan Instansi' (pemisah strip HANYA di antara nama pengirim dan jabatan instansi, TIDAK ADA strip antara jabatan dan instansi, serta jika nama instansi memiliki singkatan gunakan singkatannya saja, CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital Kemenko Perekonomian' atau 'Budi Santoso, S.E. - Direktur Utama PT Telkom' atau 'Prof. Dr. Ir. Arif Satria, S.P., M.Si. - Rektor IPB'). Khusus UNR (Undangan Pernikahan), asalSurat adalah nama orang tua / pihak keluarga yang mengundang Menteri/Pimpinan Kemnaker beserta jabatan dan instansinya jika ada. JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA BESERTA JABATAN DAN ASAL INSTANSINYA!"
    - "penyelenggara": "nama lembaga/instansi/organisasi pengirim atau penyelenggara acara dari KOP SURAT teratas atau stempel resmi pada gambar (CONTOH: 'Kementerian Koordinator Bidang Perekonomian' atau 'PT Telekomunikasi Indonesia Tbk' atau 'Institut Pertanian Bogor')"
    - "namaAcara": "nama murni acara/kegiatan saja (CONTOH: 'Rapat Kerja Nasional (Rakornas) VII Tahun 2026' atau 'Forum Koordinasi Ketenagakerjaan Nasional 2026'). HAPUS kata pengantar seperti 'Permohonan Sambutan pada Pembukaan' atau nama instansi di akhir!"
    - "temaAcara": "tema spesifik acara jika ada tertulis di gambar (misal: 'Transformasi Tenaga Kerja Menuju Indonesia Emas 2045', atau '-' jika tidak ada tema)"
    - "sesiAcara": "khusus kategori PH, peran/sesi yang dimohonkan kepada Menteri / Pimpinan Kemnaker (CONTOH: 'Sambutan', 'Keynote Speech', 'Sambutan dan Arahan', 'Membuka Acara', 'Narasumber'). HANYA sebutkan jenis perannya saja tanpa mengulang nama acara/instansi!"
-   - "mempelai1": "jika UNR, nama mempelai 1 dan orang tua (misal: 'Anisa Rahmawati (Putri Bapak Ahmad dan Ibu Siti)', atau '-')"
-   - "mempelai2": "jika UNR, nama mempelai 2 dan orang tua (misal: 'Dimas Pratama (Putra Bapak Bambang dan Ibu Sri)', atau '-')"
+   - "mempelai1": "KHUSUS UNR: nama mempelai 1 BESERTA nama orang tua lengkapnya di dalam tanda kurung (misal: 'Anisa Rahmawati, S.E. (Putri Bapak Ahmad dan Ibu Siti)', atau '-'). WAJIB: Jangan pernah hilangkan nama orang tua karena acuan utama pengundang protokol adalah orang tuanya!"
+   - "mempelai2": "KHUSUS UNR: nama mempelai 2 BESERTA nama orang tua lengkapnya di dalam tanda kurung (misal: 'Dimas Pratama, S.T. (Putra Bapak Bambang dan Ibu Sri)', atau '-'). WAJIB: Jangan pernah hilangkan nama orang tua!"
    - "pokokBahasan": "jika WR/AU, pokok bahasan audiensi atau wawancara (atau '-')"
    - "rangkaUcapan": "jika TAP, rangka pembuatan video ucapan (misal: 'Hari Ulang Tahun ke-75 PT Aneka Tambang Tbk', atau '-')"
    - "picName": "nama lengkap orang PIC / Narahubung / Contact Person jika tertera di gambar surat (CONTOH: 'Sdr. Ahmad Fauzi' atau 'Budi Santoso'). BUKAN nomor telepon! Jika tidak ada, isi '-'"
@@ -1567,6 +1644,16 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       }
     }
 
+    let fallbackMempelai1: string | undefined = undefined;
+    let fallbackMempelai2: string | undefined = undefined;
+    if (kategoriSurat === 'UNR') {
+      const nikahMatch = text.match(/(?:pernikahan|akad nikah|resepsi)\s+([A-Za-z0-9\s.,'()\-]+?)\s+(?:dengan|&|\bdan\b)\s+([A-Za-z0-9\s.,'()\-]+?)(?:\s+(?:pada|di|hari|tanggal|\n|$))/i);
+      if (nikahMatch && nikahMatch[1] && nikahMatch[2]) {
+        fallbackMempelai1 = nikahMatch[1].trim();
+        fallbackMempelai2 = nikahMatch[2].trim();
+      }
+    }
+
     const data: ExtractedSuratData = {
       kategoriSurat,
       tanggalSurat,
@@ -1584,6 +1671,8 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       temaAcara,
       penyelenggara,
       sesiAcara: cleanSesi,
+      mempelai1: fallbackMempelai1,
+      mempelai2: fallbackMempelai2,
       perihal: '',
     };
 

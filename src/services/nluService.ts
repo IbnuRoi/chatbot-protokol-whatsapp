@@ -256,8 +256,8 @@ export class NluService {
 
     if (currentState === 'SURAT_MASUK_PILIH_JENIS') {
       let jenis: 'UND' | 'UNR' | 'PH' | 'AU' | 'WR' | 'LP' | 'TAP' | undefined;
-      if (lowerText === '1' || lowerText === 'und' || (lowerText.includes('undangan') && !lowerText.includes('rapat'))) jenis = 'UND';
-      else if (lowerText === '2' || lowerText === 'unr' || lowerText.includes('rapat')) jenis = 'UNR';
+      if (lowerText === '1' || lowerText === 'und' || lowerText.includes('undangan') || lowerText.includes('rapat')) jenis = 'UND';
+      else if (lowerText === '2' || lowerText === 'unr' || lowerText.includes('nikah') || lowerText.includes('resepsi') || lowerText.includes('pernikahan') || lowerText.includes('walimah') || lowerText.includes('manten')) jenis = 'UNR';
       else if (lowerText === '3' || lowerText === 'ph' || lowerText.includes('permohonan')) jenis = 'PH';
       else if (lowerText === '4' || lowerText === 'au' || lowerText.includes('audiensi')) jenis = 'AU';
       else if (lowerText === '5' || lowerText === 'wr' || lowerText.includes('wawancara')) jenis = 'WR';
@@ -649,8 +649,8 @@ export class NluService {
 
       // Pastikan entitas kritis diekstrak dengan bantuan heuristik jika LLM melewatkannya
       if (currentState === 'SURAT_MASUK_PILIH_JENIS' && !entities.jenisSurat) {
-        if (lowerText.includes('rapat') || lowerText.includes('unr')) entities.jenisSurat = 'UNR';
-        else if (lowerText.includes('undangan') || lowerText.includes('und')) entities.jenisSurat = 'UND';
+        if (lowerText.includes('nikah') || lowerText.includes('resepsi') || lowerText.includes('pernikahan') || lowerText.includes('walimah') || lowerText.includes('manten') || lowerText.includes('unr')) entities.jenisSurat = 'UNR';
+        else if (lowerText.includes('undangan') || lowerText.includes('rapat') || lowerText.includes('und')) entities.jenisSurat = 'UND';
         else if (lowerText.includes('permohonan') || lowerText.includes('ph')) entities.jenisSurat = 'PH';
         else if (lowerText.includes('audiensi') || lowerText.includes('au')) entities.jenisSurat = 'AU';
         else if (lowerText.includes('wawancara') || lowerText.includes('wr')) entities.jenisSurat = 'WR';
@@ -785,8 +785,8 @@ export class NluService {
     // 2b. State-Aware Sub-State Handling
     if (currentState === 'SURAT_MASUK_PILIH_JENIS') {
       let jenis: 'UND' | 'UNR' | 'PH' | 'AU' | 'WR' | 'LP' | 'TAP' | undefined;
-      if (lower === '1' || lower === 'und' || (lower.includes('undangan') && !lower.includes('rapat'))) jenis = 'UND';
-      else if (lower === '2' || lower === 'unr' || lower.includes('rapat')) jenis = 'UNR';
+      if (lower === '1' || lower === 'und' || lower.includes('undangan') || lower.includes('rapat')) jenis = 'UND';
+      else if (lower === '2' || lower === 'unr' || lower.includes('nikah') || lower.includes('resepsi') || lower.includes('pernikahan') || lower.includes('walimah') || lower.includes('manten')) jenis = 'UNR';
       else if (lower === '3' || lower === 'ph' || lower.includes('permohonan') || lower.includes('narasumber') || lower.includes('fasilitas')) jenis = 'PH';
       else if (lower === '4' || lower === 'au' || lower.includes('audiensi')) jenis = 'AU';
       else if (lower === '5' || lower === 'wr' || lower.includes('wawancara') || lower.includes('liputan')) jenis = 'WR';

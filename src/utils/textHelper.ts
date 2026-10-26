@@ -1348,7 +1348,7 @@ export function formatFriendlyCategory(categoryCode?: string | null, typeName?: 
   const code = categoryCode.toUpperCase().trim();
   const map: Record<string, string> = {
     UND: 'Undangan',
-    UNR: 'Undangan Resmi',
+    UNR: 'Undangan Pernikahan / Resepsi',
     PH: 'Permohonan',
     AU: 'Audiensi',
     WR: 'Warta / Pemberitahuan',

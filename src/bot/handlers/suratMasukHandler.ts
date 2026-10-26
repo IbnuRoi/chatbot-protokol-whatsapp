@@ -90,9 +90,9 @@ export class SuratMasukHandler {
     let selectedJenis: string | undefined = nlu?.entities?.jenisSurat || mapJenis[clean];
 
     if (!selectedJenis) {
-      if (lower.includes('rapat')) {
+      if (lower.includes('nikah') || lower.includes('resepsi') || lower.includes('pernikahan') || lower.includes('walimah') || lower.includes('manten')) {
         selectedJenis = 'UNR';
-      } else if (lower.includes('undangan')) {
+      } else if (lower.includes('undangan') || lower.includes('rapat')) {
         selectedJenis = 'UND';
       } else if (lower.includes('permohonan') || lower.includes('narasumber')) {
         selectedJenis = 'PH';
@@ -764,6 +764,14 @@ export class SuratMasukHandler {
       session.draftSurat.extractedData.perihal = parsed.perihal;
       session.draftSurat.extractedData.event = parsed.perihal;
       session.draftSurat.finalPerihal = parsed.perihal;
+      // Bila kategori UNR dan user mengubah perihal (misal menambahkan orang tua), sinkronkan mempelai1 dan mempelai2
+      if (session.draftSurat.jenisSurat === 'UNR') {
+        const unrMatch = parsed.perihal.match(/(?:pernikahan|resepsi)\s+(.+?)\s+(?:dengan|&)\s+(.+)/i);
+        if (unrMatch && unrMatch[1] && unrMatch[2]) {
+          session.draftSurat.extractedData.mempelai1 = unrMatch[1].trim();
+          session.draftSurat.extractedData.mempelai2 = unrMatch[2].trim();
+        }
+      }
       if (!parsed.subject) {
         const autoSubj = generateSubjectSummary(parsed.perihal, session.draftSurat.extractedData);
         session.draftSurat.finalSubject = autoSubj;
@@ -1369,7 +1377,7 @@ export class SuratMasukHandler {
       let chosen = 'UND';
       if (validJenis.includes(cleanJenis)) {
         chosen = cleanJenis;
-      } else if (cleanJenis.includes('NIKAH') || cleanJenis.includes('UNR')) {
+      } else if (cleanJenis.includes('NIKAH') || cleanJenis.includes('RESEPSI') || cleanJenis.includes('WALIMAH') || cleanJenis.includes('UNR')) {
         chosen = 'UNR';
       } else if (cleanJenis.includes('SAMBUTAN') || cleanJenis.includes('NARASUMBER') || cleanJenis.includes('PERMOHONAN HADIR') || cleanJenis.includes('PH')) {
         chosen = 'PH';
