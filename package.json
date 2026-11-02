@@ -9,6 +9,8 @@
     "simulate": "tsx src/bot/simulator.ts",
     "simulator": "tsx src/bot/simulator.ts",
     "dev:simulator": "tsx src/bot/simulator.ts",
+    "meta:webhook": "tsx src/index.ts --meta",
+    "meta:dev": "tsx watch src/index.ts --meta",
     "db:push": "prisma db push",
     "db:pull": "tsx src/tools/dbPull.ts",
     "db:generate": "prisma generate",

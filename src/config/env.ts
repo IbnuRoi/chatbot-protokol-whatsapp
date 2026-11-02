@@ -56,6 +56,13 @@ export const ENV = {
   ),
   DISPOSITION_FILE_URL:
     process.env.DISPOSITION_FILE_URL || 'https://pwa-protokol.gatsu51.com/files/disposition/',
+
+  // 3. Meta WhatsApp Cloud API Configuration
+  META_VERIFY_TOKEN: process.env.META_VERIFY_TOKEN || 'kemnaker_protokol_secure_token_2026',
+  META_WA_TOKEN: process.env.META_WA_TOKEN || '',
+  META_PHONE_NUMBER_ID: process.env.META_PHONE_NUMBER_ID || '',
+  META_WEBHOOK_PORT: Number(process.env.META_WEBHOOK_PORT || process.env.PORT || 3000),
+  WHATSAPP_PROVIDER: process.env.WHATSAPP_PROVIDER || 'baileys',
 };
 
 // Pastikan direktori storage tersedia
