@@ -22,50 +22,61 @@ export class MetaWebhookServer {
           const reqUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
           const pathname = reqUrl.pathname;
           const method = req.method?.toUpperCase();
+          const isGetOrHead = method === 'GET' || method === 'HEAD';
+          const cleanPath = pathname.replace(/\/+$/, '') || '/';
+          const hasMetaVerificationParams = Boolean(reqUrl.searchParams.get('hub.mode'));
 
-          // 1. Health check endpoint (GET /)
-          if (method === 'GET' && (pathname === '/' || pathname === '/health' || pathname === '/status')) {
+          const isWebhookPath =
+            cleanPath === '/webhook' ||
+            cleanPath === '/webhook-chatbot' ||
+            cleanPath.startsWith('/webhook') ||
+            hasMetaVerificationParams;
+
+          // 1. Health check endpoint (GET /) jika bukan permintaan verifikasi Meta
+          if (
+            isGetOrHead &&
+            !hasMetaVerificationParams &&
+            (cleanPath === '/' || cleanPath === '/health' || cleanPath === '/status')
+          ) {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(
-              JSON.stringify({
-                status: 'online',
-                service: 'Chatbot WhatsApp Protokol Kemnaker (Meta Cloud API Webhook)',
-                timestamp: new Date().toISOString(),
-              })
+              method === 'HEAD'
+                ? ''
+                : JSON.stringify({
+                    status: 'online',
+                    service: 'Chatbot WhatsApp Protokol Kemnaker (Meta Cloud API Webhook)',
+                    timestamp: new Date().toISOString(),
+                  })
             );
             return;
           }
 
-          const cleanPath = pathname.replace(/\/+$/, '') || '/';
-          const isWebhookPath =
-            cleanPath === '/webhook' ||
-            cleanPath === '/webhook-chatbot' ||
-            cleanPath.startsWith('/webhook');
-
-          // 2. Verifikasi Webhook Meta (GET /webhook atau /webhook-chatbot)
-          if (method === 'GET' && isWebhookPath) {
+          // 2. Verifikasi Webhook Meta (GET/HEAD /webhook, /webhook-chatbot, atau dengan parameter hub.mode)
+          if (isGetOrHead && isWebhookPath) {
             const mode = reqUrl.searchParams.get('hub.mode');
             const token = reqUrl.searchParams.get('hub.verify_token');
             const challenge = reqUrl.searchParams.get('hub.challenge');
 
             console.log(`\n🔔 [Meta Webhook] Menerima permintaan verifikasi webhook dari Meta...`);
-            console.log(`   • Mode : ${mode}`);
-            console.log(`   • Token: ${token}`);
+            console.log(`   • Method : ${method}`);
+            console.log(`   • Path   : ${pathname}`);
+            console.log(`   • Mode   : ${mode}`);
+            console.log(`   • Token  : ${token}`);
 
             if (mode === 'subscribe' && token === ENV.META_VERIFY_TOKEN) {
               console.log(`✅ [Meta Webhook] Verifikasi webhook BERHASIL! Challenge dikembalikan ke Meta.`);
               res.writeHead(200, { 'Content-Type': 'text/plain' });
-              res.end(challenge || '');
+              res.end(method === 'HEAD' ? '' : (challenge || ''));
             } else {
-              console.warn(`❌ [Meta Webhook] Verifikasi GAGAL: Token tidak cocok.`);
+              console.warn(`❌ [Meta Webhook] Verifikasi GAGAL: Token tidak cocok atau diakses tanpa token.`);
               res.writeHead(403, { 'Content-Type': 'text/plain' });
-              res.end('Forbidden');
+              res.end(method === 'HEAD' ? '' : 'Forbidden');
             }
             return;
           }
 
-          // 3. Penerima Event Pesan Masuk Meta (POST /webhook atau /webhook-chatbot)
-          if (method === 'POST' && isWebhookPath) {
+          // 3. Penerima Event Pesan Masuk Meta (POST /webhook, /webhook-chatbot, atau root jika di-proxy Nginx)
+          if (method === 'POST' && (isWebhookPath || cleanPath === '/')) {
             let rawBody = '';
             req.on('data', (chunk) => {
               rawBody += chunk;
