@@ -415,6 +415,17 @@ export class SuratMasukHandler {
     if (!picName) picName = '-';
     if (!picPhone) picPhone = '-';
 
+    // Pastikan data sesi terisi nilai PIC definitif agar saat disimpan ke tabel letters & events tidak hilang
+    const targetExt = draft?.extractedData;
+    if (targetExt) {
+      if ((!targetExt.picName || targetExt.picName === '-') && picName !== '-') {
+        targetExt.picName = picName;
+      }
+      if ((!targetExt.picPhoneNumber || targetExt.picPhoneNumber === '-') && picPhone !== '-') {
+        targetExt.picPhoneNumber = picPhone;
+      }
+    }
+
     const title = isUpdated ? `📄 *DATA SURAT BERHASIL DIPERBARUI*` : `📄 *HASIL ANALISIS & EKSTRAKSI DOKUMEN*`;
 
     const isTap = jenisCode === 'TAP' || (agendaDisplay || '').toUpperCase().includes('/TAP/');
@@ -638,6 +649,17 @@ export class SuratMasukHandler {
     }
     if (!picName) picName = '-';
     if (!picPhone) picPhone = '-';
+
+    // Pastikan data sesi terisi nilai PIC definitif agar saat disimpan ke tabel letters & events tidak hilang
+    const targetExt = draft?.extractedData;
+    if (targetExt) {
+      if ((!targetExt.picName || targetExt.picName === '-') && picName !== '-') {
+        targetExt.picName = picName;
+      }
+      if ((!targetExt.picPhoneNumber || targetExt.picPhoneNumber === '-') && picPhone !== '-') {
+        targetExt.picPhoneNumber = picPhone;
+      }
+    }
 
     // Bubble 1: Petunjuk dan Catatan Pengisian
     const guideText =
@@ -1819,6 +1841,17 @@ export class SuratMasukHandler {
     }
     if (!picName) picName = '-';
     if (!picPhone) picPhone = '-';
+
+    // Pastikan data sesi terisi nilai PIC definitif agar saat disimpan ke tabel letters & events tidak hilang
+    const targetExt = draft?.extractedData;
+    if (targetExt) {
+      if ((!targetExt.picName || targetExt.picName === '-') && picName !== '-') {
+        targetExt.picName = picName;
+      }
+      if ((!targetExt.picPhoneNumber || targetExt.picPhoneNumber === '-') && picPhone !== '-') {
+        targetExt.picPhoneNumber = picPhone;
+      }
+    }
 
     sessionService.setState(session.whatsappNumber, BotState.SURAT_MASUK_FINAL_CONFIRM);
 

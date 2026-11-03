@@ -871,7 +871,7 @@ export class SuratService {
           }
         }
 
-        console.log(`[SuratService] Acara kegiatan berhasil dibuat otomatis untuk surat ${surat.agenda_number} (Event ID: ${createdEvent?.id})`);
+        console.log(`[SuratService] Acara kegiatan berhasil dibuat otomatis untuk surat ${surat.agenda_number} (Event ID: ${createdEvent?.id}) | PIC Name: "${letterPicName || '-'}" | PIC Phone: "${letterPicPhone || '-'}"`);
 
         if (createdEvent) {
           // Hubungkan ke tabel pivot event_letters untuk relasi many-to-many Laravel

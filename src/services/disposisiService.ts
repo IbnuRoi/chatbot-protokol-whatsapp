@@ -465,6 +465,11 @@ export class DisposisiService {
 
         const targetOfficial = resolvePejabatDitunjuk(draft.extractedData.diteruskanKepada);
 
+        const letterPicData = await prisma.letters.findUnique({
+          where: { id: BigInt(draft.matchedLetter.id) },
+          select: { pic_name: true, pic_phone_number: true, pic_json: true },
+        });
+
         for (const evId of allEventIds) {
           const ev = await prisma.events.findUnique({ where: { id: evId } });
           if (!ev || ev.deleted_at !== null) continue;
@@ -481,6 +486,19 @@ export class DisposisiService {
             updated_at: new Date(),
             updated_by: userName || 'Petugas Protokol',
           };
+
+          // Sinkronisasi data PIC dari surat ke event jika event belum memilikinya
+          if (letterPicData) {
+            if (!ev.pic_phonenumber && letterPicData.pic_phone_number) {
+              eventPayload.pic_phonenumber = letterPicData.pic_phone_number;
+            }
+            if (!ev.pic_name && letterPicData.pic_name) {
+              eventPayload.pic_name = letterPicData.pic_name;
+            }
+            if (!ev.pic_json && letterPicData.pic_json) {
+              eventPayload.pic_json = letterPicData.pic_json;
+            }
+          }
 
           if (isMewakili) {
             eventPayload.status = 3n; // 3: Diwakilkan
