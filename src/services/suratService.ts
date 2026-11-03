@@ -2,7 +2,7 @@ import { prisma } from '../database/prisma';
 import { Prisma, letters } from '@prisma/client';
 import { pdfService } from './pdfService';
 import { SuratDraftData } from './sessionService';
-import { cleanHtml, formatCombinedPic, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone, sanitizePlaceEvent, formatInitialEventTitle, buildNarasiPenayanganTap, cleanPhoneNumber, normalizeUnicodeText } from '../utils/textHelper';
+import { cleanHtml, formatCombinedPic, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone, sanitizePlaceEvent, formatInitialEventTitle, buildNarasiPenayanganTap, cleanPhoneNumber, normalizeUnicodeText, toStandardIndonesianPhone, buildStandardPicJson } from '../utils/textHelper';
 import { parseIndonesianDateToDate, formatTanggalIndo, parseIndonesianTimeToDates, parseIndonesianDateEventRange, isValidDate, extractWaktuAcaraFromText } from '../utils/dateHelper';
 import { generateEventTitleFromSurat, generateSubjectSummary } from './aiService';
 import { syncTableSequence, isDuplicateKeyError } from '../database/sequenceSync';
@@ -585,26 +585,20 @@ export class SuratService {
       }
 
       const safePicName = (rawPicName && rawPicName !== '-' ? rawPicName : '-').slice(0, 100);
-      const safePicPhone = (rawPicPhone && rawPicPhone !== '-' ? rawPicPhone : '-').slice(0, 50);
+      const safePicPhone = (rawPicPhone && rawPicPhone !== '-' ? toStandardIndonesianPhone(rawPicPhone) : '-').slice(0, 50);
 
-      // Format kolom PIC yang disimpan ke tabel letters
-      // Pada tabel letters, kolom PIC (pic_name) memuat nama dan nomor kontak sesuai format tabel letters: "Nama PIC (Nomor PIC)" atau "Nama PIC"
-      const safePicCombined = formatCombinedPic(
-        safePicName !== '-' ? safePicName : (draft.extractedData.picPengirim || safePicPhone),
-        safePicPhone
-      ).slice(0, 100);
+      // Format kolom PIC yang disimpan ke tabel letters & events:
+      // 1. pic_name: Hanya memuat nama PIC murni (misal "Joe") agar pada website nama tidak tercampur nomor HP
+      //    Hanya jika nama PIC kosong/'-', baru fallback ke nomor PIC atau null
+      const letterPicName = safePicName !== '-'
+        ? safePicName
+        : (safePicPhone !== '-' ? safePicPhone : null);
 
-      const safeLettersPicPhone = safePicPhone && safePicPhone !== '-' ? safePicPhone : null;
+      // 2. pic_phone_number: Memuat nomor telepon PIC standar lokal (misal "085228208998")
+      const letterPicPhone = safePicPhone !== '-' ? safePicPhone : null;
 
-      let picJson: string | null = null;
-      if (safePicName !== '-' || safePicPhone !== '-') {
-        picJson = JSON.stringify([
-          {
-            name: safePicName !== '-' ? safePicName : '',
-            phone: safePicPhone !== '-' ? safePicPhone : '',
-          },
-        ]);
-      }
+      // 3. pic_json: Objek JSON standar dengan key 'phonenumber' (digunakan website), 'phone_number', dan 'phone'
+      const picJson = buildStandardPicJson(safePicName, safePicPhone);
 
       // Sanitisasi dan batasi panjang setiap kolom secara ketat sesuai skema database PostgreSQL
       // agar tidak pernah terjadi error 22001 (value too long for type character varying)
@@ -647,8 +641,8 @@ export class SuratService {
         type_letter: typeId,
         note: formattedNote,
         file: safeFileName,
-        pic_name: safePicCombined,
-        pic_phone_number: safeLettersPicPhone,
+        pic_name: letterPicName,
+        pic_phone_number: letterPicPhone,
         pic_json: picJson,
         institution_origin: safeInstansi,
         created_by: safeCreatorName,
@@ -835,15 +829,7 @@ export class SuratService {
         const eventLocation = safePlaceEvent || null;
 
         // 6. Kelengkapan kolom lainnya pada tabel events
-        let eventPicJson: string | null = null;
-        if (safePicName && safePicName !== '-') {
-          eventPicJson = JSON.stringify([
-            {
-              name: safePicName,
-              phone: safePicPhone && safePicPhone !== '-' ? safePicPhone : '',
-            },
-          ]);
-        }
+        const eventPicJson = buildStandardPicJson(safePicName, safePicPhone);
 
         const eventNotes = `Asal Surat: ${safeAsalSurat} | No. Surat: ${safeNomorSurat} | No. Agenda: ${safeAgendaNumber}`;
 
@@ -860,8 +846,8 @@ export class SuratService {
           time_zone: safeEventTimeZone,
           status: 1n, // 1: onschedule (Terjadwal / Diagendakan)
           location: eventLocation,
-          pic_name: safePicCombined && safePicCombined !== '-' ? safePicCombined : (safePicName && safePicName !== '-' ? safePicName : null),
-          pic_phonenumber: safeLettersPicPhone,
+          pic_name: letterPicName,
+          pic_phonenumber: letterPicPhone,
           pic_json: picJson || eventPicJson,
           notes: eventNotes,
           created_by: safeCreatorName,

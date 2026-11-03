@@ -1,6 +1,6 @@
 import { prisma } from '../database/prisma';
 import { Prisma } from '@prisma/client';
-import { cleanHtml, splitPicNameAndPhone, extractEventTitleDetails, formatPicWithWhatsApp } from '../utils/textHelper';
+import { cleanHtml, splitPicNameAndPhone, extractEventTitleDetails, formatPicWithWhatsApp, toStandardIndonesianPhone, buildStandardPicJson } from '../utils/textHelper';
 import { expandSearchTermsWithAcronyms, calculateRelevanceScore } from '../utils/acronymHelper';
 import { formatTanggalIndo, formatWaktuDisplay, parseIndonesianDateToDate, parseIndonesianTimeToDates, isValidDate, extractDateFromText } from '../utils/dateHelper';
 import { syncTableSequence, isDuplicateKeyError } from '../database/sequenceSync';
@@ -1090,7 +1090,7 @@ export class JadwalService {
         untilFinish = 1;
       }
 
-      // 3. Gabungkan nama PIC dan kontak
+      // 3. Pisahkan nama PIC dan kontak
       let picNameStr = draft.pic?.trim() || '';
       let picPhoneStr = '';
       if (picNameStr && picNameStr !== '-') {
@@ -1098,6 +1098,8 @@ export class JadwalService {
         picNameStr = splitted.name;
         picPhoneStr = splitted.phone;
       }
+
+      const standardPicPhone = picPhoneStr ? toStandardIndonesianPhone(picPhoneStr) : '-';
 
       // Jika ada info Pejabat Hadir, gabungkan ke pic_name
       let finalPicName = picNameStr;
@@ -1108,10 +1110,7 @@ export class JadwalService {
             : draft.pejabatHadir.trim();
       }
 
-      let picJson: string | null = null;
-      if (picNameStr && picNameStr !== '-') {
-        picJson = JSON.stringify([{ name: picNameStr, phone: picPhoneStr || '' }]);
-      }
+      const picJson = buildStandardPicJson(picNameStr, standardPicPhone);
 
       // 4. Catatan arahan langsung
       const notesParts: string[] = ['[ARAHAN LANGSUNG PIMPINAN]'];
@@ -1163,7 +1162,7 @@ export class JadwalService {
         status: 1n, // 1: onschedule (Diagendakan)
         location: draft.lokasi && draft.lokasi !== '-' ? draft.lokasi.trim() : null,
         pic_name: finalPicName && finalPicName !== '-' ? finalPicName.slice(0, 225) : null,
-        pic_phonenumber: picPhoneStr && picPhoneStr !== '-' ? picPhoneStr.slice(0, 100) : null,
+        pic_phonenumber: standardPicPhone !== '-' ? standardPicPhone.slice(0, 100) : null,
         pic_json: picJson,
         notes: eventNotes,
         created_by: creatorName,

@@ -798,6 +798,61 @@ export function formatWhatsAppPhone(rawPhone: string | null | undefined): {
   return { display, waLink, waDigits };
 }
 
+/**
+ * Mengonversi nomor telepon ke format standar lokal Indonesia (08xxxxxxxxxx) atau digit bersih.
+ * Contoh: "+62 852-2820-8998" -> "085228208998", "6285228208998" -> "085228208998"
+ */
+export function toStandardIndonesianPhone(rawPhone: string | null | undefined): string {
+  if (!rawPhone || !rawPhone.trim() || rawPhone.trim() === '-') return '-';
+  const clean = rawPhone.trim();
+
+  // Jika berupa multiple nomor yang dipisahkan garis miring
+  if (clean.includes('/')) {
+    const parts = clean.split('/').map((p) => toStandardIndonesianPhone(p.trim())).filter((p) => p !== '-');
+    return parts.length > 0 ? parts.join(' / ').slice(0, 50) : '-';
+  }
+
+  const digits = clean.replace(/\D/g, '');
+  if (digits.length < 5) return clean.slice(0, 50);
+
+  if (digits.startsWith('628')) {
+    return '08' + digits.slice(3);
+  }
+  if (digits.startsWith('62')) {
+    return '0' + digits.slice(2);
+  }
+  if (digits.startsWith('0')) {
+    return digits;
+  }
+  if (digits.startsWith('8')) {
+    return '0' + digits;
+  }
+  return digits;
+}
+
+/**
+ * Membangun JSON string standar untuk kolom pic_json yang kompatibel 100%
+ * dengan semua format website Laravel/Vue protokol kemnaker:
+ * - 'phonenumber' (digunakan website pada tabel letters & form edit)
+ * - 'phone_number' (digunakan website pada tabel events)
+ * - 'phone' (digunakan internal bot)
+ */
+export function buildStandardPicJson(name?: string | null, phone?: string | null): string | null {
+  const cleanName = (name && name !== '-' ? name.trim() : '').slice(0, 100);
+  const cleanPhone = (phone && phone !== '-' ? toStandardIndonesianPhone(phone) : '').slice(0, 50);
+
+  if (!cleanName && !cleanPhone) return null;
+
+  return JSON.stringify([
+    {
+      name: cleanName,
+      phonenumber: cleanPhone,
+      phone_number: cleanPhone,
+      phone: cleanPhone,
+    },
+  ]);
+}
+
 function formatSinglePicContact(rawName?: string | null, rawPhone?: string | null): string {
   let cleanName = normalizeUnicodeText(rawName || '');
   let cleanPhone = normalizeUnicodeText(rawPhone || '');
