@@ -36,10 +36,11 @@ export class MetaWebhookServer {
             return;
           }
 
+          const cleanPath = pathname.replace(/\/+$/, '') || '/';
           const isWebhookPath =
-            pathname === '/webhook' ||
-            pathname === '/webhook-chatbot' ||
-            pathname.startsWith('/webhook');
+            cleanPath === '/webhook' ||
+            cleanPath === '/webhook-chatbot' ||
+            cleanPath.startsWith('/webhook');
 
           // 2. Verifikasi Webhook Meta (GET /webhook atau /webhook-chatbot)
           if (method === 'GET' && isWebhookPath) {
@@ -88,6 +89,7 @@ export class MetaWebhookServer {
           }
 
           // Endpoint lainnya tidak ditemukan (404)
+          console.warn(`[Meta Webhook] 404 Not Found: ${method} "${pathname}" (cleanPath: "${cleanPath}")`);
           res.writeHead(404, { 'Content-Type': 'text/plain' });
           res.end('Not Found');
         } catch (serverErr: any) {
