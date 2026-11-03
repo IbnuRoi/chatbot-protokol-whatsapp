@@ -8,6 +8,7 @@ import { splitPicNameAndPhone, sanitizePlaceEvent, cleanTemplatePrefix, buildNar
 import { parseIndonesianDateToDate, formatTanggalIndo, isValidDate, extractWaktuAcaraFromText } from '../utils/dateHelper';
 import { imageService } from './imageService';
 import { pdfService } from './pdfService';
+import { gatsuAiClient } from './gatsuAiClient';
 
 /**
  * Memformat rumusan Perihal resmi sesuai formula template resmi berdasarkan kategori surat:
@@ -946,6 +947,22 @@ export class AiService {
     originalFileName?: string,
     pdfFilePath?: string
   ): Promise<ExtractedSuratData> {
+    // 0. Jalur Utama: Gatsu AI Service (Headless Microservice Fastify)
+    if (ENV.AI_SERVICE_ENABLED && pdfFilePath && fs.existsSync(pdfFilePath)) {
+      try {
+        console.log(`[AiService] 🚀 Mengirim PDF '${originalFileName || path.basename(pdfFilePath)}' ke Gatsu AI Service...`);
+        const gatsuData = await gatsuAiClient.extractLetter(pdfFilePath, originalFileName);
+        const standardized = this.parseAiExtractionResponse(JSON.stringify(gatsuData), originalFileName, pdfText);
+        if (standardized) {
+          console.log(`✅ [AiService] Ekstraksi sukses via Gatsu AI Service! (Kategori: ${standardized.kategoriSurat})`);
+          return standardized;
+        }
+        return gatsuData;
+      } catch (gatsuErr: any) {
+        console.warn(`[AiService] ⚠️ Gatsu AI Service gagal/tidak tersedia (${gatsuErr.message}), beralih ke parser internal chatbot...`);
+      }
+    }
+
     // 1. Cek apakah dokumen PDF merupakan PDF hasil scan (tanpa layer teks atau teks sangat sedikit/rusak)
     if (pdfFilePath && (await pdfService.isScannedPdf(pdfFilePath, pdfText))) {
       console.log(
@@ -1070,6 +1087,24 @@ ${pdfText.slice(0, 6000)}
    * Mendukung dokumen satu halaman maupun multi-halaman (misal: halaman surat dinas & lembar lampiran rundown acara)
    */
   public async extractSuratFromImages(imagePaths: string[], originalFileName?: string): Promise<ExtractedSuratData> {
+    const validPaths = imagePaths.filter((p) => fs.existsSync(p));
+
+    // 0. Jalur Utama: Gatsu AI Service (Microservice)
+    if (ENV.AI_SERVICE_ENABLED && validPaths.length > 0) {
+      try {
+        console.log(`[AiService] 🚀 Mengirim gambar '${originalFileName || path.basename(validPaths[0])}' ke Gatsu AI Service...`);
+        const gatsuData = await gatsuAiClient.extractLetter(validPaths[0], originalFileName);
+        const standardized = this.parseAiExtractionResponse(JSON.stringify(gatsuData), originalFileName);
+        if (standardized) {
+          console.log(`✅ [AiService] Ekstraksi gambar sukses via Gatsu AI Service! (Kategori: ${standardized.kategoriSurat})`);
+          return standardized;
+        }
+        return gatsuData;
+      } catch (gatsuErr: any) {
+        console.warn(`[AiService] ⚠️ Gatsu AI Service gagal/tidak tersedia (${gatsuErr.message}), beralih ke Vision AI internal...`);
+      }
+    }
+
     const isUsingOpenRouter = Boolean(this.openAiClient);
     let model = 'google/gemini-2.5-flash';
 
@@ -1085,7 +1120,6 @@ ${pdfText.slice(0, 6000)}
       model = ENV.PDF_EXTRACTION_MODEL || 'gemini-2.5-flash';
     }
 
-    const validPaths = imagePaths.filter((p) => fs.existsSync(p));
     if ((this.genAiClient || this.openAiClient) && validPaths.length > 0) {
       try {
         const imagePayloads: Array<{ mimeType: string; base64: string }> = [];
@@ -1759,6 +1793,24 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
   ): Promise<ExtractedDisposisiData> {
     const pdfText = await pdfService.extractText(pdfFilePath);
 
+    // 0. Jalur Utama: Gatsu AI Service (Microservice)
+    if (ENV.AI_SERVICE_ENABLED && fs.existsSync(pdfFilePath)) {
+      try {
+        console.log(`[AiService] 🚀 Mengirim PDF disposisi '${originalFileName || path.basename(pdfFilePath)}' ke Gatsu AI Service...`);
+        const gatsuData = await gatsuAiClient.extractDisposition(pdfFilePath, originalFileName);
+        const standardized = this.parseDisposisiResponse(JSON.stringify(gatsuData), originalFileName, pdfText);
+        if (standardized && ((standardized.nomorAgenda && standardized.nomorAgenda !== '-') || (standardized.perihal && standardized.perihal !== '-'))) {
+          console.log(`✅ [AiService] Ekstraksi lembar disposisi sukses via Gatsu AI Service!`);
+          return standardized;
+        }
+        if (gatsuData && ((gatsuData.nomorAgenda && gatsuData.nomorAgenda !== '-') || (gatsuData.perihal && gatsuData.perihal !== '-'))) {
+          return gatsuData;
+        }
+      } catch (gatsuErr: any) {
+        console.warn(`[AiService] ⚠️ Gatsu AI Service disposisi gagal/tidak tersedia (${gatsuErr.message}), beralih ke parser internal disposisi...`);
+      }
+    }
+
     // Lembar disposisi selalu berada pada halaman 1 (atau 1-2 jika lembar disposisi + surat pengantar).
     // Render 2 halaman pertama pada skala tinggi (2.0x) agar kotak centang dan teks kecil sangat tajam.
     try {
@@ -1875,6 +1927,26 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
     originalFileName?: string,
     fallbackDocText?: string
   ): Promise<ExtractedDisposisiData> {
+    const validPaths = imagePaths.filter((p) => fs.existsSync(p));
+
+    // 0. Jalur Utama: Gatsu AI Service (Microservice)
+    if (ENV.AI_SERVICE_ENABLED && validPaths.length > 0) {
+      try {
+        console.log(`[AiService] 🚀 Mengirim gambar disposisi '${originalFileName || path.basename(validPaths[0])}' ke Gatsu AI Service...`);
+        const gatsuData = await gatsuAiClient.extractDisposition(validPaths[0], originalFileName);
+        const standardized = this.parseDisposisiResponse(JSON.stringify(gatsuData), originalFileName, fallbackDocText);
+        if (standardized && ((standardized.nomorAgenda && standardized.nomorAgenda !== '-') || (standardized.perihal && standardized.perihal !== '-'))) {
+          console.log(`✅ [AiService] Ekstraksi gambar disposisi sukses via Gatsu AI Service!`);
+          return standardized;
+        }
+        if (gatsuData && ((gatsuData.nomorAgenda && gatsuData.nomorAgenda !== '-') || (gatsuData.perihal && gatsuData.perihal !== '-'))) {
+          return gatsuData;
+        }
+      } catch (gatsuErr: any) {
+        console.warn(`[AiService] ⚠️ Gatsu AI Service disposisi gagal/tidak tersedia (${gatsuErr.message}), beralih ke Vision AI internal...`);
+      }
+    }
+
     const isUsingOpenRouter = Boolean(this.openAiClient);
     let model = 'openrouter/free';
     if (isUsingOpenRouter) {
@@ -1887,7 +1959,6 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       model = ENV.PDF_EXTRACTION_MODEL || 'gemini-2.5-flash';
     }
 
-    const validPaths = imagePaths.filter((p) => fs.existsSync(p));
     if ((this.genAiClient || this.openAiClient) && validPaths.length > 0) {
       try {
         const imagePayloads: Array<{ mimeType: string; base64: string }> = [];

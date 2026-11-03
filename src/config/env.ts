@@ -63,6 +63,12 @@ export const ENV = {
   META_PHONE_NUMBER_ID: process.env.META_PHONE_NUMBER_ID || '',
   META_WEBHOOK_PORT: Number(process.env.META_WEBHOOK_PORT || process.env.PORT || 3000),
   WHATSAPP_PROVIDER: process.env.WHATSAPP_PROVIDER || 'baileys',
+
+  // 4. Gatsu AI Service (protokol-ai-service) Configuration
+  AI_SERVICE_ENABLED: process.env.AI_SERVICE_ENABLED !== 'false',
+  AI_SERVICE_URL: (process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000').replace(/\/+$/, ''),
+  AI_SERVICE_SECRET_KEY: process.env.AI_SERVICE_SECRET_KEY || 'protokol-secret-key-2026',
+  AI_SERVICE_TIMEOUT_MS: Number(process.env.AI_SERVICE_TIMEOUT_MS || 30000),
 };
 
 // Pastikan direktori storage tersedia

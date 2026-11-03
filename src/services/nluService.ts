@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { ENV } from '../config/env';
+import { gatsuAiClient } from './gatsuAiClient';
 import { extractDateFromText, extractDateRangeFromText, removeDateMention } from '../utils/dateHelper';
 import {
   isPureGreeting,
@@ -526,6 +527,19 @@ export class NluService {
         `    "finalAction": "SAVE | CANCEL"\n` +
         `  }\n` +
         `}`;
+
+      // 0. Coba Gatsu AI Service NLU terlebih dahulu jika diaktifkan
+      if (ENV.AI_SERVICE_ENABLED) {
+        try {
+          const gatsuNlu = await gatsuAiClient.analyzeNlu(cleanText);
+          if (gatsuNlu && gatsuNlu.intent && gatsuNlu.intent !== 'UNKNOWN') {
+            console.log(`✅ [NluService] Intent '${gatsuNlu.intent}' berhasil dianalisis via Gatsu AI Service! (Confidence: ${gatsuNlu.confidence})`);
+            return gatsuNlu;
+          }
+        } catch (gatsuNluErr: any) {
+          console.warn(`[NluService] Gatsu AI NLU gagal/tidak tersedia (${gatsuNluErr.message}), beralih ke OpenRouter/Heuristik...`);
+        }
+      }
 
       let rawContent: string | null | undefined;
       try {
