@@ -648,6 +648,8 @@ export class SuratMasukHandler {
       `• *Tanggal Acara*: Tanggal kegiatan (isi *-* jika tidak ada acara)\n` +
       `• *Jam Acara*: Waktu kegiatan (contoh: 09.00 WIB atau *-* jika tidak ada)\n` +
       `• *Tempat Acara*: Lokasi/tempat kegiatan (contoh: Hotel Bidakara Jakarta atau *-* jika tidak ada)\n` +
+      `• *Nama PIC*: Nama lengkap narahubung/kontak person (contoh: Budi Santoso atau *-* jika tidak ada)\n` +
+      `• *Nomor PIC*: Nomor HP/WhatsApp narahubung (contoh: 081234567890 atau *-* jika tidak ada)\n` +
       `• *Pilihan Kategori*: UND, PH, UNR, AU, WR, TAP, LP\n\n` +
       `_(Ketik *batal* jika ingin membatalkan)_`;
 
@@ -867,10 +869,57 @@ export class SuratMasukHandler {
         return this.handleReviewData(session, clean);
       }
 
+      // Cek apakah pengguna mengetikkan nomor telepon atau PIC secara langsung (misal: "081234567890" atau "Nomor PIC 081234567890")
+      const directPic = this.handleDirectPicInput(session, clean);
+      if (directPic) {
+        return directPic;
+      }
+
       return this.renderEditTemplatePrompt(session, `⚠️ *Format perubahan belum dikenali.*`);
     }
 
     // Kembali ke state REVIEW_DATA dengan tampilan hasil pembaruan
+    sessionService.setState(session.whatsappNumber, BotState.SURAT_MASUK_REVIEW_DATA);
+    return this.renderExtractedDataReview(session, true);
+  }
+
+  /**
+   * Menangani input langsung nomor PIC atau nama+nomor PIC tanpa format template key-value
+   * (contoh: "Nomor PIC 081234567890", "081234567890", "PIC Budi 081234567890", "No HP 081234567890")
+   */
+  public handleDirectPicInput(session: UserSession, input: string): BotResponse | null {
+    if (!session.draftSurat) return null;
+    if (!session.draftSurat.extractedData) {
+      session.draftSurat.extractedData = {
+        nomorSurat: '-',
+        tanggalSurat: '-',
+        subject: '-',
+        asalSurat: '-',
+        event: '-',
+        picPengirim: '-',
+        perihal: '-',
+      };
+    }
+
+    const splitted = splitPicNameAndPhone(input);
+    if (splitted.phone === '-') {
+      return null;
+    }
+
+    const cleanPhone = cleanPhoneNumber(splitted.phone);
+    const finalPhone = cleanPhone !== '-' ? cleanPhone : splitted.phone;
+
+    session.draftSurat.extractedData.picPhoneNumber = finalPhone.slice(0, 50);
+
+    if (splitted.name && splitted.name !== '-') {
+      session.draftSurat.extractedData.picName = splitted.name.slice(0, 100);
+    }
+
+    const curN = session.draftSurat.extractedData.picName && session.draftSurat.extractedData.picName !== '-'
+      ? session.draftSurat.extractedData.picName
+      : '';
+    session.draftSurat.extractedData.picPengirim = formatCombinedPic(curN, finalPhone);
+
     sessionService.setState(session.whatsappNumber, BotState.SURAT_MASUK_REVIEW_DATA);
     return this.renderExtractedDataReview(session, true);
   }
@@ -929,6 +978,10 @@ export class SuratMasukHandler {
       lower.includes('hp pic') ||
       lower.includes('wa pic') ||
       lower.includes('kontak pic') ||
+      lower.includes('whatsapp') ||
+      lower.includes('handphone') ||
+      lower.includes('phone') ||
+      lower.includes('cp') ||
       lower.includes('narahubung') ||
       lower.includes('kontak') ||
       lower.includes('pic')
@@ -1220,19 +1273,23 @@ export class SuratMasukHandler {
         rawKey === 'nama pic/narahubung' ||
         rawKey === 'pic / narahubung' ||
         rawKey === 'pic/narahubung' ||
-        rawKey === 'nama kontak person'
+        rawKey === 'nama kontak person' ||
+        rawKey === 'nama kontak pic' ||
+        (rawKey.includes('nama') && (rawKey.includes('pic') || rawKey.includes('kontak') || rawKey.includes('narahubung') || rawKey.includes('cp')))
       ) {
-        if (rawVal !== '-') {
-          const splitted = splitPicNameAndPhone(rawVal);
+        // Bersihkan awalan strip, colon, atau bullet jika ada
+        const cleanVal = rawVal.replace(/^[\s\-:–—•*#|]+/, '').trim();
+        if (cleanVal && cleanVal !== '-' && !/^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(cleanVal)) {
+          const splitted = splitPicNameAndPhone(cleanVal);
           if (splitted.phone !== '-' && !result.picPhoneNumber) {
             result.picPhoneNumber = cleanPhoneNumber(splitted.phone);
-            result.picName = splitted.name !== '-' ? splitted.name : rawVal;
+            result.picName = splitted.name !== '-' ? splitted.name : cleanVal;
           } else {
-            result.picName = rawVal;
+            result.picName = cleanVal;
           }
         }
       }
-      // 10. Nomor PIC
+      // 10. Nomor PIC / Nomor Telepon / WhatsApp / HP / Kontak
       else if (
         rawKey === 'nomor pic' ||
         rawKey === 'no pic' ||
@@ -1268,12 +1325,19 @@ export class SuratMasukHandler {
         rawKey === 'nomor wa' ||
         rawKey === 'no wa' ||
         rawKey === 'wa' ||
+        rawKey === 'whatsapp' ||
+        rawKey === 'nomor whatsapp' ||
+        rawKey === 'no whatsapp' ||
         rawKey === 'nomor telp' ||
         rawKey === 'no telp' ||
         rawKey === 'telp' ||
         rawKey === 'nomor telepon' ||
         rawKey === 'no telepon' ||
         rawKey === 'telepon' ||
+        rawKey === 'phone' ||
+        rawKey === 'handphone' ||
+        rawKey === 'no handphone' ||
+        rawKey === 'nomor handphone' ||
         rawKey === 'nomor narahubung' ||
         rawKey === 'no narahubung' ||
         rawKey === 'kontak narahubung' ||
@@ -1282,18 +1346,37 @@ export class SuratMasukHandler {
         rawKey === 'telepon narahubung' ||
         rawKey === 'nomor cp' ||
         rawKey === 'no cp' ||
-        rawKey === 'cp phone'
+        rawKey === 'cp phone' ||
+        rawKey.includes('nomor pic') ||
+        rawKey.includes('no pic') ||
+        rawKey.includes('wa pic') ||
+        rawKey.includes('hp pic') ||
+        rawKey.includes('telepon pic') ||
+        rawKey.includes('kontak pic') ||
+        rawKey.includes('no hp') ||
+        rawKey.includes('nomor hp') ||
+        rawKey.includes('no wa') ||
+        rawKey.includes('nomor wa') ||
+        rawKey.includes('no telp') ||
+        rawKey.includes('nomor telp') ||
+        rawKey.includes('no telepon') ||
+        rawKey.includes('nomor telepon') ||
+        rawKey.includes('whatsapp') ||
+        rawKey.includes('handphone') ||
+        (rawKey.includes('kontak') && !rawKey.includes('nama'))
       ) {
-        if (rawVal !== '-') {
-          const splitted = splitPicNameAndPhone(rawVal);
+        // Bersihkan sisa strip atau colon bawaan template (misal "- 081234567890" atau ": 081234567890")
+        const cleanVal = rawVal.replace(/^[\s\-:–—•*#|]+/, '').trim();
+        if (cleanVal && cleanVal !== '-' && !/^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(cleanVal)) {
+          const splitted = splitPicNameAndPhone(cleanVal);
           if (splitted.phone !== '-') {
             result.picPhoneNumber = cleanPhoneNumber(splitted.phone);
             if (splitted.name !== '-' && !result.picName) {
               result.picName = splitted.name;
             }
           } else {
-            const cleaned = cleanPhoneNumber(rawVal);
-            result.picPhoneNumber = cleaned !== '-' ? cleaned : rawVal;
+            const cleaned = cleanPhoneNumber(cleanVal);
+            result.picPhoneNumber = cleaned !== '-' ? cleaned : cleanVal;
           }
         }
       }
@@ -1306,11 +1389,15 @@ export class SuratMasukHandler {
         rawKey === 'contact person' ||
         rawKey === 'pic pengirim' ||
         rawKey === 'pic & kontak' ||
-        rawKey === 'pic kontak'
+        rawKey === 'pic kontak' ||
+        rawKey === 'pic / kontak' ||
+        rawKey.includes('pic') ||
+        rawKey.includes('narahubung')
       ) {
-        if (rawVal !== '-') {
-          result.picPengirim = rawVal;
-          const splitted = splitPicNameAndPhone(rawVal);
+        const cleanVal = rawVal.replace(/^[\s\-:–—•*#|]+/, '').trim();
+        if (cleanVal && cleanVal !== '-' && !/^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(cleanVal)) {
+          result.picPengirim = cleanVal;
+          const splitted = splitPicNameAndPhone(cleanVal);
           if (splitted.name && splitted.name !== '-' && !result.picName) result.picName = splitted.name;
           if (splitted.phone && splitted.phone !== '-' && !result.picPhoneNumber) {
             result.picPhoneNumber = cleanPhoneNumber(splitted.phone);

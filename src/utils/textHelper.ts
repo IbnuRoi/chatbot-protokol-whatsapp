@@ -567,7 +567,17 @@ export function normalizeUnicodeText(text: string | null | undefined): string {
  */
 export function cleanPhoneNumber(rawPhone: string | null | undefined): string {
   if (!rawPhone) return '-';
-  const normalized = normalizeUnicodeText(rawPhone);
+  let normalized = normalizeUnicodeText(rawPhone);
+  if (!normalized || normalized === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(normalized)) {
+    return '-';
+  }
+
+  // Bersihkan awalan simbol seperti strip (-), titik dua (:), spasi, tanda pagar, atau kata prefiks bawaan template
+  normalized = normalized
+    .replace(/^[\s\-:–—•*#|]+/, '')
+    .replace(/^(?:no\.?|nomor|telp\.?|telepon|hp\.?|wa\.?|whatsapp|kontak|phone)\s*[:.-]?\s*/i, '')
+    .trim();
+
   if (!normalized || normalized === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(normalized)) {
     return '-';
   }
@@ -578,10 +588,27 @@ export function cleanPhoneNumber(rawPhone: string | null | undefined): string {
     return parsed.display;
   }
 
-  // Jika input berupa nomor telepon dengan digit cukup
+  // Jika nomor memuat multiple nomor (dipisahkan slash '/' atau koma ',')
+  if (normalized.includes('/') || normalized.includes(',')) {
+    const parts = normalized.split(/[/,]/).map((p) => p.trim()).filter(Boolean);
+    const cleanedParts = parts.map((part) => {
+      const pParsed = formatWhatsAppPhone(part);
+      if (pParsed) return pParsed.display;
+      const pDigits = part.replace(/\D/g, '');
+      return pDigits.length >= 7 ? part.replace(/[^\d+\-\s().]/g, '').trim() : null;
+    }).filter(Boolean);
+
+    if (cleanedParts.length > 0) {
+      return cleanedParts.join(' / ').slice(0, 50);
+    }
+  }
+
+  // Fallback tangguh: Jika input berupa nomor telepon dengan digit cukup (>= 5 digit)
   const digitsOnly = normalized.replace(/\D/g, '');
-  if (digitsOnly.length >= 7) {
-    return normalized.replace(/[^\d+\-\s()./]/g, '').trim().slice(0, 50) || '-';
+  if (digitsOnly.length >= 5) {
+    // Bersihkan karakter anomali dan pertahankan format angka
+    const cleanedDigits = normalized.replace(/[^\d+\-\s()./]/g, '').trim().slice(0, 50);
+    return cleanedDigits || '-';
   }
 
   return '-';
@@ -605,8 +632,21 @@ export function splitPicNameAndPhone(raw: string | null | undefined): { name: st
     return { name: '-', phone: '-' };
   }
 
-  // Bersihkan awalan seperti "PIC:", "Narahubung:", "Contact Person:", "Kontak:"
-  clean = clean.replace(/^(?:pic|narahubung|contact\s+person|cp|kontak|telp|hp|wa|whatsapp)\s*[:.-]?\s*/i, '').trim();
+  // Bersihkan awalan simbol atau kata instruksi template (seperti "Nomor PIC:", "No HP:", "WA:", "PIC:", dll.)
+  clean = clean
+    .replace(/^[\s\-:–—•*#|]+/, '')
+    .replace(/^(?:nomor\s+(?:telepon|telp|hp|wa|whatsapp|kontak|pic|narahubung|cp)?|no\.?\s+(?:telepon|telp|hp|wa|whatsapp|kontak|pic|narahubung|cp)?|pic|narahubung|contact\s+person|cp|kontak|telp\.?|telepon|hp\.?|wa\.?|whatsapp|phone|handphone)\s*[:.-]?\s*/i, '')
+    .trim();
+
+  // Jika seluruh teks murni berupa nomor telepon (atau diawali +/08 dan hanya angka, spasi, tanda kurung, strip, slash)
+  const digitsCheck = clean.replace(/\D/g, '');
+  if (digitsCheck.length >= 7 && /^[+\d\s\-_()./]+$/.test(clean)) {
+    const cleanedP = cleanPhoneNumber(clean);
+    return {
+      name: '-',
+      phone: (cleanedP !== '-' ? cleanedP : clean.replace(/[^\d+]/g, '')).slice(0, 50),
+    };
+  }
 
   // Regex untuk mendeteksi nomor telepon (Indonesia: 08xx, +62xx, 62xx, (021)xx, dll.)
   // Minimal 7 digit angka
@@ -619,29 +659,45 @@ export function splitPicNameAndPhone(raw: string | null | undefined): { name: st
 
   if (phoneMatch) {
     const rawPhone = phoneMatch[0].trim();
-    // Bersihkan karakter selain angka, tanda plus (+), dan strip (-)
-    phone = rawPhone.replace(/[^\d+]/g, '').trim();
+    const cleanedP = cleanPhoneNumber(rawPhone);
+    phone = (cleanedP !== '-' ? cleanedP : rawPhone.replace(/[^\d+]/g, '')).trim();
 
     // Hapus bagian phone dari teks untuk menyisakan nama
     let remainingName = clean.replace(rawPhone, '').trim();
-    // Bersihkan tanda kurung yang tersisa, strip, slash, atau kata 'WA', 'HP', 'Telp'
+    // Bersihkan tanda kurung yang tersisa, strip, slash, atau kata 'WA', 'HP', 'Telp', 'Nomor PIC'
     remainingName = remainingName
       .replace(/[\(\)\[\]\{\}]/g, ' ')
-      .replace(/^(?:wa|whatsapp|hp|telp|telepon|phone)\s*[:.-]?\s*/i, '')
+      .replace(/^(?:nomor\s+(?:telepon|telp|hp|wa|whatsapp|kontak|pic|narahubung|cp)?|no\.?\s+(?:telepon|telp|hp|wa|whatsapp|kontak|pic|narahubung|cp)?|pic|narahubung|contact\s+person|cp|kontak|telp\.?|telepon|hp\.?|wa\.?|whatsapp|phone|handphone)\s*[:.-]?\s*/i, '')
       .replace(/[\s\-_/]+$/, '')
       .replace(/^[\s\-_/]+/, '')
       .replace(/\s+/g, ' ')
       .trim();
 
+    if (/^(?:nomor|no\.?|wa|whatsapp|hp|telp|telepon|phone|kontak|pic|cp)\s*[:.-]?\s*$/i.test(remainingName)) {
+      remainingName = '';
+    }
+
     if (remainingName && remainingName !== '-' && remainingName.length >= 2) {
       name = remainingName;
     }
   } else {
-    // Tidak ditemukan nomor telepon via regex Indonesia, periksa apakah seluruh string adalah nomor telepon umum
-    const digitsOnly = clean.replace(/\D/g, '');
-    if (digitsOnly.length >= 7 && /^[+\d\s\-_()./]+$/.test(clean)) {
-      phone = clean.replace(/[^\d+]/g, '').trim();
-      name = '-';
+    // Tidak ditemukan nomor telepon via regex Indonesia, periksa apakah ada digit >= 7 di dalam string
+    if (digitsCheck.length >= 7) {
+      // Coba cari substring angka 7-16 digit
+      const anyPhoneMatch = clean.match(/\b\d{7,16}\b/);
+      if (anyPhoneMatch) {
+        phone = anyPhoneMatch[0];
+        let remainingName = clean.replace(phone, '').trim()
+          .replace(/[\(\)\[\]\{\}]/g, ' ')
+          .replace(/[\s\-_/]+$/, '')
+          .replace(/^[\s\-_/]+/, '')
+          .trim();
+        if (remainingName && remainingName.length >= 2) {
+          name = remainingName;
+        }
+      } else {
+        name = clean;
+      }
     } else {
       name = clean;
     }
@@ -652,8 +708,8 @@ export function splitPicNameAndPhone(raw: string | null | undefined): { name: st
     name = '-';
   }
 
-  // Jika phone hanya simbol atau terlalu pendek (< 7 digit angka), kosongkan jadi '-'
-  if (phone !== '-' && phone.replace(/\D/g, '').length < 7) {
+  // Jika phone hanya simbol atau terlalu pendek (< 5 digit angka), kosongkan jadi '-'
+  if (phone !== '-' && phone.replace(/\D/g, '').length < 5) {
     phone = '-';
   }
 
@@ -678,7 +734,7 @@ export function formatCombinedPic(name: string | null | undefined, phone: string
   const cleanName = normalizeUnicodeText(name || '');
   const cleanPhone = normalizeUnicodeText(phone || '');
   const hasName = cleanName && cleanName !== '-' && cleanName.length >= 2;
-  const hasPhone = cleanPhone && cleanPhone !== '-' && cleanPhone.replace(/\D/g, '').length >= 7;
+  const hasPhone = cleanPhone && cleanPhone !== '-' && cleanPhone.replace(/\D/g, '').length >= 5;
 
   if (hasName && hasPhone) {
     // Jika nama sudah memuat nomor telepon, tidak perlu digabungkan lagi

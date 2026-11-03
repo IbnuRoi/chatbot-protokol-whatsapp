@@ -241,6 +241,22 @@ export class MessageRouter {
       if (isReviewSimpan) {
         return suratMasukHandler.handleReviewData(session, textInput);
       }
+
+      // Deteksi cepat jika pengguna langsung mengetikkan nomor kontak PIC (misal: "Nomor PIC 081234567890", "081234567890", "No HP 081234567890")
+      if (
+        textInput.replace(/\D/g, '').length >= 7 ||
+        lower.includes('pic') ||
+        lower.includes('kontak') ||
+        lower.includes('narahubung') ||
+        lower.includes('wa') ||
+        lower.includes('hp') ||
+        lower.includes('telepon')
+      ) {
+        const directPicRes = suratMasukHandler.handleDirectPicInput(session, textInput);
+        if (directPicRes) {
+          return directPicRes;
+        }
+      }
     }
 
     // 4.6. Fast-path: Input Template Koreksi Lembar Disposisi (Bypass NLU LLM agar respon instan <10ms)

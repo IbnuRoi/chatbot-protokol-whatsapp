@@ -1,4 +1,4 @@
-import { prisma } from '../database/prisma';
+﻿import { prisma } from '../database/prisma';
 import { Prisma, letters } from '@prisma/client';
 import { pdfService } from './pdfService';
 import { SuratDraftData } from './sessionService';
@@ -542,7 +542,7 @@ export class SuratService {
       let rawPicName = normalizeUnicodeText(draft.extractedData.picName || '');
       let rawPicPhone = cleanPhoneNumber(draft.extractedData.picPhoneNumber || '');
 
-      // 1. Jika rawPicPhone masih kosong / '-', coba periksa apakah rawPicName memuat nomor telepon (contoh: "Budi (081234567890)")
+      // 1. Jika rawPicPhone masih kosong / '-', coba periksa apakah rawPicName memuat nomor telepon (contoh: "Budi (081234567890)" atau "081234567890")
       if ((!rawPicPhone || rawPicPhone === '-') && rawPicName && rawPicName !== '-') {
         const splittedFromName = splitPicNameAndPhone(rawPicName);
         if (splittedFromName.phone !== '-') {
@@ -569,6 +569,18 @@ export class SuratService {
         const splittedFromPhone = splitPicNameAndPhone(draft.extractedData.picPhoneNumber);
         if (splittedFromPhone.name !== '-') {
           rawPicName = splittedFromPhone.name;
+        }
+      }
+
+      // 4. Safety net darurat: Jika nomor PIC masih '-' / kosong, periksa apakah ada nomor telepon yang tertulis di perihal / asal surat / subject
+      if (!rawPicPhone || rawPicPhone === '-') {
+        const combinedText = `${draft.extractedData.asalSurat || ''} ${draft.finalPerihal || ''} ${draft.extractedData.perihal || ''} ${draft.extractedData.subject || ''}`;
+        const matchPhone = combinedText.match(/(?:\+?62|08)[0-9\-\s/.()]{8,22}/);
+        if (matchPhone) {
+          const candidate = cleanPhoneNumber(matchPhone[0]);
+          if (candidate !== '-') {
+            rawPicPhone = candidate;
+          }
         }
       }
 
