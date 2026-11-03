@@ -5,6 +5,24 @@ export class MetaClient {
   private baseUrl = 'https://graph.facebook.com/v21.0';
 
   /**
+   * Mengambil token akses Meta yang bersih.
+   * Dilengkapi proteksi otomatis jika token di .env tanpa sengaja tertempel berkali-kali ("EAA...ZDZDEAA...").
+   */
+  private getCleanToken(): string {
+    let token = (ENV.META_WA_TOKEN || '').trim();
+    if (token.includes('ZDZDEAA') || (token.match(/EAA/g) || []).length > 1) {
+      const tokens = token.split(/(?=EAA)/g).map((t) => t.trim()).filter((t) => t.startsWith('EAA'));
+      if (tokens.length > 0) {
+        token = tokens[tokens.length - 1];
+        console.warn(
+          `⚠️ [Meta Client] Terdeteksi token tertempel ganda (${tokens.length}x) di .env. Otomatis menggunakan token paling akhir.`
+        );
+      }
+    }
+    return token;
+  }
+
+  /**
    * Mengirim balasan pesan teks ke nomor WhatsApp melalui Meta Graph API.
    * Mendukung pengiriman multiple bubble chat secara berurutan.
    */
@@ -13,7 +31,7 @@ export class MetaClient {
     response: BotResponse,
     phoneNumberId?: string
   ): Promise<boolean> {
-    const token = ENV.META_WA_TOKEN;
+    const token = this.getCleanToken();
     const phoneId = phoneNumberId || ENV.META_PHONE_NUMBER_ID;
 
     if (!token || !phoneId) {
@@ -96,7 +114,7 @@ export class MetaClient {
    * Mengunduh berkas media (gambar atau dokumen PDF) dari server Meta CDN menggunakan media ID
    */
   public async downloadMedia(mediaId: string): Promise<{ buffer: Buffer; fileName: string; mimeType: string } | null> {
-    const token = ENV.META_WA_TOKEN;
+    const token = this.getCleanToken();
     if (!token) {
       console.warn('⚠️ [Meta Client] Tidak dapat mengunduh media: META_WA_TOKEN belum diatur.');
       return null;
