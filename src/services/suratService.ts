@@ -538,10 +538,22 @@ export class SuratService {
 
       const creatorName = (userName || '').trim() || 'Petugas Protokol';
 
-      // Pisahkan antara nama PIC dan nomor teleponnya
+      // Pisahkan antara nama PIC dan nomor teleponnya dengan fallback silang yang komprehensif
       let rawPicName = normalizeUnicodeText(draft.extractedData.picName || '');
       let rawPicPhone = cleanPhoneNumber(draft.extractedData.picPhoneNumber || '');
 
+      // 1. Jika rawPicPhone masih kosong / '-', coba periksa apakah rawPicName memuat nomor telepon (contoh: "Budi (081234567890)")
+      if ((!rawPicPhone || rawPicPhone === '-') && rawPicName && rawPicName !== '-') {
+        const splittedFromName = splitPicNameAndPhone(rawPicName);
+        if (splittedFromName.phone !== '-') {
+          rawPicPhone = cleanPhoneNumber(splittedFromName.phone);
+          if (splittedFromName.name !== '-') {
+            rawPicName = splittedFromName.name;
+          }
+        }
+      }
+
+      // 2. Jika rawPicName atau rawPicPhone masih kosong / '-', periksa draft.extractedData.picPengirim
       if ((!rawPicName || rawPicName === '-' || !rawPicPhone || rawPicPhone === '-') && draft.extractedData.picPengirim) {
         const splitted = splitPicNameAndPhone(draft.extractedData.picPengirim);
         if ((!rawPicName || rawPicName === '-') && splitted.name !== '-') {
@@ -549,6 +561,14 @@ export class SuratService {
         }
         if ((!rawPicPhone || rawPicPhone === '-') && splitted.phone !== '-') {
           rawPicPhone = cleanPhoneNumber(splitted.phone);
+        }
+      }
+
+      // 3. Jika rawPicName masih kosong tapi rawPicPhone memuat nama di dalamnya (contoh: "081234567890 (Budi)")
+      if ((!rawPicName || rawPicName === '-') && draft.extractedData.picPhoneNumber) {
+        const splittedFromPhone = splitPicNameAndPhone(draft.extractedData.picPhoneNumber);
+        if (splittedFromPhone.name !== '-') {
+          rawPicName = splittedFromPhone.name;
         }
       }
 
