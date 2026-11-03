@@ -296,8 +296,24 @@ export class MetaWebhookServer {
           // Proses melalui MessageRouter dan kirimkan respons balasan
           if (routerPayload) {
             try {
+              // Jika ini adalah simulasi pesan uji coba (mock test) dari Meta Developer Dashboard
+              const isMetaMockTest =
+                senderNumber === '16315551181' ||
+                metadata?.phone_number_id === '123456123';
+
+              if (isMetaMockTest) {
+                console.log(
+                  `✅ [Meta Webhook] Simulasi pesan uji coba (Test Event) dari Meta Developer Dashboard BERHASIL diterima dan diproses!`
+                );
+                continue;
+              }
+
               const botReply = await messageRouter.processMessage(routerPayload);
-              const targetPhoneId = metadata?.phone_number_id || ENV.META_PHONE_NUMBER_ID;
+              const targetPhoneId =
+                metadata?.phone_number_id && metadata.phone_number_id !== '123456123'
+                  ? metadata.phone_number_id
+                  : ENV.META_PHONE_NUMBER_ID;
+
               await metaClient.sendMessage(senderNumber, botReply, targetPhoneId);
             } catch (err) {
               console.error(`❌ [Meta Webhook] Error saat memproses pesan dari ${senderNumber}:`, err);
