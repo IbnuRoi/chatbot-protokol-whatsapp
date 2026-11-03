@@ -1,4 +1,4 @@
-﻿import { prisma } from '../database/prisma';
+import { prisma } from '../database/prisma';
 import { Prisma, letters } from '@prisma/client';
 import { pdfService } from './pdfService';
 import { SuratDraftData } from './sessionService';

@@ -36,8 +36,13 @@ export class MetaWebhookServer {
             return;
           }
 
-          // 2. Verifikasi Webhook Meta (GET /webhook)
-          if (method === 'GET' && pathname === '/webhook') {
+          const isWebhookPath =
+            pathname === '/webhook' ||
+            pathname === '/webhook-chatbot' ||
+            pathname.startsWith('/webhook');
+
+          // 2. Verifikasi Webhook Meta (GET /webhook atau /webhook-chatbot)
+          if (method === 'GET' && isWebhookPath) {
             const mode = reqUrl.searchParams.get('hub.mode');
             const token = reqUrl.searchParams.get('hub.verify_token');
             const challenge = reqUrl.searchParams.get('hub.challenge');
@@ -58,8 +63,8 @@ export class MetaWebhookServer {
             return;
           }
 
-          // 3. Penerima Event Pesan Masuk Meta (POST /webhook)
-          if (method === 'POST' && pathname === '/webhook') {
+          // 3. Penerima Event Pesan Masuk Meta (POST /webhook atau /webhook-chatbot)
+          if (method === 'POST' && isWebhookPath) {
             let rawBody = '';
             req.on('data', (chunk) => {
               rawBody += chunk;
@@ -98,7 +103,7 @@ export class MetaWebhookServer {
         console.log(`\n======================================================`);
         console.log(`🌐 META WHATSAPP WEBHOOK SERVER AKTIF!`);
         console.log(`   • Port Lokal    : ${this.port}`);
-        console.log(`   • Endpoint Path : /webhook`);
+        console.log(`   • Endpoint Path : /webhook & /webhook-chatbot`);
         console.log(`   • Verify Token  : "${ENV.META_VERIFY_TOKEN}"`);
         console.log(`======================================================\n`);
         resolve();
