@@ -87,6 +87,8 @@ export class MetaWebhookServer {
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ status: 'EVENT_RECEIVED' }));
 
+              console.log(`\n📥 [Meta Webhook] Menerima event POST dari Meta (${rawBody.length} bytes)...`);
+
               try {
                 if (rawBody.trim()) {
                   const payload = JSON.parse(rawBody);
@@ -145,6 +147,7 @@ export class MetaWebhookServer {
    */
   private async handleIncomingWebhookPayload(payload: any): Promise<void> {
     if (payload.object !== 'whatsapp_business_account') {
+      console.warn(`[Meta Webhook] Mengabaikan event payload bukan whatsapp_business_account (object: "${payload?.object}")`);
       return;
     }
 
@@ -152,14 +155,24 @@ export class MetaWebhookServer {
     for (const entry of entries) {
       const changes = entry.changes || [];
       for (const change of changes) {
-        if (change.field !== 'messages') continue;
+        if (change.field !== 'messages') {
+          console.log(`[Meta Webhook] Event change field: "${change.field}"`);
+          continue;
+        }
 
         const value = change.value;
         const metadata = value?.metadata; // Berisi phone_number_id & display_phone_number
         const contacts = value?.contacts || [];
         const messages = value?.messages || [];
+        const statuses = value?.statuses || [];
 
-        // Abaikan notifikasi status (delivered, read, sent) yang tidak memuat messages
+        if (statuses.length > 0 && messages.length === 0) {
+          const st = statuses[0];
+          console.log(`ℹ️ [Meta Webhook] Status update: pesan ${st?.id} status: "${st?.status}"`);
+          continue;
+        }
+
+        // Abaikan notifikasi status yang tidak memuat messages
         if (!messages || messages.length === 0) continue;
 
         const pushNameMap = new Map<string, string>();
