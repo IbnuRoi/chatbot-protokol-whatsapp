@@ -13,7 +13,7 @@ import { sessionService, BotState, UserSession } from '../services/sessionServic
 import { pdfService } from '../services/pdfService';
 import { nluService, NluResult } from '../services/nluService';
 import { jadwalService } from '../services/jadwalService';
-import { extractDateRangeFromText } from '../utils/dateHelper';
+import { extractDateRangeFromText, extractDateFromText, formatTanggalIndo } from '../utils/dateHelper';
 import { isPureGreeting, isFormConfirmationInput, normalizeUserInput } from '../utils/textHelper';
 import { BotResponse } from './types';
 
@@ -950,13 +950,15 @@ export class MessageRouter {
       case 'JADWAL_CARI': {
         const keyword = nlu.entities?.keyword || nluService.extractSearchKeyword(textInput);
         if (nlu.entities?.tanggal) {
-          if (keyword && keyword.length >= 2 && !['jadwal', 'agenda', 'kegiatan', 'tanggal'].includes(keyword.toLowerCase())) {
+          if (keyword && keyword.length >= 2 && !['jadwal', 'agenda', 'kegiatan', 'tanggal', 'tgl'].includes(keyword.toLowerCase())) {
             const dateRange = jadwalService.getWibRangeForDate(nlu.entities.tanggal);
+            const dateIndo = formatTanggalIndo(nlu.entities.tanggal, true);
             const res = await hybridSearchHandler.handleSearch(session, keyword, {
               startDate: dateRange.startOfDay,
               endDate: dateRange.endOfDay,
-              dateLabel: `tanggal ${nlu.entities.tanggal}`,
+              dateLabel: dateIndo ? `tanggal ${dateIndo}` : `tanggal ${nlu.entities.tanggal}`,
               location: nlu.entities?.location,
+              strictTimeFilter: true,
             });
             return prependIntro(res, nlu.conversationalReply);
           }
@@ -1016,9 +1018,11 @@ export class MessageRouter {
         const searchOptions: any = {};
         if (nlu.entities?.tanggal) {
           const dateRange = jadwalService.getWibRangeForDate(nlu.entities.tanggal);
+          const dateIndo = formatTanggalIndo(nlu.entities.tanggal, true);
           searchOptions.dateStart = dateRange.startOfDay;
           searchOptions.dateEnd = dateRange.endOfDay;
-          searchOptions.dateLabel = `tanggal ${nlu.entities.tanggal}`;
+          searchOptions.dateLabel = dateIndo ? `tanggal ${dateIndo}` : `tanggal ${nlu.entities.tanggal}`;
+          searchOptions.strictTimeFilter = true;
         }
         if (nlu.entities?.sender) {
           searchOptions.sender = nlu.entities.sender;
@@ -1031,6 +1035,7 @@ export class MessageRouter {
             endDate: searchOptions.dateEnd,
             sender: searchOptions.sender,
             dateLabel: searchOptions.dateLabel,
+            strictTimeFilter: searchOptions.strictTimeFilter,
           });
           return prependIntro(res, nlu.conversationalReply);
         }
@@ -1045,6 +1050,11 @@ export class MessageRouter {
 
       case 'CARI_UMUM': {
         const keyword = nlu.entities?.keyword || nluService.extractSearchKeyword(textInput);
+        if (nlu.entities?.tanggal && (!keyword || keyword.length < 2)) {
+          const res = await jadwalHandler.showJadwalTanggal(session, nlu.entities.tanggal);
+          return prependIntro(res, nlu.conversationalReply);
+        }
+
         if (keyword && keyword.length >= 2) {
           const context: any = {
             location: nlu.entities?.location,
@@ -1052,15 +1062,18 @@ export class MessageRouter {
           };
           if (nlu.entities?.tanggal) {
             const dateRange = jadwalService.getWibRangeForDate(nlu.entities.tanggal);
+            const dateIndo = formatTanggalIndo(nlu.entities.tanggal, true);
             context.startDate = dateRange.startOfDay;
             context.endDate = dateRange.endOfDay;
-            context.dateLabel = `tanggal ${nlu.entities.tanggal}`;
+            context.dateLabel = dateIndo ? `tanggal ${dateIndo}` : `tanggal ${nlu.entities.tanggal}`;
+            context.strictTimeFilter = true;
           } else if (nlu.entities?.rentangHari) {
             const startRange = jadwalService.getWibDayRange(0);
             const endRange = jadwalService.getWibDayRange(nlu.entities.rentangHari);
             context.startDate = startRange.startOfDay;
             context.endDate = endRange.endOfDay;
             context.dateLabel = nlu.entities.rentangLabel || `${nlu.entities.rentangHari} hari ke depan`;
+            context.strictTimeFilter = true;
           }
 
           const res = await hybridSearchHandler.handleSearch(session, keyword, context);

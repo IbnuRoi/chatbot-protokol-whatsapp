@@ -84,25 +84,21 @@ export class CariSuratHandler {
       };
     }
 
-    let results = await suratService.searchSuratByPerihal(clean, options);
-    let timeFilterNotice = '';
-
-    // Smart fallback jika tidak ada surat pada tanggal spesifik
-    if (results.length === 0 && (options?.dateStart || options?.dateEnd)) {
-      const broadResults = await suratService.searchSuratByPerihal(clean);
-      if (broadResults.length > 0) {
-        results = broadResults;
-        timeFilterNotice = options.dateLabel
-          ? `_ℹ️ Catatan: Belum ditemukan surat pada ${options.dateLabel}. Berikut arsip surat terdekat terkait "${clean}":_\n\n`
-          : `_ℹ️ Catatan: Menampilkan arsip surat terdekat terkait "${clean}":_\n\n`;
-      }
-    }
+    const results = await suratService.searchSuratByPerihal(clean, options);
 
     session.searchKeyword = clean;
     session.searchResults = results;
 
     if (results.length === 0) {
       sessionService.setState(session.whatsappNumber, BotState.CARI_SURAT_INPUT_KEYWORD);
+      if (options?.dateLabel) {
+        return {
+          text:
+            `🔎 *HASIL PENCARIAN SURAT MASUK*\n\n` +
+            `Mohon izin menyampaikan bahwa tidak ditemukan arsip surat masuk dengan perihal atau kata kunci *"${clean}"* untuk ${options.dateLabel}.\n\n` +
+            `Demikian informasi kami sampaikan. Terima kasih.`,
+        };
+      }
       return {
         text:
           `🔎 *HASIL PENCARIAN SURAT*\n\n` +
@@ -112,13 +108,7 @@ export class CariSuratHandler {
     }
 
     sessionService.setState(session.whatsappNumber, BotState.CARI_SURAT_HASIL_LIST);
-    const res = this.renderSearchResults(session);
-    if (timeFilterNotice) {
-      return typeof res === 'string'
-        ? `${timeFilterNotice}${res}`
-        : { ...res, text: `${timeFilterNotice}${res.text}` };
-    }
-    return res;
+    return this.renderSearchResults(session);
   }
 
   /**

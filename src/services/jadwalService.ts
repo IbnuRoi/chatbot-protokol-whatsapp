@@ -2,7 +2,7 @@ import { prisma } from '../database/prisma';
 import { Prisma } from '@prisma/client';
 import { cleanHtml, splitPicNameAndPhone, extractEventTitleDetails, formatPicWithWhatsApp } from '../utils/textHelper';
 import { expandSearchTermsWithAcronyms, calculateRelevanceScore } from '../utils/acronymHelper';
-import { formatTanggalIndo, formatWaktuDisplay, parseIndonesianDateToDate, parseIndonesianTimeToDates, isValidDate } from '../utils/dateHelper';
+import { formatTanggalIndo, formatWaktuDisplay, parseIndonesianDateToDate, parseIndonesianTimeToDates, isValidDate, extractDateFromText } from '../utils/dateHelper';
 import { syncTableSequence, isDuplicateKeyError } from '../database/sequenceSync';
 import { JadwalArahanDraftData } from './sessionService';
 
@@ -103,26 +103,68 @@ export class JadwalService {
     let m: number;
     let d: number;
 
-    if (typeof dateInput === 'string') {
-      const parts = dateInput.trim().split('-');
-      if (parts.length === 3) {
-        y = parseInt(parts[0], 10);
-        m = parseInt(parts[1], 10) - 1;
-        d = parseInt(parts[2], 10);
+    if (dateInput instanceof Date) {
+      if (isNaN(dateInput.getTime())) {
+        const nowWibMs = Date.now() + 7 * 3600000;
+        const nowWib = new Date(nowWibMs);
+        y = nowWib.getUTCFullYear();
+        m = nowWib.getUTCMonth();
+        d = nowWib.getUTCDate();
       } else {
-        const parsed = new Date(dateInput);
-        y = parsed.getUTCFullYear();
-        m = parsed.getUTCMonth();
-        d = parsed.getUTCDate();
+        y = dateInput.getUTCFullYear();
+        m = dateInput.getUTCMonth();
+        d = dateInput.getUTCDate();
+      }
+    } else if (typeof dateInput === 'string') {
+      const clean = dateInput.trim();
+      const isoMatch = clean.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+      if (isoMatch) {
+        y = parseInt(isoMatch[1], 10);
+        m = parseInt(isoMatch[2], 10) - 1;
+        d = parseInt(isoMatch[3], 10);
+      } else {
+        const parsed = extractDateFromText(clean) || parseIndonesianDateToDate(clean);
+        if (parsed) {
+          if ('year' in parsed && 'month' in parsed && 'day' in parsed) {
+            y = parsed.year;
+            m = parsed.month - 1;
+            d = parsed.day;
+          } else if (parsed instanceof Date && !isNaN(parsed.getTime())) {
+            y = parsed.getUTCFullYear();
+            m = parsed.getUTCMonth();
+            d = parsed.getUTCDate();
+          } else {
+            const nowWibMs = Date.now() + 7 * 3600000;
+            const nowWib = new Date(nowWibMs);
+            y = nowWib.getUTCFullYear();
+            m = nowWib.getUTCMonth();
+            d = nowWib.getUTCDate();
+          }
+        } else {
+          const fallback = new Date(clean);
+          if (!isNaN(fallback.getTime())) {
+            y = fallback.getUTCFullYear();
+            m = fallback.getUTCMonth();
+            d = fallback.getUTCDate();
+          } else {
+            const nowWibMs = Date.now() + 7 * 3600000;
+            const nowWib = new Date(nowWibMs);
+            y = nowWib.getUTCFullYear();
+            m = nowWib.getUTCMonth();
+            d = nowWib.getUTCDate();
+          }
+        }
       }
     } else {
-      y = dateInput.getUTCFullYear();
-      m = dateInput.getUTCMonth();
-      d = dateInput.getUTCDate();
+      const nowWibMs = Date.now() + 7 * 3600000;
+      const nowWib = new Date(nowWibMs);
+      y = nowWib.getUTCFullYear();
+      m = nowWib.getUTCMonth();
+      d = nowWib.getUTCDate();
     }
 
-    // 00:00:00 s.d. 23:59:59.999 pada hari tersebut
-    const startOfDay = new Date(Date.UTC(y, m, d, 0, 0, 0, 0));
+    // 00:00:00 WIB (UTC (d-1) 17:00) s.d. 23:59:59.999 pada hari tersebut
+    const startOfDay = new Date(Date.UTC(y, m, d - 1, 17, 0, 0, 0));
     const endOfDay = new Date(Date.UTC(y, m, d, 23, 59, 59, 999));
     const dateStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 

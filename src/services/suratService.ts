@@ -1136,15 +1136,25 @@ export class SuratService {
       typeof limitOrOptions === 'number' ? { limit: limitOrOptions } : limitOrOptions;
     const limit = options.limit || 10;
 
-    // Filter tanggal jika ditentukan di options
+    // Filter tanggal jika ditentukan di options (mencakup tanggal acara date_event maupun tanggal surat date_letter)
     const dateFilter =
       options.dateStart || options.dateEnd
         ? {
-          date_letter: {
-            ...(options.dateStart ? { gte: options.dateStart } : {}),
-            ...(options.dateEnd ? { lte: options.dateEnd } : {}),
-          },
-        }
+            OR: [
+              {
+                date_event: {
+                  ...(options.dateStart ? { gte: options.dateStart } : {}),
+                  ...(options.dateEnd ? { lte: options.dateEnd } : {}),
+                },
+              },
+              {
+                date_letter: {
+                  ...(options.dateStart ? { gte: options.dateStart } : {}),
+                  ...(options.dateEnd ? { lte: options.dateEnd } : {}),
+                },
+              },
+            ],
+          }
         : {};
 
     // Jika kata kunci pencarian adalah 'terbaru' atau 'terakhir', ambil langsung surat-surat paling baru

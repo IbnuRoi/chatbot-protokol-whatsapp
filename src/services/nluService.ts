@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { ENV } from '../config/env';
-import { extractDateFromText, extractDateRangeFromText } from '../utils/dateHelper';
+import { extractDateFromText, extractDateRangeFromText, removeDateMention } from '../utils/dateHelper';
 import {
   isPureGreeting,
   isFormConfirmationInput,
@@ -621,8 +621,24 @@ export class NluService {
       const extractedDate = extractDateFromText(cleanText);
       const isRelativeDay = cleanText.toLowerCase().includes('hari ini') || cleanText.toLowerCase().includes('besok') || cleanText.toLowerCase().includes('esok') || cleanText.toLowerCase().includes('lusa');
       if (extractedDate && !isRelativeDay && !extractedRange) {
-        // Jika pengguna menyebut tanggal konkret (misal 18 september, 23/09/2026)
-        if (intent === 'JADWAL_CARI' || intent === 'JADWAL_HARI_INI' || intent === 'JADWAL_BESOK' || intent === 'UNKNOWN' || intent === 'CHITCHAT') {
+        // Jika pengguna menyebut tanggal konkret (misal: "18 september", "23/09/2026", "tanggal 15")
+        const lowerClean = cleanText.toLowerCase();
+        const isJadwalRelated =
+          lowerClean.includes('jadwal') ||
+          lowerClean.includes('agenda') ||
+          lowerClean.includes('kegiatan') ||
+          lowerClean.includes('acara') ||
+          lowerClean.includes('ada apa') ||
+          !lowerClean.includes('surat');
+
+        if (
+          intent === 'JADWAL_CARI' ||
+          intent === 'JADWAL_HARI_INI' ||
+          intent === 'JADWAL_BESOK' ||
+          intent === 'UNKNOWN' ||
+          intent === 'CHITCHAT' ||
+          (intent === 'CARI_UMUM' && isJadwalRelated)
+        ) {
           intent = 'JADWAL_CARI';
           entities.tanggal = extractedDate.dateStr;
         }
@@ -635,13 +651,20 @@ export class NluService {
 
       // Sanitasi keyword pencarian jika masih mengandung kata sambung/filler
       if (intent === 'CARI_SURAT' || intent === 'CARI_UMUM' || intent === 'JADWAL_CARI') {
-        if (!entities.keyword || entities.keyword.toLowerCase().includes('tentang') || entities.keyword.toLowerCase().startsWith('kan ') || entities.keyword.toLowerCase().includes('surat') || entities.keyword.toLowerCase().includes('jadwal')) {
+        if (!entities.keyword || entities.keyword.toLowerCase().includes('tentang') || entities.keyword.toLowerCase().startsWith('kan ') || entities.keyword.toLowerCase().includes('surat') || entities.keyword.toLowerCase().includes('jadwal') || entities.keyword.toLowerCase().includes('tanggal') || entities.keyword.toLowerCase().includes('tgl')) {
           const refined = this.extractSearchKeyword(cleanText);
           if (refined && refined.length >= 2) {
             entities.keyword = refined;
+          } else {
+            delete entities.keyword;
           }
         } else {
-          entities.keyword = this.extractSearchKeyword(entities.keyword);
+          const refined = this.extractSearchKeyword(entities.keyword);
+          if (refined && refined.length >= 2) {
+            entities.keyword = refined;
+          } else {
+            delete entities.keyword;
+          }
         }
       }
 
@@ -688,7 +711,10 @@ export class NluService {
    * Mengekstrak kata kunci pencarian dari kalimat percakapan alami bahasa Indonesia
    */
   public extractSearchKeyword(text: string): string {
-    let clean = text.toLowerCase().trim();
+    if (!text || typeof text !== 'string') return '';
+
+    // 0. Hapus penyebutan tanggal/rentang waktu terlebih dahulu
+    let clean = removeDateMention(text).toLowerCase().trim();
 
     // 1. Bersihkan tanda baca di awal/akhir
     clean = clean.replace(/^[^\w]+|[^\w]+$/g, '');
@@ -699,7 +725,7 @@ export class NluService {
 
     // 3. Bersihkan kata pengantar, awalan kata kerja, filler, kata hubung secara berulang
     const prefixRegex =
-      /^(tolong|mohon|bisa|bisakah|coba|min|halo|hai|ada|apakah ada|apakah|punya|punya ngga|berikan|beri|kasih|kasih tau|beritahu|beri tahu|minta|tampilkan|tampilkanlah|jelaskan|terangkan|detail|rincian|keterangan|penjelasan|informasi|info|carikan|cari|searching|search|cek|lacak|lihat|liat|temukan|kan|in|dokumen|arsip|berkas|data|surat masuk|surat dinas|surat|jadwal|agenda|kegiatan|acara|tentang|perihal|mengenai|terkait|soal|dari|dengan topik|topik|hal|di)\s+/i;
+      /^(tolong|mohon|bisa|bisakah|coba|min|halo|hai|ada apa saja|ada apa|apakah ada|apakah|ada|apa saja|apa|punya|punya ngga|berikan|beri|kasih|kasih tau|beritahu|beri tahu|minta|tampilkan|tampilkanlah|jelaskan|terangkan|detail|rincian|keterangan|penjelasan|informasi|info|carikan|cari|searching|search|cek|lacak|lihat|liat|temukan|kan|in|dokumen|arsip|berkas|data|surat masuk|surat dinas|surat|jadwal|agenda|kegiatan|acara|tentang|perihal|mengenai|terkait|soal|dari|dengan topik|topik|hal|di|pada)\s+/i;
 
     let previous = '';
     while (clean !== previous && prefixRegex.test(clean)) {
@@ -714,6 +740,15 @@ export class NluService {
 
     // Bersihkan lagi jika masih tersisa kata hubung/preposisi di awal seperti "tentang", "mengenai", "dari", "di", dsb.
     clean = clean.replace(/^(tentang|mengenai|terkait|soal|hal|perihal|dari|pada|di)\s+/i, '').trim();
+
+    // Bersihkan kata tanya yang tertinggal di akhir seperti "apa", "apa aja", "apa saja"
+    clean = clean.replace(/\s+(apa|apa aja|apa saja)$/i, '').trim();
+
+    // Jika setelah dibersihkan hanya tersisa kata umum/tanya, kosongkan
+    const fillerOnly = /^(jadwal|agenda|kegiatan|acara|surat|surat masuk|arsip|berkas|tanggal|tgl|apa|apa saja|apa aja|ada apa|ada apa saja)$/i;
+    if (fillerOnly.test(clean)) {
+      return '';
+    }
 
     // 4. Bersihkan penanda waktu dari kata kunci pencarian jika masih ada kata inti lainnya
     const temporalSuffixRegex = /\s+(hari ini|besok|esok|lusa|kemarin|minggu ini|minggu depan|pekan ini|pekan depan|bulan ini|bulan depan|tahun ini)\b/gi;
@@ -1359,14 +1394,21 @@ export class NluService {
         };
       }
 
-      // 6b. Cek apakah ada tanggal spesifik (contoh: "jadwal tanggal 18 september", "kirim jadwal 18 sep", "jadwal 23/09/2026")
+      // 6b. Cek apakah ada tanggal spesifik (contoh: "jadwal tanggal 18 september", "kirim jadwal 18 sep", "jadwal 23/09/2026", "jadwal tanggal 15")
       const parsedDate = extractDateFromText(text);
       if (parsedDate && !lower.includes('besok') && !lower.includes('esok') && !lower.includes('hari ini') && !lower.includes('lusa')) {
+        const remainingKw = this.extractSearchKeyword(text);
+        const hasValidKw = remainingKw && remainingKw.length >= 2;
         return {
           intent: 'JADWAL_CARI',
           confidence: 0.95,
-          conversationalReply: `Baik ${userName}, ini agenda kegiatan protokol untuk tanggal ${parsedDate.formattedIndo}:`,
-          entities: { tanggal: parsedDate.dateStr },
+          conversationalReply: hasValidKw
+            ? `Baik ${userName}, ini agenda kegiatan protokol terkait "${remainingKw}" untuk ${parsedDate.formattedIndo}:`
+            : `Baik ${userName}, ini agenda kegiatan protokol untuk ${parsedDate.formattedIndo}:`,
+          entities: {
+            tanggal: parsedDate.dateStr,
+            keyword: hasValidKw ? remainingKw : undefined,
+          },
         };
       }
       if (lower.includes('besok') || lower.includes('esok')) {

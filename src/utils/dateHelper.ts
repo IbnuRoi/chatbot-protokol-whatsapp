@@ -190,41 +190,73 @@ export function formatWaktuInputIndo(dateInput: Date | string | null | undefined
  * - "jadwal 18 sep 2026"
  * - "jadwal tanggal 23/09/2026"
  * - "ada apa tanggal 18-09"
+ * - "jadwal tanggal 15" / "tgl 20"
  * - "jadwal besok" / "hari ini" / "lusa"
  */
 export function extractDateFromText(text: string, referenceDate: Date = new Date()): ParsedDateResult | null {
   if (!text || typeof text !== 'string') return null;
   const clean = text.toLowerCase().trim();
 
-  const refYear = referenceDate.getFullYear();
+  // Konversi referenceDate ke zona WIB (UTC+7)
+  const utcMs = referenceDate.getTime() + referenceDate.getTimezoneOffset() * 60000;
+  const wibRef = new Date(utcMs + 7 * 3600000);
+  const refYear = wibRef.getFullYear();
+  const refMonth = wibRef.getMonth() + 1;
+  const refDay = wibRef.getDate();
 
-  // 1. Cek kata relatif: "hari ini", "besok", "lusa"
+  // 1. Cek kata relatif: "hari ini", "besok", "lusa", "kemarin"
   if (clean.includes('hari ini')) {
-    const d = new Date(referenceDate);
-    return toResult(d.getFullYear(), d.getMonth() + 1, d.getDate());
+    return toResult(refYear, refMonth, refDay);
   }
   if (clean.includes('besok') || clean.includes('esok')) {
-    const d = new Date(referenceDate);
+    const d = new Date(wibRef);
     d.setDate(d.getDate() + 1);
     return toResult(d.getFullYear(), d.getMonth() + 1, d.getDate());
   }
   if (clean.includes('lusa')) {
-    const d = new Date(referenceDate);
+    const d = new Date(wibRef);
     d.setDate(d.getDate() + 2);
     return toResult(d.getFullYear(), d.getMonth() + 1, d.getDate());
   }
+  if (clean.includes('kemarin')) {
+    const d = new Date(wibRef);
+    d.setDate(d.getDate() - 1);
+    return toResult(d.getFullYear(), d.getMonth() + 1, d.getDate());
+  }
 
-  // 2. Format: "18 September 2026", "18 september", "tgl 18 sep", "tanggal 18 sept"
   const monthWords = Object.keys(MONTH_MAP).join('|');
+
+  // 2. Format tanggal teks: "18 September 2026", "18 september", "tgl 18 sep", "tanggal 18 sept"
   const textDateRegex = new RegExp(
-    `(?:(?:senin|selasa|rabu|kamis|jumat|sabtu|minggu)[,\\s]+)?(?:tanggal|tgl)?\\s*\\b(3[01]|[12][0-9]|0?[1-9])\\s*(?:-|/|\\s)\\s*(${monthWords})(?:\\s*(?:-|/|\\s)\\s*(\\d{4}))?\\b`,
+    `(?:(?:senin|selasa|rabu|kamis|jumat|sabtu|minggu)[,\\s]+)?(?:tanggal|tgl)?\\s*\\b(3[01]|[12][0-9]|0?[1-9])\\s*(?:-|/|\\s)?\\s*(${monthWords})(?:\\s*(?:-|/|\\s)?\\s*(\\d{2,4}))?\\b`,
     'i'
   );
   const textMatch = clean.match(textDateRegex);
   if (textMatch) {
     const day = parseInt(textMatch[1], 10);
     const month = MONTH_MAP[textMatch[2].toLowerCase()];
-    const year = textMatch[3] ? parseInt(textMatch[3], 10) : refYear;
+    let year = textMatch[3] ? parseInt(textMatch[3], 10) : refYear;
+    if (year < 100) {
+      year = 2000 + year;
+    }
+    if (day >= 1 && day <= 31 && month) {
+      return toResult(year, month, day);
+    }
+  }
+
+  // 2b. Format bulan mendahului hari: "oktober 18", "okt 18 2026"
+  const monthFirstRegex = new RegExp(
+    `(?:(?:senin|selasa|rabu|kamis|jumat|sabtu|minggu)[,\\s]+)?(?:tanggal|tgl)?\\s*\\b(${monthWords})\\s*(?:-|/|\\s)?\\s*(3[01]|[12][0-9]|0?[1-9])(?:\\s*(?:-|/|\\s)?\\s*(\\d{2,4}))?\\b`,
+    'i'
+  );
+  const monthFirstMatch = clean.match(monthFirstRegex);
+  if (monthFirstMatch) {
+    const month = MONTH_MAP[monthFirstMatch[1].toLowerCase()];
+    const day = parseInt(monthFirstMatch[2], 10);
+    let year = monthFirstMatch[3] ? parseInt(monthFirstMatch[3], 10) : refYear;
+    if (year < 100) {
+      year = 2000 + year;
+    }
     if (day >= 1 && day <= 31 && month) {
       return toResult(year, month, day);
     }
@@ -242,17 +274,78 @@ export function extractDateFromText(text: string, referenceDate: Date = new Date
   }
 
   // 4. Format Numerik: "18/09/2026", "18-09-2026", "18/09", "18-09"
-  const numMatch = clean.match(/(?:(?:senin|selasa|rabu|kamis|jumat|sabtu|minggu)[,\\s]+)?(?:tanggal|tgl)?\\s*\\b(3[01]|[12][0-9]|0?[1-9])[/.-](\d{1,2})(?:[/.-](\d{4}))?\\b/i);
+  const numMatch = clean.match(
+    /(?:(?:senin|selasa|rabu|kamis|jumat|sabtu|minggu)[,\s]+)?(?:tanggal|tgl)?\s*\b(3[01]|[12][0-9]|0?[1-9])[/.-](\d{1,2})(?:[/.-](\d{2,4}))?\b/i
+  );
   if (numMatch) {
     const day = parseInt(numMatch[1], 10);
     const month = parseInt(numMatch[2], 10);
-    const year = numMatch[3] ? parseInt(numMatch[3], 10) : refYear;
+    let year = numMatch[3] ? parseInt(numMatch[3], 10) : refYear;
+    if (year < 100) {
+      year = 2000 + year;
+    }
     if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
       return toResult(year, month, day);
     }
   }
 
+  // 5. Format tanggal tanpa bulan: "tanggal 15", "tgl 20", "tanggal 5" (menggunakan bulan & tahun berjalan WIB)
+  const dayOnlyMatch = clean.match(/(?:tanggal|tgl)\s*(?:ke-?\s*)?\b(3[01]|[12][0-9]|0?[1-9])\b/i);
+  if (dayOnlyMatch) {
+    const day = parseInt(dayOnlyMatch[1], 10);
+    if (day >= 1 && day <= 31) {
+      return toResult(refYear, refMonth, day);
+    }
+  }
+
   return null;
+}
+
+/**
+ * Menghapus penyebutan tanggal/waktu dari teks percakapan agar menyisakan topik/kata kunci pencarian
+ */
+export function removeDateMention(text: string): string {
+  if (!text || typeof text !== 'string') return '';
+  const monthWords = Object.keys(MONTH_MAP).join('|');
+
+  let clean = text;
+
+  // 1. Pola tanggal teks lengkap: "(senin, )?(pada )?(tanggal|tgl )?18 september (2026)?"
+  const textDateRegex = new RegExp(
+    `(?:(?:senin|selasa|rabu|kamis|jumat|sabtu|minggu)[,\\s]+)?(?:pada\\s+)?(?:tanggal|tgl)?\\s*\\b(?:3[01]|[12][0-9]|0?[1-9])\\s*(?:-|/|\\s)?\\s*(?:${monthWords})(?:\\s*(?:-|/|\\s)?\\s*\\d{2,4})?\\b`,
+    'gi'
+  );
+  clean = clean.replace(textDateRegex, ' ');
+
+  // 1b. Pola bulan mendahului hari: "oktober 18 (2026)"
+  const monthFirstRegex = new RegExp(
+    `(?:pada\\s+)?(?:${monthWords})\\s*(?:-|/|\\s)?\\s*\\b(?:3[01]|[12][0-9]|0?[1-9])\\b(?:\\s*(?:-|/|\\s)?\\s*\\d{2,4})?\\b`,
+    'gi'
+  );
+  clean = clean.replace(monthFirstRegex, ' ');
+
+  // 2. Pola ISO YYYY-MM-DD
+  clean = clean.replace(/\b\d{4}-\d{1,2}-\d{1,2}\b/g, ' ');
+
+  // 3. Pola DD/MM/YYYY atau DD-MM-YYYY
+  clean = clean.replace(
+    /(?:(?:senin|selasa|rabu|kamis|jumat|sabtu|minggu)[,\s]+)?(?:pada\s+)?(?:tanggal|tgl)?\s*\b(?:3[01]|[12][0-9]|0?[1-9])[/.-]\d{1,2}(?:[/.-]\d{2,4})?\b/gi,
+    ' '
+  );
+
+  // 4. Pola "tanggal X" / "tgl X" tanpa bulan
+  clean = clean.replace(/(?:pada\s+)?(?:tanggal|tgl)\s*(?:ke-?\s*)?\b(?:3[01]|[12][0-9]|0?[1-9])\b/gi, ' ');
+
+  // 5. Pola kata relatif: hari ini, besok, esok, lusa, kemarin
+  clean = clean.replace(/\b(hari ini|besok|esok|lusa|kemarin)\b/gi, ' ');
+
+  // 6. Pola kata rentang waktu: "2 hari ke depan", "seminggu ke depan", dll.
+  clean = clean.replace(/\b\d+\s*hari\s*(?:ke\s*depan|kedepan)\b/gi, ' ');
+  clean = clean.replace(/\b(?:seminggu|dua minggu|1 minggu|2 minggu)\s*(?:ke\s*depan|kedepan)\b/gi, ' ');
+
+  // Rapikan spasi ganda
+  clean = clean.replace(/\s+/g, ' ').trim();
+  return clean;
 }
 
 /**

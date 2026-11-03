@@ -27,6 +27,7 @@ export interface HybridSearchContext {
   sender?: string;
   dateLabel?: string;
   onlyDiagendakan?: boolean;
+  strictTimeFilter?: boolean;
 }
 
 export class HybridSearchHandler {
@@ -72,55 +73,22 @@ export class HybridSearchHandler {
       }),
     ]);
 
-    // 2. Fallback cerdas: Jika filter waktu membuat hasil kosong, cari secara luas tanpa batas waktu
-    let timeFilterRelaxed = false;
-    if (letters.length === 0 && schedules.length === 0 && (context?.startDate || context?.endDate)) {
-      const [broadLetters, broadSchedules] = await Promise.all([
-        suratService.searchSuratByPerihal(clean),
-        jadwalService.searchJadwal(clean, {
-          onlyDiagendakan: context?.onlyDiagendakan,
-        }),
-      ]);
-      if (broadLetters.length > 0 || broadSchedules.length > 0) {
-        letters = broadLetters;
-        schedules = broadSchedules;
-        timeFilterRelaxed = true;
-      }
-    }
-
     // Simpan ke sesi
     session.searchKeyword = clean;
     session.searchResults = letters;
     session.jadwalSearchKeyword = clean;
     session.jadwalSearchResults = schedules;
 
-    const timeNotice =
-      timeFilterRelaxed && context?.dateLabel
-        ? `_ℹ️ Catatan: Belum ditemukan agenda/surat khusus pada ${context.dateLabel}. Berikut arsip terdekat terkait "${clean}":_\n\n`
-        : '';
-
     // Skenario 1: Keduanya memiliki hasil yang cocok -> Tampilkan dalam SATU bubble chat bersamaan
     if (letters.length > 0 && schedules.length > 0) {
       sessionService.setState(session.whatsappNumber, BotState.SEARCH_HYBRID_HASIL);
-      const res = this.renderHybridResults(session);
-      if (timeNotice) {
-        return typeof res === 'string'
-          ? `${timeNotice}${res}`
-          : { ...res, text: `${timeNotice}${res.text}` };
-      }
-      return res;
+      return this.renderHybridResults(session);
     }
 
     // Skenario 2: Hanya Surat Masuk yang ditemukan
     if (letters.length > 0 && schedules.length === 0) {
       sessionService.setState(session.whatsappNumber, BotState.CARI_SURAT_HASIL_LIST);
-      const res = cariSuratHandler.renderSearchResults(session);
-      if (timeNotice) {
-        return typeof res === 'string'
-          ? `${timeNotice}${res}`
-          : { ...res, text: `${timeNotice}${res.text}` };
-      }
-      return res;
+      return cariSuratHandler.renderSearchResults(session);
     }
 
     // Skenario 3: Hanya Jadwal Kegiatan yang ditemukan
@@ -186,7 +154,6 @@ export class HybridSearchHandler {
 
       return {
         text:
-          `${timeNotice}` +
           `*JADWAL KEGIATAN PROTOKOL*\n` +
           `*HASIL PENCARIAN: "${clean.toUpperCase()}"*\n\n` +
           `${greeting}\n` +
@@ -198,6 +165,19 @@ export class HybridSearchHandler {
 
     // Skenario 4: Tidak ditemukan hasil di kedua layanan
     sessionService.setState(session.whatsappNumber, BotState.MAIN_MENU);
+    const greeting = getGreetingWib();
+    if (context?.dateLabel || (context?.startDate && context?.endDate)) {
+      const label = context?.dateLabel || 'tanggal tersebut';
+      return {
+        text:
+          `*PENCARIAN JADWAL & SURAT PROTOKOL*\n` +
+          `*HASIL PENCARIAN: "${clean.toUpperCase()}"*\n\n` +
+          `${greeting}\n` +
+          `Mohon izin menyampaikan bahwa tidak ditemukan agenda kegiatan maupun arsip surat masuk terkait *"${clean}"* untuk ${label}.\n\n` +
+          `Demikian informasi kami sampaikan. Terima kasih.`,
+      };
+    }
+
     return {
       text:
         `🔎 *HASIL PENCARIAN TERPADU*\n` +

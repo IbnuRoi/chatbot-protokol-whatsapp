@@ -302,41 +302,29 @@ export class JadwalHandler {
     // Kasus 1: Ada tanggal DAN ada kata kunci topik (contoh: "rakor tanggal 18 september")
     if (dateMatch && keywordOnly && keywordOnly.length >= 2) {
       const dateRange = jadwalService.getWibRangeForDate(dateMatch.dateStr);
-      let results = await jadwalService.searchJadwal(keywordOnly, {
+      const results = await jadwalService.searchJadwal(keywordOnly, {
         startDate: dateRange.startOfDay,
         endDate: dateRange.endOfDay,
       });
-
-      let fallbackNotice = '';
-      if (results.length === 0) {
-        // Fallback: cari agenda topik tersebut tanpa batasan tanggal
-        results = await jadwalService.searchJadwal(keywordOnly);
-        if (results.length > 0) {
-          fallbackNotice = `_ℹ️ Catatan: Belum ada agenda terkait "${keywordOnly}" pada tanggal ${dateMatch.formattedIndo}. Berikut agenda terdekat yang ditemukan:_\n\n`;
-        }
-      }
 
       session.jadwalSearchKeyword = keywordOnly;
       session.jadwalSearchResults = results;
 
       if (results.length === 0) {
-        sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_INPUT);
+        sessionService.setState(session.whatsappNumber, BotState.JADWAL_MENU);
+        const greeting = getGreetingWib();
         return {
           text:
-            `🔍 *HASIL PENCARIAN JADWAL*\n\n` +
-            `Saya belum menemukan agenda kegiatan terkait *"${keywordOnly}"* baik pada tanggal ${dateMatch.formattedIndo} maupun tanggal lainnya.\n\n` +
-            `Boleh coba dengan nama kegiatan atau topik yang lain?`,
+            `*JADWAL KEGIATAN PROTOKOL*\n` +
+            `*${dateMatch.formattedIndo.toUpperCase()}*\n\n` +
+            `${greeting}\n` +
+            `Mohon izin menyampaikan bahwa tidak ada agenda kegiatan terkait *"${keywordOnly}"* yang terdaftar untuk ${dateMatch.formattedIndo}.\n\n` +
+            `Demikian informasi kami sampaikan. Terima kasih.`,
         };
       }
 
       sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
-      const res = this.renderSearchResultList(session, results, keywordOnly);
-      if (fallbackNotice) {
-        return typeof res === 'string'
-          ? `${fallbackNotice}${res}`
-          : { ...res, text: `${fallbackNotice}${res.text}` };
-      }
-      return res;
+      return this.renderSearchResultList(session, results, keywordOnly);
     }
 
     // Kasus 2: Murni rentang waktu (contoh: "2 hari kedepan", "seminggu kedepan")
