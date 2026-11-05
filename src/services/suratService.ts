@@ -531,7 +531,7 @@ export class SuratService {
         generateSubjectSummary(finalPerihal, draft.extractedData)
       ).slice(0, 200);
 
-      // Format perihal ke format HTML (<p>...</p>) untuk disimpan ke kolom note pada tabel letters dan notes pada tabel events
+      // Format perihal ke format HTML (<p>...</p>) untuk disimpan ke kolom note pada tabel letters
       const formattedNote = formatNoteHtml(finalPerihal);
 
       const creatorName = (userName || '').trim() || 'Petugas Protokol';
@@ -848,7 +848,7 @@ export class SuratService {
           pic_name: letterPicName,
           pic_phonenumber: letterPicPhone,
           pic_json: picJson || eventPicJson,
-          notes: formattedNote, // Catatan kegiatan murni berisi Perihal kegiatan (tanpa teks ekstra "Asal Surat / No. Surat / No. Agenda")
+          notes: null, // Kolom Catatan pada tabel events tetap kosong (null) saat ekstraksi surat masuk
           created_by: safeCreatorName,
           created_at: new Date(),
           updated_at: new Date(),
