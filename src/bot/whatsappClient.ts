@@ -14,7 +14,7 @@ import { messageRouter } from './messageRouter';
 import { pdfService } from '../services/pdfService';
 import { imageService } from '../services/imageService';
 import { prisma } from '../database/prisma';
-import { BotResponse, getResponseText } from './types';
+import { BotResponse } from './types';
 
 // Filter noise console.error dari pustaka internal libsignal yang memicu "Bad MAC" atau "MessageCounterError"
 // saat sinkronisasi multi-device latar belakang antara smartphone utama dan companion client.
@@ -72,7 +72,7 @@ export class WhatsAppClient {
       logger,
       printQRInTerminal: false,
       syncFullHistory: false,
-      getMessage: async (key) => {
+      getMessage: async (_key) => {
         return proto.Message.fromObject({});
       },
     });
@@ -138,7 +138,7 @@ export class WhatsAppClient {
       }
     });
 
-    this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    this.sock.ev.on('messages.upsert', async ({ messages, type: _type }) => {
       // Izinkan baik 'notify' maupun 'append' (agar pesan langsung terproses)
       for (const msg of messages) {
         if (!msg.key) continue;

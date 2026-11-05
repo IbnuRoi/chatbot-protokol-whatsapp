@@ -5,8 +5,6 @@ import { BotResponse } from '../types';
 import {
   scoreTextMatch,
   cleanQueryForSelection,
-  formatNomorAgendaLink,
-  getLetterFileUrl,
   isPureGreeting,
   formatSuratListItem,
   formatSuratDetail,

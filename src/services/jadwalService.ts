@@ -182,7 +182,7 @@ export class JadwalService {
     dateInput: string | Date,
     options?: { onlyDiagendakan?: boolean }
   ): Promise<{ items: NormalizedJadwal[]; formattedDate: string; dateStr: string }> {
-    const { startOfDay, endOfDay, dateStr, year: y, month: m, day: d } = this.getWibRangeForDate(dateInput);
+    const { dateStr, year: y, month: m, day: d } = this.getWibRangeForDate(dateInput);
     const formattedDate = formatTanggalIndo(dateStr, true);
 
     // Rentang safe window UTC + Local:

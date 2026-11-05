@@ -4,10 +4,8 @@ import { gatsuAiClient } from './gatsuAiClient';
 import { extractDateFromText, extractDateRangeFromText, removeDateMention } from '../utils/dateHelper';
 import {
   isPureGreeting,
-  isFormConfirmationInput,
   normalizeUserInput,
   isFuzzyMatch,
-  levenshteinDistance,
 } from '../utils/textHelper';
 
 export type NluIntent =

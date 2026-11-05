@@ -13,7 +13,6 @@ async function main() {
   const rawInput = args[0];
   const nama = args[1];
   const role = (args[2] || 'PROTOKOL').toUpperCase();
-  const jabatan = args[3] || 'Staf Protokol';
 
   const normalized = authHandler.normalizePhoneNumber(rawInput);
   const isLid = rawInput.length >= 14 && !rawInput.startsWith('08') && !rawInput.startsWith('62');

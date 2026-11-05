@@ -4,7 +4,7 @@ import { nluService, NluResult } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { cariSuratHandler } from './cariSuratHandler';
 import { BotResponse } from '../types';
-import { scoreTextMatch, cleanQueryForSelection, formatNomorSuratLink, getLetterFileUrl, isPureGreeting, formatStatusBadge, formatListSummary, formatDetailBullets } from '../../utils/textHelper';
+import { scoreTextMatch, cleanQueryForSelection, getLetterFileUrl, isPureGreeting, formatStatusBadge, formatListSummary, formatDetailBullets } from '../../utils/textHelper';
 import { extractDateFromText, extractDateRangeFromText, formatWaktuDisplay, getGreetingWib, formatWaktuProtokol } from '../../utils/dateHelper';
 
 export class JadwalHandler {
@@ -360,7 +360,7 @@ export class JadwalHandler {
   /**
    * Merender format teks daftar hasil pencarian jadwal
    */
-  private renderSearchResultList(session: UserSession, results: NormalizedJadwal[], keyword: string): BotResponse {
+  private renderSearchResultList(_session: UserSession, results: NormalizedJadwal[], keyword: string): BotResponse {
     const listText = results
       .map((j, idx) => this.formatJadwalItem(j, idx + 1, true))
       .join('\n\n');

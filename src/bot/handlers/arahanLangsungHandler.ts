@@ -36,7 +36,7 @@ export class ArahanLangsungHandler {
    * Bubble 1: Petunjuk dan Panduan Pengisian
    * Bubble 2: Template Bersih (Murni Key-Value) yang 100% siap disalin dan diisi pengguna
    */
-  public renderInputTemplatePrompt(session: UserSession, prefilledDraft?: JadwalArahanDraftData): BotResponse {
+  public renderInputTemplatePrompt(_session?: UserSession, prefilledDraft?: JadwalArahanDraftData): BotResponse {
     const isEdit = Boolean(prefilledDraft);
 
     const guideText =

@@ -105,7 +105,7 @@ export class SshTunnelManager {
         readyTimeout: 30000,
       };
 
-      ssh.on('keyboard-interactive', (name, instructions, instructionsLang, prompts, finish) => {
+      ssh.on('keyboard-interactive', (_name, _instructions, _instructionsLang, _prompts, finish) => {
         finish([sshPassword || '']);
       });
 

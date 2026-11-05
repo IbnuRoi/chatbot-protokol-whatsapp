@@ -1,5 +1,4 @@
 import fs from 'fs';
-import path from 'path';
 import { sessionService, BotState, UserSession, DisposisiDraftData, ExtractedDisposisiData } from '../../services/sessionService';
 import { disposisiService } from '../../services/disposisiService';
 import { aiService } from '../../services/aiService';
@@ -7,9 +6,7 @@ import { pdfService } from '../../services/pdfService';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
 import {
-  formatNomorAgendaLink,
   getLetterFileUrl,
-  getDispositionFileUrl,
   generateDispositionFileName,
   isPureGreeting,
   cleanHtml,

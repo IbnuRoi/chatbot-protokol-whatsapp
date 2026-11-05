@@ -122,7 +122,7 @@ export class DisposisiService {
    */
   public async saveDisposisiDraft(
     draft: DisposisiDraftData,
-    userId: number,
+    _userId: number,
     userName?: string
   ): Promise<SaveDisposisiResult> {
     if (!draft.extractedData || !draft.matchedLetter || !draft.tempFilePath) {

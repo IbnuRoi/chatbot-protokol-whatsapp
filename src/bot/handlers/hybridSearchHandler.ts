@@ -8,7 +8,6 @@ import { BotResponse } from '../types';
 import {
   scoreTextMatch,
   cleanQueryForSelection,
-  formatNomorAgendaLink,
   getLetterFileUrl,
   isPureGreeting,
   formatStatusBadge,

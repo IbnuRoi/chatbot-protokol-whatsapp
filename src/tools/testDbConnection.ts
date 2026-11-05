@@ -24,7 +24,7 @@ async function testConnection() {
   try {
     // 1. Inisialisasi koneksi (termasuk SSH Tunnel jika aktif)
     console.log('2. Membuka jalur koneksi...');
-    const connInfo = await initDatabaseConnection();
+    await initDatabaseConnection();
 
     // 2. Eksekusi query diagnostik raw ke PostgreSQL
     console.log('3. Mengirim query pengujian ke PostgreSQL (Raw SQL)...');

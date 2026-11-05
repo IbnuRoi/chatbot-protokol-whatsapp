@@ -295,7 +295,7 @@ export function matchActionsList(
 
       // 2. Cek kamus sinonim tindakan
       let synonymMatch: ActionCandidate | undefined;
-      for (const [keyRoot, synList] of Object.entries(ACTION_SYNONYMS)) {
+      for (const synList of Object.values(ACTION_SYNONYMS)) {
         if (synList.some((syn) => cleanPart.includes(syn.replace(/[^a-z0-9]/g, '')))) {
           synonymMatch = candidates.find((cand) => {
             const cName = cand.name.toLowerCase().replace(/[^a-z0-9]/g, '');
