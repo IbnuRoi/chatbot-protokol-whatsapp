@@ -1,7 +1,7 @@
 import { sessionService, BotState, UserSession } from '../../services/sessionService';
 import { suratService } from '../../services/suratService';
 import { menuHandler } from './menuHandler';
-import { BotResponse } from '../types';
+import { BotResponse, BotReplyButton } from '../types';
 import {
   scoreTextMatch,
   cleanQueryForSelection,
@@ -27,6 +27,9 @@ export class RiwayatHandler {
           `📜 *RIWAYAT SURAT MASUK*\n\n` +
           `Saat ini belum ada arsip surat masuk yang tersimpan dalam sistem.\n\n` +
           `Beri tahu saya jika ada hal lain yang bisa saya bantu ya.`,
+        buttons: [
+          { id: 'MENU', text: '📋 Menu Utama' },
+        ],
       };
     }
 
@@ -51,7 +54,15 @@ export class RiwayatHandler {
       `─────────────────────────\n` +
       `${navHelp}`;
 
-    return { text };
+    const navButtons: BotReplyButton[] = [];
+    if (result.hasNextPage) navButtons.push({ id: 'N', text: '▶️ Berikutnya' });
+    if (page > 0) navButtons.push({ id: 'P', text: '◀️ Sebelumnya' });
+    navButtons.push({ id: 'MENU', text: '📋 Menu Utama' });
+
+    return {
+      text,
+      buttons: navButtons,
+    };
   }
 
   /**
@@ -147,7 +158,14 @@ export class RiwayatHandler {
     const waktuInputStr = formatWaktuInputIndo(surat.createdAt);
     const text = formatSuratDetail(surat, waktuInputStr);
 
-    return { text };
+    return {
+      text,
+      buttons: [
+        { id: '1', text: '📋 Cek Disposisi' },
+        { id: '0', text: '◀️ Kembali' },
+        { id: 'MENU', text: '📋 Menu Utama' },
+      ],
+    };
   }
 
   /**
@@ -162,6 +180,10 @@ export class RiwayatHandler {
       if (!surat || !surat.disposisi) {
         return {
           text: `⚠️ Rincian disposisi belum tersedia untuk surat ini. Silakan tanyakan hal lain jika ada yang ingin dibantu.`,
+          buttons: [
+            { id: '0', text: '◀️ Kembali' },
+            { id: 'MENU', text: '📋 Menu Utama' },
+          ],
         };
       }
 
@@ -192,6 +214,10 @@ export class RiwayatHandler {
           `📬 *RINCIAN DISPOSISI (${surat.nomorAgenda})*\n\n` +
           `${statusInfo}\n\n` +
           `Ada lagi yang ingin Anda periksa terkait surat ini?`,
+        buttons: [
+          { id: '0', text: '◀️ Kembali' },
+          { id: 'MENU', text: '📋 Menu Utama' },
+        ],
       };
     } else if (clean === '0' || lower === 'kembali' || lower === 'batal') {
       return this.showRiwayatList(session, session.riwayatPage || 0);

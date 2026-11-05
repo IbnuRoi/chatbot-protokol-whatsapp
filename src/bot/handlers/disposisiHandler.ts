@@ -24,7 +24,10 @@ export class DisposisiHandler {
       text:
         `🔍 *PELACAKAN STATUS DISPOSISI*\n\n` +
         `Boleh sebutkan atau ketikkan *Nomor Agenda* atau *Nomor Surat* yang ingin Anda cek statusnya (misalnya: _UND/2026/09/0001_ atau _B-104/MENKO/MARVES_).\n\n` +
-        `_(Ketik *Batal* untuk kembali ke menu utama)_`,
+        `_(Sentuh tombol di bawah atau ketik *Batal* untuk kembali ke menu utama)_`,
+      buttons: [
+        { id: 'MENU', text: '📋 Menu Utama' },
+      ],
     };
   }
 
@@ -208,7 +211,14 @@ export class DisposisiHandler {
       `2️⃣ Ketik *2* atau *Koreksi* : Ubah/Koreksi Data\n` +
       `❌ Ketik *Batal* : Batalkan proses ini`;
 
-    return { text };
+    return {
+      text,
+      buttons: [
+        { id: '1', text: isUpdate ? '✅ Perbarui Data' : '✅ Simpan Disposisi' },
+        { id: '2', text: '✏️ Edit Isian' },
+        { id: '3', text: '❌ Batalkan' },
+      ],
+    };
   }
 
   /**
@@ -217,7 +227,7 @@ export class DisposisiHandler {
   public async handleReviewResponse(session: UserSession, input: string): Promise<BotResponse> {
     const clean = input.trim().toLowerCase();
 
-    if (clean === 'batal' || clean === '/cancel') {
+    if (clean === '3' || clean === 'batal' || clean === '/cancel') {
       if (session.draftDisposisi?.tempFilePath) {
         pdfService.deleteTempPdf(session.draftDisposisi.tempFilePath);
       }
@@ -291,6 +301,7 @@ export class DisposisiHandler {
           eventStatusLine +
           `${statusNote}\n\n` +
           `Silakan beri tahu saya jika Anda ingin mencatat disposisi lainnya atau membutuhkan bantuan lain ya.`,
+        list: menuHandler.getMainMenuInteractiveList(),
       };
     }
 
@@ -315,12 +326,18 @@ export class DisposisiHandler {
       return this.renderDisposisiEditTemplate(session);
     }
 
+    const isUpdate = Boolean(session.draftDisposisi?.existingDispositionId);
     return {
       text:
-        `Mohon ketik:\n` +
+        `Mohon sentuh tombol di bawah atau ketik:\n` +
         `• *1* atau *Ya* untuk menyimpan data disposisi\n` +
         `• *2* atau *Koreksi* untuk mengubah data\n` +
         `• *Batal* untuk membatalkan proses`,
+      buttons: [
+        { id: '1', text: isUpdate ? '✅ Perbarui Data' : '✅ Simpan Disposisi' },
+        { id: '2', text: '✏️ Edit Isian' },
+        { id: '3', text: '❌ Batalkan' },
+      ],
     };
   }
 
@@ -854,6 +871,9 @@ export class DisposisiHandler {
           `⚠️ *Surat Tidak Ditemukan*\n\n` +
           `Saya belum menemukan arsip surat dengan nomor agenda atau nomor surat *"${clean}"*.\n\n` +
           `Boleh coba periksa kembali nomornya atau beri tahu saya jika ada nomor lain yang ingin dicek?`,
+        buttons: [
+          { id: 'MENU', text: '📋 Menu Utama' },
+        ],
       };
     }
 
@@ -898,7 +918,10 @@ export class DisposisiHandler {
       `${statusText}\n\n` +
       `Silakan beri tahu saya jika Anda ingin memeriksa status surat lainnya ya.`;
 
-    return { text };
+    return {
+      text,
+      list: menuHandler.getMainMenuInteractiveList(),
+    };
   }
 }
 

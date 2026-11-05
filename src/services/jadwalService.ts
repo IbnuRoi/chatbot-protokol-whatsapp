@@ -446,14 +446,45 @@ export class JadwalService {
   private async enrichAndMapEvents(events: any[]): Promise<NormalizedJadwal[]> {
     if (!events || events.length === 0) return [];
 
-    const letterIds = events
-      .map((e) => e.letter_id)
-      .filter((id): id is bigint => id !== null && id !== undefined);
+    const letterIds = new Set<bigint>();
+    for (const e of events) {
+      if (e.letter_id !== null && e.letter_id !== undefined) {
+        letterIds.add(BigInt(e.letter_id));
+      }
+    }
+
+    // Periksa juga tabel pivot event_letters untuk event yang tidak memiliki letter_id langsung
+    const eventIdsWithoutLetter = events
+      .filter((e) => !e.letter_id && e.id)
+      .map((e) => e.id.toString());
+
+    const eventToLetterPivotMap = new Map<string, bigint>();
+    if (eventIdsWithoutLetter.length > 0) {
+      try {
+        const pivots = await prisma.event_letters.findMany({
+          where: {
+            event_id: { in: eventIdsWithoutLetter },
+            deleted_at: null,
+          },
+          select: {
+            event_id: true,
+            letter_id: true,
+          },
+        });
+        for (const p of pivots) {
+          const lId = BigInt(p.letter_id.toString());
+          letterIds.add(lId);
+          eventToLetterPivotMap.set(p.event_id.toString(), lId);
+        }
+      } catch (pivotErr) {
+        console.warn('[JadwalService] Gagal membaca event_letters pivot:', pivotErr);
+      }
+    }
 
     const letterMap = new Map<string, any>();
-    if (letterIds.length > 0) {
+    if (letterIds.size > 0) {
       const letters = await prisma.letters.findMany({
-        where: { id: { in: letterIds } },
+        where: { id: { in: Array.from(letterIds) } },
         select: {
           id: true,
           agenda_number: true,
@@ -476,7 +507,10 @@ export class JadwalService {
       }
     }
 
-    return events.map((e) => this.mapEventToJadwal(e, e.letter_id ? letterMap.get(e.letter_id.toString()) : null));
+    return events.map((e) => {
+      const lId = e.letter_id ? e.letter_id.toString() : eventToLetterPivotMap.get(e.id.toString())?.toString();
+      return this.mapEventToJadwal(e, lId ? letterMap.get(lId) : null);
+    });
   }
 
   /**

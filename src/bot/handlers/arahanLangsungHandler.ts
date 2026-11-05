@@ -2,6 +2,7 @@ import { sessionService, BotState, UserSession, JadwalArahanDraftData } from '..
 import { jadwalService } from '../../services/jadwalService';
 import { prisma } from '../../database/prisma';
 import { sendPushNotification } from '../whatsappClient';
+import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
 import { NluResult } from '../../services/nluService';
 import { cleanHtml } from '../../utils/textHelper';
@@ -89,9 +90,10 @@ export class ArahanLangsungHandler {
     // 1. Pembatalan
     if (lower === 'batal' || lower.includes('cancel')) {
       sessionService.resetSession(session.whatsappNumber);
-      return {
-        text: `🚫 *INPUT JADWAL DIBATALKAN*\n\nDraft input jadwal arahan langsung telah dibatalkan.`,
-      };
+      return menuHandler.getMainGreeting(
+        session,
+        `🚫 *INPUT JADWAL DIBATALKAN*\n\nDraft input jadwal arahan langsung telah dibatalkan.`
+      );
     }
 
     // 2. Parsing teks template
@@ -215,11 +217,16 @@ export class ArahanLangsungHandler {
       `• 📝 *Catatan Arahan*: ${draft.catatan && draft.catatan !== '-' ? draft.catatan : '-'}\n` +
       `• 👤 *Petugas Input* : ${session.userName || 'Petugas Protokol'}\n\n` +
       `Apakah data di atas sudah benar?\n` +
-      `👉 Ketik *Ya* / *Benar* untuk langsung menyimpan ke database.\n` +
-      `👉 Ketik *Salah* / *Koreksi* jika ada data yang ingin diperbaiki.\n` +
-      `👉 Ketik *Batal* untuk membatalkan.`;
+      `👉 Sentuh tombol di bawah atau ketik *Ya* / *Koreksi* / *Batal*.`;
 
-    return { text };
+    return {
+      text,
+      buttons: [
+        { id: '1', text: '✅ Simpan Jadwal' },
+        { id: '2', text: '✏️ Koreksi / Edit' },
+        { id: '3', text: '❌ Batalkan' },
+      ],
+    };
   }
 
   /**
@@ -313,6 +320,7 @@ export class ArahanLangsungHandler {
           conflictNote +
           `\n🔔 _Notifikasi pemberitahuan telah dikirimkan secara otomatis ke WhatsApp Bapak Gufronation._\n\n` +
           `Ada agenda atau administrasi lain yang ingin Anda kelola? Silakan beri tahu saya ya. 😊`,
+        list: menuHandler.getMainMenuInteractiveList(),
       };
     }
 
@@ -335,20 +343,24 @@ export class ArahanLangsungHandler {
     }
 
     // 3. Pembatalan
-    if (lower === 'batal' || lower.includes('cancel')) {
+    if (clean === '3' || lower === 'batal' || lower.includes('cancel')) {
       sessionService.resetSession(session.whatsappNumber);
-      return {
-        text: `🚫 *INPUT JADWAL DIBATALKAN*\n\nDraft jadwal arahan langsung telah dibatalkan.`,
-      };
+      return menuHandler.getMainGreeting(
+        session,
+        `🚫 *INPUT JADWAL DIBATALKAN*\n\nDraft jadwal arahan langsung telah dibatalkan.`
+      );
     }
 
     // Default jika belum jelas
     return {
       text:
         `Apakah data jadwal arahan langsung di atas sudah benar?\n` +
-        `👉 Ketik *Ya* / *Benar* untuk langsung menyimpan ke database.\n` +
-        `👉 Ketik *Salah* / *Koreksi* jika ada data yang ingin diperbaiki.\n` +
-        `👉 Ketik *Batal* untuk membatalkan.`,
+        `👉 Sentuh tombol di bawah atau ketik *Ya* / *Koreksi* / *Batal*.`,
+      buttons: [
+        { id: '1', text: '✅ Simpan Jadwal' },
+        { id: '2', text: '✏️ Koreksi / Edit' },
+        { id: '3', text: '❌ Batalkan' },
+      ],
     };
   }
 

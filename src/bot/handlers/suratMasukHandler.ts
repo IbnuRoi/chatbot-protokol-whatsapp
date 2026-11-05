@@ -4,6 +4,7 @@ import { pdfService } from '../../services/pdfService';
 import { imageService } from '../../services/imageService';
 import { aiService, formatPerihalByTemplate, generateSubjectSummary, formatAsalSurat } from '../../services/aiService';
 import { NluResult } from '../../services/nluService';
+import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
 import { cleanHtml, getLetterFileUrl, generateLetterFileName, splitPicNameAndPhone, formatCombinedPic, sanitizePlaceEvent, buildNarasiPenayanganTap, normalizeUnicodeText, cleanPhoneNumber } from '../../utils/textHelper';
 import { formatTanggalIndo, formatWaktuInputIndo, parseIndonesianDateEventRange, parseIndonesianTimeToDates, cleanDateStringFromTime } from '../../utils/dateHelper';
@@ -44,7 +45,10 @@ export class SuratMasukHandler {
       `⚠️ *Alasan:* Sistem Protokol menerapkan validasi anti-duplikasi untuk mencegah pencatatan nomor surat yang sama ke dalam buku agenda.\n\n` +
       `_Draft registrasi dan berkas sementara telah dibatalkan secara otomatis._ Silakan periksa kembali berkas fisik surat Anda atau hubungi penginput sebelumnya jika diperlukan.`;
 
-    return { text };
+    return {
+      text,
+      list: menuHandler.getMainMenuInteractiveList(),
+    };
   }
   /**
    * Memulai alur Surat Masuk: Tampilkan instruksi kirim dokumen PDF
@@ -453,10 +457,16 @@ export class SuratMasukHandler {
       `• 📞 *Nomor PIC*     : ${picPhone}\n` +
       `• 👤 *Petugas Input* : ${session.userName || 'Petugas Protokol'}\n\n` +
       `Apakah data di atas sudah benar?\n` +
-      `👉 Ketik *Ya* / *Benar* untuk langsung menyimpan ke database.\n` +
-      `👉 Ketik *Salah* / *Koreksi* jika ada data atau kategori yang ingin diperbaiki.`;
+      `👉 Sentuh tombol di bawah atau ketik *Ya* (Simpan) / *Koreksi* / *Batal*.`;
 
-    return { text };
+    return {
+      text,
+      buttons: [
+        { id: '1', text: '✅ Simpan Data' },
+        { id: '2', text: '✏️ Koreksi / Edit' },
+        { id: '3', text: '❌ Batalkan' },
+      ],
+    };
   }
 
   /**
@@ -577,6 +587,7 @@ export class SuratMasukHandler {
             conflictNote +
             noteFooter +
             `Bila ada hal lain yang ingin Anda kelola atau cari, silakan beri tahu saya ya. 😊`,
+          list: menuHandler.getMainMenuInteractiveList(),
         };
       } else {
         if (result.isDuplicateNomorSurat && result.duplicateLetter) {
@@ -611,22 +622,25 @@ export class SuratMasukHandler {
     }
 
     // 3. Pembatalan
-    if (lower === 'batal' || lower.includes('cancel')) {
+    if (clean === '3' || lower === 'batal' || lower.includes('cancel')) {
       await suratService.cancelDraft(session.draftSurat, session.userId);
       sessionService.resetSession(session.whatsappNumber);
-      return {
-        text:
-          `🚫 *REGISTRASI DIBATALKAN*\n\n` +
-          `Draft registrasi surat telah dibatalkan dan berkas sementara telah dibersihkan.`,
-      };
+      return menuHandler.getMainGreeting(
+        session,
+        `🚫 *REGISTRASI DIBATALKAN*\n\nDraft registrasi surat telah dibatalkan dan berkas sementara telah dibersihkan.`
+      );
     }
 
     // Default jika belum jelas
     return {
       text:
         `Apakah data di atas sudah benar?\n` +
-        `👉 Ketik *Ya* / *Benar* untuk langsung menyimpan ke database.\n` +
-        `👉 Ketik *Salah* / *Koreksi* jika ada data yang ingin diperbaiki.`,
+        `👉 Sentuh tombol di bawah atau ketik *Ya* (Simpan) / *Koreksi* / *Batal*.`,
+      buttons: [
+        { id: '1', text: '✅ Simpan Data' },
+        { id: '2', text: '✏️ Koreksi / Edit' },
+        { id: '3', text: '❌ Batalkan' },
+      ],
     };
   }
 
@@ -1920,7 +1934,11 @@ export class SuratMasukHandler {
       text:
         `🤖 *REKOMENDASI PERIHAL RESMI (AI)*\n\n` +
         `👉 *"${aiPerihal}"*\n\n` +
-        `Apakah rumusan perihal di atas sudah sesuai? Silakan ketik _"sudah sesuai"_ untuk menggunakan rekomendasi AI, atau ketik _"input manual"_:`,
+        `Apakah rumusan perihal di atas sudah sesuai? Silakan sentuh tombol di bawah atau ketik pilihan Anda:`,
+      buttons: [
+        { id: '1', text: '✅ Setujui Rumusan' },
+        { id: '2', text: '✍️ Ketik Sendiri' },
+      ],
     };
   }
 
@@ -2027,9 +2045,15 @@ export class SuratMasukHandler {
       `• *Nomor PIC*      : ${picPhone}\n` +
       `• *Perihal Final*  : ${draft?.finalPerihal}\n` +
       `• *Berkas Dokumen* : ${draft?.finalFileName || draft?.tempPdfName} (${((draft?.fileSize || 0) / 1024).toFixed(1)} KB)\n\n` +
-      `Simpan surat masuk ini ke dalam database? Ketik _"simpan"_ untuk menyelesaikan, atau _"batal"_:`;
+      `Simpan surat masuk ini ke dalam database? Sentuh tombol di bawah atau ketik *Simpan* / *Batal*:`;
 
-    return { text };
+    return {
+      text,
+      buttons: [
+        { id: '1', text: '✅ Simpan Surat' },
+        { id: '2', text: '❌ Batalkan' },
+      ],
+    };
   }
 
   /**
@@ -2097,6 +2121,7 @@ export class SuratMasukHandler {
             `• ⏰ *Waktu Input*     : ${waktuInputStr}\n` +
             conflictNote +
             noteFooter,
+          list: menuHandler.getMainMenuInteractiveList(),
         };
       } else {
         if (result.isDuplicateNomorSurat && result.duplicateLetter) {
@@ -2121,11 +2146,10 @@ export class SuratMasukHandler {
     ) {
       await suratService.cancelDraft(session.draftSurat, session.userId);
       sessionService.resetSession(session.whatsappNumber);
-      return {
-        text:
-          `🚫 *REGISTRASI DIBATALKAN*\n\n` +
-          `Draft registrasi surat telah dibatalkan dan berkas sementara telah dibersihkan. Silakan beri tahu saya jika ada hal lain yang ingin Anda kerjakan.`,
-      };
+      return menuHandler.getMainGreeting(
+        session,
+        `🚫 *REGISTRASI DIBATALKAN*\n\nDraft registrasi surat telah dibatalkan dan berkas sementara telah dibersihkan.`
+      );
     } else {
       return this.showFinalConfirmation(session);
     }

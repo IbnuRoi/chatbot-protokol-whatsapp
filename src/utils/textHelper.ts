@@ -410,12 +410,16 @@ export function getLetterFileUrl(fileName?: string | null): string | null {
     return null;
   }
 
-  const cleanFile = fileName.trim();
+  let cleanFile = fileName.trim();
   if (cleanFile.startsWith('http://') || cleanFile.startsWith('https://')) {
     return cleanFile;
   }
 
-  const baseUrl = ENV.FILE_URL.endsWith('/') ? ENV.FILE_URL : `${ENV.FILE_URL}/`;
+  // Bersihkan jika ada awalan path seperti '/files/letter/' atau 'files/letter/'
+  cleanFile = cleanFile.replace(/^\/?(?:files\/letter\/)+/i, '');
+  cleanFile = cleanFile.replace(/^\/+/, '');
+
+  const baseUrl = (ENV.FILE_URL || '').endsWith('/') ? ENV.FILE_URL : `${ENV.FILE_URL}/`;
   return `${baseUrl}${cleanFile}`;
 }
 
@@ -850,6 +854,36 @@ export function buildStandardPicJson(name?: string | null, phone?: string | null
   ]);
 }
 
+/**
+ * Membersihkan format teks PIC dari URL wa.me dan memastikan nomor telepon
+ * terformat rapi dan dapat langsung di-klik oleh pengguna di aplikasi WhatsApp.
+ *
+ * Contoh:
+ * - "Sdri. Rizky Y (+62 813-2906-6115 | https://wa.me/6281329066115)" -> "Sdri. Rizky Y (+62 813-2906-6115)"
+ * - "https://wa.me/6281329066115" -> "+62 813-2906-6115"
+ */
+export function cleanPicContact(raw?: string | null): string {
+  if (!raw || raw.trim() === '-' || raw.trim() === '') return '-';
+  let str = raw.trim();
+
+  // 1. Hapus bagian ' | https://wa.me/...' yang menempel pada nomor telepon
+  str = str.replace(/\s*\|\s*https?:\/\/wa\.me\/[^\s\)]+/gi, '');
+
+  // 2. Jika ada tautan wa.me tersisa dengan nomor HP, ubah menjadi format nomor internasional (+62 ...)
+  str = str.replace(/https?:\/\/wa\.me\/([0-9+]+)/gi, (_match, digits) => {
+    const formatted = formatWhatsAppPhone(digits);
+    return formatted ? formatted.display : digits;
+  });
+
+  // 3. Bersihkan sisa link wa.me jika ada query param atau trailing
+  str = str.replace(/https?:\/\/wa\.me\/[^\s\)]+/gi, '');
+
+  // 4. Bersihkan tanda kurung kosong jika ada: () atau (|)
+  str = str.replace(/\(\s*\|\s*\)/g, '').replace(/\(\s*\)/g, '').trim();
+
+  return str || '-';
+}
+
 function formatSinglePicContact(rawName?: string | null, rawPhone?: string | null): string {
   let cleanName = normalizeUnicodeText(rawName || '');
   let cleanPhone = normalizeUnicodeText(rawPhone || '');
@@ -857,9 +891,11 @@ function formatSinglePicContact(rawName?: string | null, rawPhone?: string | nul
   if (cleanName === '-' || cleanName.toLowerCase() === 'null') cleanName = '';
   if (cleanPhone === '-' || cleanPhone.toLowerCase() === 'null') cleanPhone = '';
 
-  if (cleanName.includes('wa.me/')) {
-    return cleanName;
-  }
+  // Bersihkan tautan wa.me jika sebelumnya pernah tersimpan di cleanName atau cleanPhone
+  cleanName = cleanPicContact(cleanName);
+  cleanPhone = cleanPicContact(cleanPhone);
+  if (cleanName === '-') cleanName = '';
+  if (cleanPhone === '-') cleanPhone = '';
 
   if (!cleanPhone && cleanName) {
     const splitted = splitPicNameAndPhone(cleanName);
@@ -874,13 +910,19 @@ function formatSinglePicContact(rawName?: string | null, rawPhone?: string | nul
     }
   }
 
+  // Bersihkan lagi cleanPhone dan cleanName dari sisa tautan
+  cleanName = cleanPicContact(cleanName);
+  cleanPhone = cleanPicContact(cleanPhone);
+  if (cleanName === '-') cleanName = '';
+  if (cleanPhone === '-') cleanPhone = '';
+
   let formattedPhoneStr = '';
   if (cleanPhone.includes('/') || cleanPhone.includes(',')) {
     const parts = cleanPhone.split(/[/,]/).map((p) => p.trim()).filter(Boolean);
     const formattedParts = parts
       .map((p) => {
         const parsed = formatWhatsAppPhone(p);
-        return parsed ? `${parsed.display} | ${parsed.waLink}` : null;
+        return parsed ? parsed.display : p;
       })
       .filter((p): p is string => Boolean(p));
 
@@ -890,7 +932,9 @@ function formatSinglePicContact(rawName?: string | null, rawPhone?: string | nul
   } else {
     const parsed = formatWhatsAppPhone(cleanPhone);
     if (parsed) {
-      formattedPhoneStr = `${parsed.display} | ${parsed.waLink}`;
+      formattedPhoneStr = parsed.display;
+    } else if (cleanPhone) {
+      formattedPhoneStr = cleanPhone;
     }
   }
 
@@ -911,11 +955,11 @@ function formatSinglePicContact(rawName?: string | null, rawPhone?: string | nul
 
 /**
  * Memformat nama PIC, nomor telepon, dan data JSON PIC menjadi format standar protokol
- * yang dilengkapi tautan WhatsApp langsung (wa.me) yang dapat langsung diklik.
+ * dengan nomor telepon yang dapat langsung diklik oleh pengguna di bubble chat WhatsApp.
  *
  * Contoh hasil:
- * - "Sdri. Rizky Y (+62 813-2906-6115 | https://wa.me/6281329066115)"
- * - "Bpk. Bambang Sutrisno (+62 812-9988-7766 | https://wa.me/6281299887766)"
+ * - "Sdri. Rizky Y (+62 813-2906-6115)"
+ * - "Bpk. Bambang Sutrisno (+62 812-9988-7766)"
  * - Jika nomor tidak ada: "Biro Humas"
  * - Jika tidak ada data sama sekali: "-"
  */

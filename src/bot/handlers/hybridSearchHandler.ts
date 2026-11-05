@@ -14,6 +14,7 @@ import {
   formatListSummary,
   formatDetailBullets,
   formatSuratListItem,
+  cleanPicContact,
 } from '../../utils/textHelper';
 import { formatWaktuDisplay, getGreetingWib, formatWaktuProtokol } from '../../utils/dateHelper';
 import { NormalizedSurat } from '../../services/suratService';
@@ -141,13 +142,18 @@ export class HybridSearchHandler {
           const lokasiLine = `*Lokasi:* ${lokasiStr}`;
 
           let picLine = '';
-          if (j.pic && j.pic.trim() !== '-' && j.pic.trim() !== '') {
-            const rawPic = j.pic.trim();
-            const picStr = rawPic.endsWith('.') || rawPic.endsWith(')') ? rawPic : `${rawPic}.`;
-            picLine = `\n*PIC:* ${picStr}`;
+          const cleanPic = cleanPicContact(j.pic);
+          if (cleanPic && cleanPic !== '-') {
+            picLine = `\n*PIC:* ${cleanPic}`;
           }
 
-          return `${headerItem}\n${quoteLines}\n\n${lokasiLine}${picLine}`;
+          let fileLine = '';
+          const fileUrl = getLetterFileUrl(j.surat?.fileName);
+          if (fileUrl) {
+            fileLine = `\n*Berkas Surat:* ${fileUrl}`;
+          }
+
+          return `${headerItem}\n${quoteLines}\n\n${lokasiLine}${picLine}${fileLine}`;
         })
         .join('\n\n');
 
@@ -159,6 +165,9 @@ export class HybridSearchHandler {
           `Mohon izin menyampaikan jadwal kegiatan protokol terkait "${clean}", sebagai berikut:\n\n` +
           `${listText}\n\n` +
           `Demikian informasi kami sampaikan. Terima kasih.`,
+        buttons: [
+          { id: 'MENU', text: '📋 Menu Utama' },
+        ],
       };
     }
 
@@ -174,6 +183,9 @@ export class HybridSearchHandler {
           `${greeting}\n` +
           `Mohon izin menyampaikan bahwa tidak ditemukan agenda kegiatan maupun arsip surat masuk terkait *"${clean}"* untuk ${label}.\n\n` +
           `Demikian informasi kami sampaikan. Terima kasih.`,
+        buttons: [
+          { id: 'MENU', text: '📋 Menu Utama' },
+        ],
       };
     }
 
@@ -183,6 +195,9 @@ export class HybridSearchHandler {
         `Kata Kunci: *"${clean}"*\n\n` +
         `⚠️ _Tidak ditemukan agenda kegiatan maupun arsip surat masuk yang berkaitan dengan kata kunci tersebut._\n\n` +
         `Boleh coba dengan topik atau kata kunci pencarian yang lain? 😊`,
+      buttons: [
+        { id: 'MENU', text: '📋 Menu Utama' },
+      ],
     };
   }
 
@@ -224,8 +239,13 @@ export class HybridSearchHandler {
         } else if (j.pejabatHadir && j.pejabatHadir !== '-') {
           lines.push(`   👥 *Hadir*   : ${j.pejabatHadir}`);
         }
-        if (j.pic && j.pic.trim() !== '-' && j.pic.trim() !== '') {
-          lines.push(`   👤 *PIC*     : ${j.pic.trim()}`);
+        const cleanPic = cleanPicContact(j.pic);
+        if (cleanPic && cleanPic !== '-') {
+          lines.push(`   👤 *PIC*     : ${cleanPic}`);
+        }
+        const fileUrl = getLetterFileUrl(j.surat?.fileName);
+        if (fileUrl) {
+          lines.push(`   📎 *Berkas*  : ${fileUrl}`);
         }
         if (j.catatan && j.catatan.trim() !== '') {
           const cSummary = formatListSummary(j.catatan, 1);
@@ -257,7 +277,12 @@ export class HybridSearchHandler {
       `💡 *Petunjuk:*\n` +
       `Silakan ketik nomor (contoh: *jadwal 1* atau *surat 1*), atau cukup sebutkan *nama agenda* / *perihal surat* untuk melihat rincian lengkapnya ya. 😊`;
 
-    return { text };
+    return {
+      text,
+      buttons: [
+        { id: 'MENU', text: '📋 Menu Utama' },
+      ],
+    };
   }
 
   /**
@@ -268,17 +293,21 @@ export class HybridSearchHandler {
     const formattedDate = formatTanggalIndo(item.tanggalKegiatan);
 
     let suratNote = '';
-    if (item.surat?.nomorAgenda) {
-      const fileUrl = getLetterFileUrl(item.surat.fileName);
+    const fileUrl = getLetterFileUrl(item.surat?.fileName);
+    if (item.surat?.nomorAgenda && item.surat.nomorAgenda !== '-') {
       suratNote = `\n• *Surat Terkait*        : ${item.surat.nomorAgenda}`;
       if (fileUrl) {
-        suratNote += `\n• *Link Berkas Surat*   : ${fileUrl}`;
+        suratNote += `\n• *Berkas Surat*         : ${fileUrl}`;
       }
+    } else if (fileUrl) {
+      suratNote = `\n• *Berkas Surat*         : ${fileUrl}`;
     }
 
     const statusBadge = formatStatusBadge(item.statusDisposisi, item.statusDisposisiCode);
     const arahanLine = item.arahan && item.arahan.trim() !== '' ? `\n• *Arahan Pimpinan*     : ${item.arahan.trim()}` : '';
-    const picLine = item.pic && item.pic.trim() !== '-' ? `\n• *PIC & Kontak*        : ${item.pic.trim()}` : '';
+
+    const cleanPic = cleanPicContact(item.pic);
+    const picLine = cleanPic && cleanPic !== '-' ? `\n• *PIC & Kontak*        : ${cleanPic}` : '';
 
     let pesertaSection = '';
     if (item.peserta && item.peserta.trim() !== '') {
@@ -321,6 +350,9 @@ export class HybridSearchHandler {
         pendampingSection +
         catatanSection +
         `\n\nBila Anda ingin melihat dokumen surat terkait atau mencari agenda lainnya, silakan beri tahu saya ya. 😊`,
+      buttons: [
+        { id: 'MENU', text: '📋 Menu Utama' },
+      ],
     };
   }
 

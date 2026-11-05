@@ -21,7 +21,12 @@ export class BantuanHandler {
       `• *7* - ⚡ *Perintah Cepat Navigasi Bot*\n\n` +
       `Silakan sebutkan topik atau nomor yang ingin Anda pelajari lebih lanjut ya.`;
 
-    return { text };
+    return {
+      text,
+      buttons: [
+        { id: 'MENU', text: '📋 Menu Utama' },
+      ],
+    };
   }
 
   /**
@@ -31,6 +36,7 @@ export class BantuanHandler {
     const clean = input.trim();
     const lower = clean.toLowerCase();
     const navText = `\n\nBeri tahu saya jika Anda ingin membaca topik lainnya atau ada hal yang bisa saya bantu.`;
+    const menuButtons = [{ id: 'MENU', text: '📋 Menu Utama' }];
 
     if (clean === '1' || lower.includes('surat masuk') || lower.includes('registrasi')) {
       return {
@@ -44,6 +50,7 @@ export class BantuanHandler {
           `6. AI akan mengekstrak nomor, tanggal, instansi pengirim, dan perihal dokumen secara cerdas.\n` +
           `7. Anda dapat meninjau dan mengoreksi data sebelum menyimpannya ke database.` +
           navText,
+        buttons: menuButtons,
       };
     } else if (clean === '2' || lower.includes('jadwal') || lower.includes('agenda')) {
       return {
@@ -54,6 +61,7 @@ export class BantuanHandler {
           `• Tanyakan "jadwal mendatang" untuk melihat agenda penting beberapa hari ke depan.\n` +
           `• Anda juga bisa langsung mencari nama kegiatan atau topik agenda secara fleksibel.` +
           navText,
+        buttons: menuButtons,
       };
     } else if (clean === '3' || lower.includes('disposisi') || lower.includes('lacak')) {
       return {
@@ -62,6 +70,7 @@ export class BantuanHandler {
           `• Cukup sebutkan Nomor Agenda (misal: UND/2026/09/0001) atau Nomor Surat pengirim.\n` +
           `• Saya akan langsung memeriksa apakah surat sudah menerima disposisi Pimpinan atau masih dalam antrean.` +
           navText,
+        buttons: menuButtons,
       };
     } else if (clean === '4' || lower.includes('riwayat') || lower.includes('arsip')) {
       return {
@@ -71,6 +80,7 @@ export class BantuanHandler {
           `• Sebutkan nomor urut dokumen untuk melihat detail lengkap dan status disposisinya.\n` +
           `• Anda juga dapat berpindah halaman untuk menjelajahi arsip yang lebih lama.` +
           navText,
+        buttons: menuButtons,
       };
     } else if (clean === '5' || lower.includes('cari') || lower.includes('perihal')) {
       return {
@@ -80,6 +90,7 @@ export class BantuanHandler {
           `• Sistem pencarian cerdas akan menemukan surat yang relevan dengan topik tersebut.\n` +
           `• Pilih nomor surat untuk membaca rincian lengkapnya.` +
           navText,
+        buttons: menuButtons,
       };
     } else if (clean === '6' || lower.includes('pdf') || lower.includes('unggah') || lower.includes('upload')) {
       return {
@@ -89,6 +100,7 @@ export class BantuanHandler {
           `2. Ukuran berkas maksimum adalah *20 MB*.\n` +
           `3. Dokumen teks digital akan diekstraksi secara instan oleh AI.` +
           navText,
+        buttons: menuButtons,
       };
     } else if (clean === '7' || lower.includes('perintah') || lower.includes('navigasi')) {
       return {
@@ -98,6 +110,7 @@ export class BantuanHandler {
           `• *batal* : Membatalkan proses aktif yang sedang berjalan.\n` +
           `• *selesai* : Mengakhiri sesi percakapan chatbot secara resmi.` +
           navText,
+        buttons: menuButtons,
       };
     } else if (clean === '0' || lower === 'menu' || lower === 'kembali' || lower === 'batal') {
       sessionService.resetSession(session.whatsappNumber);

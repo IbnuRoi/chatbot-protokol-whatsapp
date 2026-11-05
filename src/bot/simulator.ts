@@ -54,6 +54,27 @@ export async function runInteractiveSimulator() {
     for (const text of msgs) {
       console.log(`\n🤖 [BOT]:\n${text}\n`);
     }
+
+    if (typeof reply === 'object' && !Array.isArray(reply)) {
+      if (reply.buttons && reply.buttons.length > 0) {
+        console.log('🔘 [Tombol Quick Reply Meta (Sentuh di HP / Ketik di Terminal)]:');
+        reply.buttons.forEach((b, idx) => {
+          console.log(`   [${idx + 1}] ${b.text}  --> (Ketik: ${b.id})`);
+        });
+        console.log('');
+      }
+
+      if (reply.list) {
+        console.log(`📋 [List Menu Meta: ${reply.list.buttonTitle}]:`);
+        reply.list.sections.forEach((sec) => {
+          console.log(`   📂 ${sec.title}`);
+          sec.rows.forEach((r) => {
+            console.log(`      • ${r.title} (ID: ${r.id})${r.description ? ` - ${r.description}` : ''}`);
+          });
+        });
+        console.log('');
+      }
+    }
   };
 
   // Kirim salam pembuka otomatis

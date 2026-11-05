@@ -1,5 +1,5 @@
 import { ENV } from '../../config/env';
-import { BotResponse } from '../types';
+import { BotResponse, BotReplyOptions, BotReplyButton, BotReplyList } from '../types';
 
 export class MetaClient {
   private baseUrl = 'https://graph.facebook.com/v21.0';
@@ -23,8 +23,326 @@ export class MetaClient {
   }
 
   /**
-   * Mengirim balasan pesan teks ke nomor WhatsApp melalui Meta Graph API.
-   * Mendukung pengiriman multiple bubble chat secara berurutan.
+   * Helper internal untuk memecah teks panjang (> 1024 karakter) agar mematuhi batasan resmi Meta
+   * untuk pesan interaktif. Teks awal dikirim sebagai bubble teks biasa, dan potongan akhir
+   * (<= 1000 karakter) ditempatkan ke dalam body pesan interaktif.
+   */
+  private splitTextForInteractive(fullText: string, maxLen: number = 1000): { preTexts: string[]; interactiveText: string } {
+    const trimmed = (fullText || '').trim();
+    if (trimmed.length <= maxLen) {
+      return { preTexts: [], interactiveText: trimmed };
+    }
+
+    const preTexts: string[] = [];
+    let remaining = trimmed;
+
+    while (remaining.length > maxLen) {
+      // Cari titik pemecah terbaik (paragraf ganda \n\n atau baris baru \n)
+      let splitIdx = remaining.lastIndexOf('\n\n', maxLen);
+      if (splitIdx === -1 || splitIdx < 300) {
+        splitIdx = remaining.lastIndexOf('\n', maxLen);
+      }
+      if (splitIdx === -1 || splitIdx < 300) {
+        splitIdx = remaining.lastIndexOf(' ', maxLen);
+      }
+      if (splitIdx === -1) {
+        splitIdx = maxLen;
+      }
+
+      const chunk = remaining.slice(0, splitIdx).trim();
+      if (chunk) preTexts.push(chunk);
+      remaining = remaining.slice(splitIdx).trim();
+    }
+
+    return {
+      preTexts,
+      interactiveText: remaining || trimmed.slice(-maxLen),
+    };
+  }
+
+  /**
+   * Mengirim satu bubble teks biasa ke Meta WhatsApp Cloud API
+   */
+  public async sendRawTextMessage(
+    to: string,
+    text: string,
+    phoneId: string,
+    token: string
+  ): Promise<boolean> {
+    if (!text || !text.trim()) return true;
+
+    try {
+      const url = `${this.baseUrl}/${phoneId}/messages`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to,
+          type: 'text',
+          text: {
+            preview_url: false,
+            body: text,
+          },
+        }),
+      });
+
+      const data: any = await res.json();
+      if (!res.ok) {
+        console.error(`❌ [Meta Client Outbound] Gagal kirim pesan teks ke ${to}:`, data?.error?.message || data);
+        return false;
+      }
+
+      console.log(`📤 [Meta Client Outbound] Berhasil kirim teks ke ${to} (Message ID: ${data?.messages?.[0]?.id || '-'})`);
+      return true;
+    } catch (err: any) {
+      console.error(`❌ [Meta Client Outbound] Network error kirim teks ke ${to}:`, err.message || err);
+      return false;
+    }
+  }
+
+  /**
+   * Mengirim pesan interaktif dengan Quick Reply Buttons (maksimal 3 tombol)
+   * Dilengkapi fallback otomatis ke teks biasa jika gagal / ditolak Meta.
+   */
+  public async sendInteractiveButtons(
+    to: string,
+    reply: BotReplyOptions,
+    phoneId: string,
+    token: string
+  ): Promise<boolean> {
+    if (!reply.buttons || reply.buttons.length === 0) {
+      return this.sendFallbackText(to, reply, phoneId, token);
+    }
+
+    // Tentukan body teks interaktif dan pre-bubble jika teks panjang
+    let bodyCandidate = reply.text || '';
+    const preBubbles: string[] = [];
+
+    if (reply.messages && reply.messages.length > 1) {
+      preBubbles.push(...reply.messages.slice(0, -1));
+      bodyCandidate = reply.messages[reply.messages.length - 1];
+    }
+
+    const { preTexts, interactiveText } = this.splitTextForInteractive(bodyCandidate, 1000);
+    preBubbles.push(...preTexts);
+
+    // Kirim bubble teks pendahulu terlebih dahulu
+    for (const pre of preBubbles) {
+      await this.sendRawTextMessage(to, pre, phoneId, token);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+
+    // Susun tombol Meta (maks 3 tombol, title maks 20 karakter)
+    const validButtons = reply.buttons.slice(0, 3).map((btn, idx) => ({
+      type: 'reply' as const,
+      reply: {
+        id: (btn.id || `btn_${idx + 1}`).trim().slice(0, 256),
+        title: (btn.text || `Pilihan ${idx + 1}`).trim().slice(0, 20),
+      },
+    }));
+
+    const interactivePayload: any = {
+      type: 'button',
+      body: {
+        text: interactiveText || 'Silakan pilih tindakan berikut:',
+      },
+      action: {
+        buttons: validButtons,
+      },
+    };
+
+    if (reply.headerTitle && reply.headerTitle.trim()) {
+      interactivePayload.header = {
+        type: 'text',
+        text: reply.headerTitle.trim().slice(0, 60),
+      };
+    }
+
+    if (reply.footerText && reply.footerText.trim()) {
+      interactivePayload.footer = {
+        text: reply.footerText.trim().slice(0, 60),
+      };
+    }
+
+    try {
+      const url = `${this.baseUrl}/${phoneId}/messages`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to,
+          type: 'interactive',
+          interactive: interactivePayload,
+        }),
+      });
+
+      const data: any = await res.json();
+      if (!res.ok) {
+        console.warn(
+          `⚠️ [Meta Client] Gagal mengirim tombol interaktif (${data?.error?.message || JSON.stringify(data)}). Melakukan fallback ke teks biasa...`
+        );
+        return this.sendFallbackText(to, reply, phoneId, token);
+      }
+
+      console.log(`🔘 [Meta Client Outbound] Berhasil kirim pesan tombol interaktif (${validButtons.length} tombol) ke: ${to}`);
+      return true;
+    } catch (err: any) {
+      console.error(`❌ [Meta Client] Error network kirim tombol interaktif:`, err.message || err);
+      return this.sendFallbackText(to, reply, phoneId, token);
+    }
+  }
+
+  /**
+   * Mengirim pesan interaktif dengan List Menu (Bottom-sheet pilihan hingga 10 item)
+   * Dilengkapi fallback otomatis ke teks biasa jika gagal / ditolak Meta.
+   */
+  public async sendInteractiveList(
+    to: string,
+    reply: BotReplyOptions,
+    phoneId: string,
+    token: string
+  ): Promise<boolean> {
+    if (!reply.list || !reply.list.sections || reply.list.sections.length === 0) {
+      return this.sendFallbackText(to, reply, phoneId, token);
+    }
+
+    let bodyCandidate = reply.text || '';
+    const preBubbles: string[] = [];
+
+    if (reply.messages && reply.messages.length > 1) {
+      preBubbles.push(...reply.messages.slice(0, -1));
+      bodyCandidate = reply.messages[reply.messages.length - 1];
+    }
+
+    const { preTexts, interactiveText } = this.splitTextForInteractive(bodyCandidate, 1000);
+    preBubbles.push(...preTexts);
+
+    for (const pre of preBubbles) {
+      await this.sendRawTextMessage(to, pre, phoneId, token);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+
+    // Susun section dan row list (maks 10 baris total, title maks 24 karakter, desc maks 72)
+    let totalRows = 0;
+    const formattedSections = [];
+
+    for (const sec of reply.list.sections) {
+      if (totalRows >= 10) break;
+      const rows = [];
+      for (const row of sec.rows) {
+        if (totalRows >= 10) break;
+        rows.push({
+          id: (row.id || `row_${totalRows + 1}`).trim().slice(0, 200),
+          title: (row.title || `Opsi ${totalRows + 1}`).trim().slice(0, 24),
+          ...(row.description ? { description: row.description.trim().slice(0, 72) } : {}),
+        });
+        totalRows++;
+      }
+      if (rows.length > 0) {
+        formattedSections.push({
+          title: (sec.title || 'Pilihan Menu').trim().slice(0, 24),
+          rows,
+        });
+      }
+    }
+
+    const interactivePayload: any = {
+      type: 'list',
+      body: {
+        text: interactiveText || 'Silakan pilih dari menu di bawah ini:',
+      },
+      action: {
+        button: (reply.list.buttonTitle || 'Buka Menu').trim().slice(0, 20),
+        sections: formattedSections,
+      },
+    };
+
+    if (reply.headerTitle && reply.headerTitle.trim()) {
+      interactivePayload.header = {
+        type: 'text',
+        text: reply.headerTitle.trim().slice(0, 60),
+      };
+    }
+
+    if (reply.footerText && reply.footerText.trim()) {
+      interactivePayload.footer = {
+        text: reply.footerText.trim().slice(0, 60),
+      };
+    }
+
+    try {
+      const url = `${this.baseUrl}/${phoneId}/messages`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to,
+          type: 'interactive',
+          interactive: interactivePayload,
+        }),
+      });
+
+      const data: any = await res.json();
+      if (!res.ok) {
+        console.warn(
+          `⚠️ [Meta Client] Gagal mengirim list interaktif (${data?.error?.message || JSON.stringify(data)}). Melakukan fallback ke teks biasa...`
+        );
+        return this.sendFallbackText(to, reply, phoneId, token);
+      }
+
+      console.log(`📋 [Meta Client Outbound] Berhasil kirim pesan List Menu interaktif (${totalRows} baris) ke: ${to}`);
+      return true;
+    } catch (err: any) {
+      console.error(`❌ [Meta Client] Error network kirim list interaktif:`, err.message || err);
+      return this.sendFallbackText(to, reply, phoneId, token);
+    }
+  }
+
+  /**
+   * Mengirim fallback ke teks biasa jika pengiriman pesan interaktif gagal
+   */
+  private async sendFallbackText(
+    to: string,
+    reply: BotReplyOptions,
+    phoneId: string,
+    token: string
+  ): Promise<boolean> {
+    let messageList: string[] = [];
+    if (reply.messages && reply.messages.length > 0) {
+      messageList = reply.messages;
+    } else if (reply.text) {
+      messageList = [reply.text];
+    }
+
+    let success = true;
+    for (let i = 0; i < messageList.length; i++) {
+      const ok = await this.sendRawTextMessage(to, messageList[i], phoneId, token);
+      if (!ok) success = false;
+      if (i < messageList.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+    return success;
+  }
+
+  /**
+   * Mengirim balasan pesan ke nomor WhatsApp melalui Meta Graph API.
+   * Mendeteksi otomatis apakah respons berupa teks, tombol Quick Reply, atau List Menu interaktif.
    */
   public async sendMessage(
     to: string,
@@ -47,7 +365,22 @@ export class MetaClient {
       cleanTo = '628' + cleanTo.slice(2);
     }
 
-    // Ekstraksi teks balasan (single bubble atau multi bubble)
+    // 1. Pesan Interaktif: List Menu
+    if (typeof response === 'object' && !Array.isArray(response) && response.list) {
+      return this.sendInteractiveList(cleanTo, response, phoneId, token);
+    }
+
+    // 2. Pesan Interaktif: Quick Reply Buttons
+    if (
+      typeof response === 'object' &&
+      !Array.isArray(response) &&
+      response.buttons &&
+      response.buttons.length > 0
+    ) {
+      return this.sendInteractiveButtons(cleanTo, response, phoneId, token);
+    }
+
+    // 3. Pesan Teks Biasa (mendukung multiple bubble)
     let messageList: string[] = [];
     if (typeof response === 'string') {
       messageList = [response];
@@ -64,42 +397,8 @@ export class MetaClient {
       const textToSend = messageList[i];
       if (!textToSend || !textToSend.trim()) continue;
 
-      try {
-        const url = `${this.baseUrl}/${phoneId}/messages`;
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            messaging_product: 'whatsapp',
-            recipient_type: 'individual',
-            to: cleanTo,
-            type: 'text',
-            text: {
-              preview_url: false,
-              body: textToSend,
-            },
-          }),
-        });
-
-        const data: any = await res.json();
-        if (!res.ok) {
-          console.error(
-            `❌ [Meta Client Outbound] Gagal mengirim pesan (${i + 1}/${messageList.length}) ke ${cleanTo}:`,
-            data?.error?.message || data
-          );
-          success = false;
-        } else {
-          console.log(
-            `📤 [Meta Client Outbound] Berhasil mengirim pesan (${i + 1}/${messageList.length}) ke: ${cleanTo} (Message ID: ${data?.messages?.[0]?.id || '-'})`
-          );
-        }
-      } catch (err: any) {
-        console.error(`❌ [Meta Client Outbound] Network error saat kirim ke ${cleanTo}:`, err.message || err);
-        success = false;
-      }
+      const ok = await this.sendRawTextMessage(cleanTo, textToSend, phoneId, token);
+      if (!ok) success = false;
 
       // Beri jeda kecil (250ms) antar bubble agar terkirim teratur ke WhatsApp
       if (i < messageList.length - 1) {

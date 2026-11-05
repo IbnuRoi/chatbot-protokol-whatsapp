@@ -3,8 +3,20 @@ import { jadwalService, formatTanggalIndo, NormalizedJadwal } from '../../servic
 import { nluService, NluResult } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { cariSuratHandler } from './cariSuratHandler';
-import { BotResponse } from '../types';
-import { scoreTextMatch, cleanQueryForSelection, getLetterFileUrl, isPureGreeting, formatStatusBadge, formatListSummary, formatDetailBullets } from '../../utils/textHelper';
+import { BotResponse, BotReplyButton } from '../types';
+
+export const JADWAL_TODAY_BUTTONS: BotReplyButton[] = [
+  { id: 'JADWAL_BESOK', text: '📆 Besok' },
+  { id: 'JADWAL_CARI', text: '🔍 Cari Jadwal' },
+  { id: 'MENU', text: '📋 Menu Utama' },
+];
+
+export const JADWAL_NAV_BUTTONS: BotReplyButton[] = [
+  { id: 'JADWAL_HARI_INI', text: '📅 Hari Ini' },
+  { id: 'JADWAL_CARI', text: '🔍 Cari Jadwal' },
+  { id: 'MENU', text: '📋 Menu Utama' },
+];
+import { scoreTextMatch, cleanQueryForSelection, getLetterFileUrl, isPureGreeting, formatStatusBadge, formatListSummary, formatDetailBullets, cleanPicContact } from '../../utils/textHelper';
 import { extractDateFromText, extractDateRangeFromText, formatWaktuDisplay, getGreetingWib, formatWaktuProtokol } from '../../utils/dateHelper';
 
 export class JadwalHandler {
@@ -64,13 +76,19 @@ export class JadwalHandler {
 
     // Baris PIC
     let picLine = '';
-    if (j.pic && j.pic.trim() !== '-' && j.pic.trim() !== '') {
-      const rawPic = j.pic.trim();
-      const picStr = rawPic.endsWith('.') || rawPic.endsWith(')') ? rawPic : `${rawPic}.`;
-      picLine = `\n*PIC:* ${picStr}`;
+    const cleanPic = cleanPicContact(j.pic);
+    if (cleanPic && cleanPic !== '-') {
+      picLine = `\n*PIC:* ${cleanPic}`;
     }
 
-    return `${headerItem}\n${quoteLines}\n\n${lokasiLine}${picLine}`;
+    // Baris Berkas Surat Tertaut
+    let fileLine = '';
+    const fileUrl = getLetterFileUrl(j.surat?.fileName);
+    if (fileUrl) {
+      fileLine = `\n*Berkas Surat:* ${fileUrl}`;
+    }
+
+    return `${headerItem}\n${quoteLines}\n\n${lokasiLine}${picLine}${fileLine}`;
   }
 
   /**
@@ -94,7 +112,7 @@ export class JadwalHandler {
         `${greeting}\n` +
         `Mohon izin menyampaikan bahwa tidak ada agenda kegiatan protokol yang terdaftar untuk hari ini (${todayFormatted}).\n\n` +
         `Demikian informasi kami sampaikan. Terima kasih.`;
-      return { text };
+      return { text, buttons: JADWAL_TODAY_BUTTONS };
     }
 
     session.jadwalSearchResults = jadwalsHariIni;
@@ -113,7 +131,7 @@ export class JadwalHandler {
       `${listText}\n\n` +
       `Demikian informasi kami sampaikan. Terima kasih.`;
 
-    return { text };
+    return { text, buttons: JADWAL_TODAY_BUTTONS };
   }
 
   /**
@@ -140,7 +158,7 @@ export class JadwalHandler {
         `${greeting}\n` +
         `Mohon izin menyampaikan bahwa tidak ada agenda kegiatan protokol yang terdaftar untuk besok (${tomorrowFormatted}).${nextInfo}\n\n` +
         `Demikian informasi kami sampaikan. Terima kasih.`;
-      return { text };
+      return { text, buttons: JADWAL_NAV_BUTTONS };
     }
 
     session.jadwalSearchResults = jadwalsBesok;
@@ -159,7 +177,7 @@ export class JadwalHandler {
       `${listText}\n\n` +
       `Demikian informasi kami sampaikan. Terima kasih.`;
 
-    return { text };
+    return { text, buttons: JADWAL_NAV_BUTTONS };
   }
 
   /**
@@ -182,7 +200,7 @@ export class JadwalHandler {
         `${greeting}\n` +
         `Mohon izin menyampaikan bahwa tidak ada agenda kegiatan protokol yang terdaftar untuk ${formattedDate}.\n\n` +
         `Demikian informasi kami sampaikan. Terima kasih.`;
-      return { text };
+      return { text, buttons: JADWAL_NAV_BUTTONS };
     }
 
     session.jadwalSearchResults = items;
@@ -201,7 +219,7 @@ export class JadwalHandler {
       `${listText}\n\n` +
       `Demikian informasi kami sampaikan. Terima kasih.`;
 
-    return { text };
+    return { text, buttons: JADWAL_NAV_BUTTONS };
   }
 
   /**
@@ -225,7 +243,7 @@ export class JadwalHandler {
         `${greeting}\n` +
         `Mohon izin menyampaikan bahwa tidak ada agenda kegiatan protokol yang terdaftar untuk periode ${label.toLowerCase()} (${formattedRange}).\n\n` +
         `Demikian informasi kami sampaikan. Terima kasih.`;
-      return { text };
+      return { text, buttons: JADWAL_NAV_BUTTONS };
     }
 
     session.jadwalSearchResults = items;
@@ -244,7 +262,7 @@ export class JadwalHandler {
       `${listText}\n\n` +
       `Demikian informasi kami sampaikan. Terima kasih.`;
 
-    return { text };
+    return { text, buttons: JADWAL_NAV_BUTTONS };
   }
 
   /**
@@ -257,6 +275,11 @@ export class JadwalHandler {
       text:
         `🔍 *PENCARIAN JADWAL KEGIATAN*\n\n` +
         `Tentu, silakan sebutkan nama kegiatan atau topik agenda yang ingin Anda cari (misalnya: _"rakor"_, _"audiensi"_, atau _"pelatihan vokasi"_).`,
+      buttons: [
+        { id: 'JADWAL_HARI_INI', text: '📅 Hari Ini' },
+        { id: 'JADWAL_BESOK', text: '📆 Besok' },
+        { id: 'MENU', text: '📋 Menu Utama' },
+      ],
     };
   }
 
@@ -375,7 +398,7 @@ export class JadwalHandler {
       `${listText}\n\n` +
       `Demikian informasi kami sampaikan. Terima kasih.`;
 
-    return { text };
+    return { text, buttons: JADWAL_NAV_BUTTONS };
   }
 
   /**
@@ -386,18 +409,22 @@ export class JadwalHandler {
     const formattedDate = formatTanggalIndo(item.tanggalKegiatan);
 
     let suratNote = '';
-    if (item.surat?.nomorAgenda) {
-      const fileUrl = getLetterFileUrl(item.surat.fileName);
+    const fileUrl = getLetterFileUrl(item.surat?.fileName);
+    if (item.surat?.nomorAgenda && item.surat.nomorAgenda !== '-') {
       const noSurat = item.surat.nomorSurat && item.surat.nomorSurat !== '-' ? ` (No: ${item.surat.nomorSurat})` : '';
       suratNote = `\n• *Surat Terkait*    : ${item.surat.nomorAgenda}${noSurat}`;
       if (fileUrl) {
-        suratNote += `\n• *Link Berkas*      : ${fileUrl}`;
+        suratNote += `\n• *Berkas Surat*     : ${fileUrl}`;
       }
+    } else if (fileUrl) {
+      suratNote = `\n• *Berkas Surat*     : ${fileUrl}`;
     }
 
     const statusBadge = formatStatusBadge(item.statusDisposisi, item.statusDisposisiCode);
     const arahanLine = item.arahan && item.arahan.trim() !== '' ? `\n• *Arahan Pimpinan* : ${item.arahan.trim()}` : '';
-    const picLine = item.pic && item.pic.trim() !== '-' ? `\n• *PIC & Kontak*    : ${item.pic.trim()}` : '';
+
+    const cleanPic = cleanPicContact(item.pic);
+    const picLine = cleanPic && cleanPic !== '-' ? `\n• *PIC & Kontak*    : ${cleanPic}` : '';
 
     let pesertaSection = '';
     if (item.peserta && item.peserta.trim() !== '') {
@@ -441,6 +468,7 @@ export class JadwalHandler {
         catatanSection +
         `\n\n─────────────────────────\n` +
         `Bila Anda ingin mencari agenda lainnya atau kembali ke menu utama, silakan beri tahu saya ya. 😊`,
+      buttons: JADWAL_NAV_BUTTONS,
     };
   }
 
@@ -464,11 +492,35 @@ export class JadwalHandler {
       return menuHandler.getMainGreeting(session);
     }
 
-    if (clean === '3' || lower === 'cari') {
+    const results = session.jadwalSearchResults || [];
+
+    // Cek aksi navigasi tombol jadwal Meta
+    if (
+      clean === 'JADWAL_CARI' ||
+      clean === 'cari' ||
+      clean === 'cari jadwal' ||
+      (results.length === 0 && clean === '3')
+    ) {
       return this.promptSearch(session);
     }
 
-    if (clean === '2' || lower === 'jadwal') {
+    if (
+      clean === 'JADWAL_BESOK' ||
+      lower === 'besok' ||
+      lower === 'esok' ||
+      (results.length === 0 && clean === '2') ||
+      nlu?.intent === 'JADWAL_BESOK'
+    ) {
+      return this.showJadwalBesok(session);
+    }
+
+    if (
+      clean === 'JADWAL_HARI_INI' ||
+      lower === 'hari ini' ||
+      lower === 'jadwal' ||
+      (results.length === 0 && clean === '1') ||
+      nlu?.intent === 'JADWAL_HARI_INI'
+    ) {
       return this.showJadwalMenu(session);
     }
 
@@ -477,8 +529,6 @@ export class JadwalHandler {
     if (rangeResult) {
       return this.showJadwalRentang(session, rangeResult.daysCount, rangeResult.label);
     }
-
-    const results = session.jadwalSearchResults || [];
 
     // 1. Cek pemilihan nomor jadwal eksplisit (contoh: "jadwal 1", "agenda 2", "kegiatan 1")
     const jadwalMatch = lower.match(/^(?:jadwal|agenda|kegiatan)\s*(?:ke\s*)?(\d+)$/i);
@@ -564,6 +614,36 @@ export class JadwalHandler {
       return menuHandler.getMainGreeting(session);
     }
 
+    // Navigasi Quick Reply Jadwal Meta
+    if (
+      clean === 'JADWAL_HARI_INI' ||
+      clean === '1' ||
+      lower === 'hari ini' ||
+      lower === 'jadwal' ||
+      nlu?.intent === 'JADWAL_HARI_INI'
+    ) {
+      return this.showJadwalMenu(session);
+    }
+
+    if (
+      clean === 'JADWAL_BESOK' ||
+      clean === '2' ||
+      lower === 'besok' ||
+      lower === 'esok' ||
+      nlu?.intent === 'JADWAL_BESOK'
+    ) {
+      return this.showJadwalBesok(session);
+    }
+
+    if (
+      clean === 'JADWAL_CARI' ||
+      clean === '3' ||
+      clean === 'cari' ||
+      clean === 'cari jadwal'
+    ) {
+      return this.promptSearch(session);
+    }
+
     // Cek jika pengguna mengetik rentang hari (contoh: "2 hari kedepan", "seminggu kedepan")
     const dateRangeInput = extractDateRangeFromText(clean);
     if (dateRangeInput) {
@@ -571,14 +651,7 @@ export class JadwalHandler {
     }
 
     if (
-      nlu?.intent === 'JADWAL_BESOK' ||
-      lower.includes('besok') ||
-      lower.includes('esok')
-    ) {
-      return this.showJadwalBesok(session);
-    } else if (
       nlu?.intent === 'JADWAL_BERIKUTNYA' ||
-      clean === '1' ||
       lower.includes('berikut') ||
       lower.includes('terdekat') ||
       lower.includes('setelah')
@@ -591,6 +664,7 @@ export class JadwalHandler {
             `ℹ️ *Tidak Ada Jadwal Mendatang*\n` +
             `Seluruh kegiatan yang terjadwal telah selesai atau belum ada kegiatan baru yang diinput.\n\n` +
             `Silakan beri tahu saya jika ada hal lain yang ingin Anda tanyakan atau periksa.`,
+          buttons: JADWAL_NAV_BUTTONS,
         };
       }
 
@@ -611,6 +685,14 @@ export class JadwalHandler {
       else if (item.pejabatHadir && item.pejabatHadir !== '-') extraDetails += `\n👥 *Pejabat Hadir*   : ${item.pejabatHadir}`;
       if (item.catatan) extraDetails += `\nℹ️ *Catatan*         : ${formatListSummary(item.catatan, 1)}`;
 
+      const picText = cleanPicContact(item.pic);
+
+      let fileLine = '';
+      const fileUrl = getLetterFileUrl(item.surat?.fileName);
+      if (fileUrl) {
+        fileLine = `\n📎 *Berkas Surat*     : ${fileUrl}`;
+      }
+
       const text =
         `⏰ *KEGIATAN TERDEKAT BERIKUTNYA (${statusLabel})*\n\n` +
         `📌 *Kegiatan*            : ${item.namaKegiatan}\n` +
@@ -619,10 +701,11 @@ export class JadwalHandler {
         `📍 *Lokasi*              : ${item.lokasi}\n` +
         `📋 *Status Disposisi*    : ${statusDisp}` +
         extraDetails +
-        `\n📞 *PIC*                 : ${item.pic || '-'}\n\n` +
-        `Beri tahu saya jika Anda ingin melihat agenda kegiatan lainnya ya.`;
+        `\n📞 *PIC*                 : ${picText}` +
+        fileLine +
+        `\n\nBeri tahu saya jika Anda ingin melihat agenda kegiatan lainnya ya.`;
 
-      return { text };
+      return { text, buttons: JADWAL_NAV_BUTTONS };
     } else if (
       nlu?.intent === 'JADWAL_MENDATANG' ||
       clean === '2' ||
@@ -635,6 +718,7 @@ export class JadwalHandler {
       if (mendatang.length === 0) {
         return {
           text: `ℹ️ *Belum ada jadwal kegiatan untuk beberapa hari ke depan.*\n\nSilakan tanyakan jika ada hal lain yang bisa saya bantu.`,
+          buttons: JADWAL_NAV_BUTTONS,
         };
       }
 
@@ -655,6 +739,7 @@ export class JadwalHandler {
           `Mohon izin menyampaikan jadwal kegiatan protokol untuk beberapa hari ke depan, sebagai berikut:\n\n` +
           `${listText}\n\n` +
           `Demikian informasi kami sampaikan. Terima kasih.`,
+        buttons: JADWAL_NAV_BUTTONS,
       };
     } else if (nlu?.intent === 'JADWAL_CARI' || clean === '3' || lower.includes('cari')) {
       if (nlu?.entities?.tanggal) {

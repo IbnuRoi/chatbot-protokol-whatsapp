@@ -23,7 +23,11 @@ export class CariSuratHandler {
     return {
       text:
         `🔎 *PENCARIAN SURAT MASUK (PERIHAL)*\n\n` +
-        `Tentu, silakan sebutkan topik atau perihal surat yang ingin Anda cari. Anda bisa mengetik kata kunci singkat maupun kalimat deskriptif (misalnya: _"rapat koordinasi vokasi"_, _"laporan investigasi k3"_, atau _"audiensi upah buruh"_).`,
+        `Tentu, silakan sebutkan topik atau perihal surat yang ingin Anda cari. Anda bisa mengetik kata kunci singkat maupun kalimat deskriptif (misalnya: _"rapat koordinasi vokasi"_, _"laporan investigasi k3"_, atau _"audiensi upah buruh"_).\n\n` +
+        `_(Sentuh tombol di bawah atau ketik *Batal* untuk kembali ke menu utama)_`,
+      buttons: [
+        { id: 'MENU', text: '📋 Menu Utama' },
+      ],
     };
   }
 
@@ -95,6 +99,9 @@ export class CariSuratHandler {
             `🔎 *HASIL PENCARIAN SURAT MASUK*\n\n` +
             `Mohon izin menyampaikan bahwa tidak ditemukan arsip surat masuk dengan perihal atau kata kunci *"${clean}"* untuk ${options.dateLabel}.\n\n` +
             `Demikian informasi kami sampaikan. Terima kasih.`,
+          buttons: [
+            { id: 'MENU', text: '📋 Menu Utama' },
+          ],
         };
       }
       return {
@@ -102,6 +109,9 @@ export class CariSuratHandler {
           `🔎 *HASIL PENCARIAN SURAT*\n\n` +
           `Tidak ditemukan surat masuk dengan perihal atau kata kunci *"${clean}"*.\n\n` +
           `Boleh coba dengan topik atau kata kunci perihal yang lain?`,
+        buttons: [
+          { id: 'MENU', text: '📋 Menu Utama' },
+        ],
       };
     }
 
@@ -129,7 +139,12 @@ export class CariSuratHandler {
       `• Ketik *nomor* (contoh: *1* atau *surat 1*) untuk melihat rincian lengkap & disposisi.\n` +
       `• Atau ketik kata kunci perihal/pengirim lain untuk mencari arsip surat baru. 😊`;
 
-    return { text };
+    return {
+      text,
+      buttons: [
+        { id: 'MENU', text: '📋 Menu Utama' },
+      ],
+    };
   }
 
   /**
@@ -246,7 +261,14 @@ export class CariSuratHandler {
     const waktuInputStr = formatWaktuInputIndo(surat.createdAt);
     const text = formatSuratDetail(surat, waktuInputStr);
 
-    return { text };
+    return {
+      text,
+      buttons: [
+        { id: '1', text: '📋 Cek Disposisi' },
+        { id: '2', text: '◀️ Kembali' },
+        { id: 'MENU', text: '📋 Menu Utama' },
+      ],
+    };
   }
 
   /**
@@ -290,7 +312,12 @@ export class CariSuratHandler {
       return {
         text:
           `📬 *RINCIAN DISPOSISI (${surat.nomorAgenda})*\n\n` +
-          `${statusInfo}`,
+          `${statusInfo}\n\n` +
+          `Ada lagi yang ingin Anda periksa terkait surat ini?`,
+        buttons: [
+          { id: '2', text: '◀️ Kembali' },
+          { id: 'MENU', text: '📋 Menu Utama' },
+        ],
       };
     } else if (
       clean === 'back_list' ||

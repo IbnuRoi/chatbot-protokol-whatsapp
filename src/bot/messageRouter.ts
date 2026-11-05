@@ -21,6 +21,8 @@ export interface IncomingMessagePayload {
   senderNumber: string;
   pushName?: string;
   text?: string;
+  buttonId?: string;
+  listRowId?: string;
   media?: {
     filePath: string;
     fileName: string;
@@ -91,6 +93,11 @@ export class MessageRouter {
       if (session.draftSurat) {
         await suratMasukHandler.handleFinalConfirm(session, '2');
       }
+      if (session.draftDisposisi?.tempFilePath) {
+        pdfService.deleteTempPdf(session.draftDisposisi.tempFilePath);
+      }
+      sessionService.clearDisposisiDraft(session.whatsappNumber);
+      sessionService.clearJadwalArahanDraft(session.whatsappNumber);
       sessionService.resetSession(session.whatsappNumber);
       return menuHandler.getConversationalGreeting(
         session,
@@ -98,13 +105,32 @@ export class MessageRouter {
       );
     }
 
-    if (
-      lower === '/start' ||
+    const isExplicitMenu =
+      payload.buttonId === 'MENU' ||
+      payload.buttonId === '0' ||
+      payload.listRowId === 'MENU' ||
       lower === 'menu' ||
       normLower === 'menu' ||
-      isPureGreeting(textInput) ||
-      isPureGreeting(normalizedInput)
-    ) {
+      lower === '0' ||
+      normLower === '0' ||
+      lower === 'menu_utama' ||
+      normLower === 'menu_utama' ||
+      lower === '/start';
+
+    if (isExplicitMenu) {
+      if (session.draftSurat) {
+        await suratMasukHandler.handleFinalConfirm(session, '2');
+      }
+      if (session.draftDisposisi?.tempFilePath) {
+        pdfService.deleteTempPdf(session.draftDisposisi.tempFilePath);
+      }
+      sessionService.clearDisposisiDraft(session.whatsappNumber);
+      sessionService.clearJadwalArahanDraft(session.whatsappNumber);
+      sessionService.resetSession(session.whatsappNumber);
+      return menuHandler.getMainGreeting(session);
+    }
+
+    if (isPureGreeting(textInput) || isPureGreeting(normalizedInput)) {
       if (!isSuratMasukActive || session.state === BotState.MAIN_MENU) {
         sessionService.resetSession(session.whatsappNumber);
         return menuHandler.getMainGreeting(session);
@@ -199,9 +225,10 @@ export class MessageRouter {
           await suratMasukHandler.handleFinalConfirm(session, '2');
         }
         sessionService.resetSession(session.whatsappNumber);
-        return {
-          text: `🚫 *REGISTRASI DIBATALKAN*\n\nDraft registrasi surat telah dibatalkan.`,
-        };
+        return menuHandler.getMainGreeting(
+          session,
+          `🚫 *REGISTRASI DIBATALKAN*\n\nDraft registrasi surat telah dibatalkan.`
+        );
       }
       return suratMasukHandler.handleEditTemplateInput(session, textInput);
     }
@@ -248,6 +275,10 @@ export class MessageRouter {
         return suratMasukHandler.handleReviewData(session, textInput);
       }
 
+      if (textInput === '3' || lower === 'batal' || lower === 'cancel') {
+        return suratMasukHandler.handleReviewData(session, '3');
+      }
+
       // Deteksi cepat jika pengguna langsung mengetikkan nomor kontak PIC (misal: "Nomor PIC 081234567890", "081234567890", "No HP 081234567890")
       if (
         textInput.replace(/\D/g, '').length >= 7 ||
@@ -279,9 +310,10 @@ export class MessageRouter {
         }
         sessionService.clearDisposisiDraft(session.whatsappNumber);
         sessionService.resetSession(session.whatsappNumber);
-        return {
-          text: `🚫 *PENCATATAN DISPOSISI DIBATALKAN*\n\nDraft pencatatan lembar disposisi telah dibatalkan.`,
-        };
+        return menuHandler.getMainGreeting(
+          session,
+          `🚫 *PENCATATAN DISPOSISI DIBATALKAN*\n\nDraft pencatatan lembar disposisi telah dibatalkan.`
+        );
       }
       return disposisiHandler.handleDisposisiEditTemplateInput(session, textInput);
     }
@@ -320,6 +352,10 @@ export class MessageRouter {
 
       if (isReviewSimpan) {
         return disposisiHandler.handleReviewResponse(session, textInput);
+      }
+
+      if (textInput === '3' || lower === 'batal' || lower === 'cancel') {
+        return disposisiHandler.handleReviewResponse(session, '3');
       }
     }
 

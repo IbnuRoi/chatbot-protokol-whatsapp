@@ -6,6 +6,7 @@ import { messageRouter, IncomingMessagePayload } from '../messageRouter';
 import { metaClient } from './metaClient';
 import { pdfService } from '../../services/pdfService';
 import { imageService } from '../../services/imageService';
+import { cloudflaredTunnel } from './cloudflaredTunnel';
 
 export class MetaWebhookServer {
   private server: http.Server | null = null;
@@ -114,13 +115,18 @@ export class MetaWebhookServer {
         }
       });
 
-      this.server.listen(this.port, () => {
+      this.server.listen(this.port, async () => {
         console.log(`\n======================================================`);
         console.log(`🌐 META WHATSAPP WEBHOOK SERVER AKTIF!`);
         console.log(`   • Port Lokal    : ${this.port}`);
         console.log(`   • Endpoint Path : /webhook & /webhook-chatbot`);
         console.log(`   • Verify Token  : "${ENV.META_VERIFY_TOKEN}"`);
         console.log(`======================================================\n`);
+
+        if (ENV.META_AUTO_TUNNEL) {
+          await cloudflaredTunnel.start(this.port);
+        }
+
         resolve();
       });
     });
@@ -131,6 +137,7 @@ export class MetaWebhookServer {
    */
   public stop(): Promise<void> {
     return new Promise((resolve) => {
+      cloudflaredTunnel.stop();
       if (this.server) {
         this.server.close(() => {
           console.log('[Meta Webhook] Server dihentikan.');
@@ -216,17 +223,23 @@ export class MetaWebhookServer {
             const interactive = msg.interactive;
             const interactiveType = interactive?.type;
             let selectedText = '';
+            let btnId: string | undefined;
+            let rowId: string | undefined;
 
             if (interactiveType === 'button_reply') {
-              selectedText = interactive.button_reply?.id || interactive.button_reply?.title || '';
+              btnId = interactive.button_reply?.id;
+              selectedText = btnId || interactive.button_reply?.title || '';
             } else if (interactiveType === 'list_reply') {
-              selectedText = interactive.list_reply?.id || interactive.list_reply?.title || '';
+              rowId = interactive.list_reply?.id;
+              selectedText = rowId || interactive.list_reply?.title || '';
             }
 
             routerPayload = {
               senderNumber,
               pushName,
               text: selectedText,
+              buttonId: btnId,
+              listRowId: rowId,
             };
           }
           // 3. Tombol Template (Legacy button)

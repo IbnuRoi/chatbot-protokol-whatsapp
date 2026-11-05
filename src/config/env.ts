@@ -62,6 +62,7 @@ export const ENV = {
   META_PHONE_NUMBER_ID: process.env.META_PHONE_NUMBER_ID || '',
   META_WEBHOOK_PORT: Number(process.env.META_WEBHOOK_PORT || process.env.PORT || 3000),
   WHATSAPP_PROVIDER: process.env.WHATSAPP_PROVIDER || 'baileys',
+  META_AUTO_TUNNEL: process.env.META_AUTO_TUNNEL !== 'false',
 
   // 4. Gatsu AI Service (protokol-ai-service) Configuration
   AI_SERVICE_ENABLED: process.env.AI_SERVICE_ENABLED !== 'false',
