@@ -1,12 +1,11 @@
-import { sessionService, BotState, UserSession, ExtractedSuratData } from '../../services/sessionService';
+import { sessionService, BotState, UserSession } from '../../services/sessionService';
 import { suratService } from '../../services/suratService';
 import { pdfService } from '../../services/pdfService';
 import { imageService } from '../../services/imageService';
 import { aiService, formatPerihalByTemplate, generateSubjectSummary, formatAsalSurat } from '../../services/aiService';
 import { NluResult } from '../../services/nluService';
-import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
-import { cleanHtml, formatNomorAgendaLink, getLetterFileUrl, generateLetterFileName, splitPicNameAndPhone, formatCombinedPic, sanitizePlaceEvent, buildNarasiPenayanganTap, normalizeUnicodeText, cleanPhoneNumber } from '../../utils/textHelper';
+import { cleanHtml, getLetterFileUrl, generateLetterFileName, splitPicNameAndPhone, formatCombinedPic, sanitizePlaceEvent, buildNarasiPenayanganTap, normalizeUnicodeText, cleanPhoneNumber } from '../../utils/textHelper';
 import { formatTanggalIndo, formatWaktuInputIndo, parseIndonesianDateEventRange, parseIndonesianTimeToDates, cleanDateStringFromTime } from '../../utils/dateHelper';
 
 export const KATEGORI_LABEL_MAP: Record<string, string> = {
@@ -398,10 +397,8 @@ export class SuratMasukHandler {
   public renderExtractedDataReview(session: UserSession, isUpdated: boolean = false): BotResponse {
     const draft = session.draftSurat;
     const data = draft?.extractedData;
-    const finalName = draft?.finalFileName || generateLetterFileName(draft?.tempPdfName);
     const agendaDisplay = draft?.nomorAgenda || '-';
     const jenisCode = (draft?.jenisSurat || 'UND').toUpperCase();
-    const jenisLabel = KATEGORI_LABEL_MAP[jenisCode] || jenisCode;
     const finalPerihal = draft?.finalPerihal || data?.perihal || '-';
     const finalSubject = (draft?.finalSubject || data?.subject || generateSubjectSummary(finalPerihal, data)).slice(0, 200);
 
@@ -474,6 +471,12 @@ export class SuratMasukHandler {
       return this.handleEditTemplateInput(session, clean);
     }
 
+    // Cek koreksi spesifik / direct field correction (misal: "ubah perihal menjadi ...", "ganti nomor surat jadi ...")
+    const directCorrection = await this.handleDirectCorrection(session, clean);
+    if (directCorrection) {
+      return directCorrection;
+    }
+
     // 1. Konfirmasi YA / BENAR / SIMPAN
     const isConfirm =
       nlu?.entities?.reviewAction === 'CONFIRM' ||
@@ -508,7 +511,6 @@ export class SuratMasukHandler {
         const fileUrl = getLetterFileUrl(savedFileName);
         const fileLine = fileUrl ? `• 📎 *Link Berkas*    : ${fileUrl}\n` : '';
         const jenisCode = (session.draftSurat?.jenisSurat || 'UND').toUpperCase();
-        const jenisLabel = KATEGORI_LABEL_MAP[jenisCode] || jenisCode;
         const userPenginput = result.createdBy || session.userName || 'Petugas Protokol';
         const waktuInputStr = formatWaktuInputIndo(result.createdAt || new Date());
 
@@ -672,12 +674,14 @@ export class SuratMasukHandler {
       `• *Tempat Acara*: Lokasi/tempat kegiatan (contoh: Hotel Bidakara Jakarta atau *-* jika tidak ada)\n` +
       `• *Nama PIC*: Nama lengkap narahubung/kontak person (contoh: Budi Santoso atau *-* jika tidak ada)\n` +
       `• *Nomor PIC*: Nomor HP/WhatsApp narahubung (contoh: 081234567890 atau *-* jika tidak ada)\n` +
-      `• *Pilihan Kategori*: UND, PH, UNR, AU, WR, TAP, LP\n\n` +
+      `• *Pilihan Kategori*: UND, PH, UNR, AU, WR, TAP, LP\n` +
+      `• *Pilihan Tipe*: Biasa, Penting, Rahasia, Tembusan\n\n` +
       `_(Ketik *batal* jika ingin membatalkan)_`;
 
     // Bubble 2: Template Bersih (Murni Key-Value, Tanpa Arahan/Catatan agar 100% siap disalin dan diedit)
     const cleanTemplateText =
       `Kategori: ${kategori}\n` +
+      `Tipe: ${draft?.tipeSurat || 'Biasa'}\n` +
       `Nomor Surat: ${data?.nomorSurat || '-'}\n` +
       `Tanggal Surat: ${data?.tanggalSurat || '-'}\n` +
       `Asal Surat: ${data?.asalSurat || '-'}\n` +
@@ -778,16 +782,17 @@ export class SuratMasukHandler {
       session.draftSurat.extractedData.asalSurat = formatAsalSurat(parsed.asalSurat).slice(0, 220);
       updatedKeys.push('Asal Surat');
     }
-    if (parsed.subject) {
-      const cleanSubj = parsed.subject.slice(0, 200);
-      session.draftSurat.finalSubject = cleanSubj;
-      session.draftSurat.extractedData.subject = cleanSubj;
-      updatedKeys.push('Subject');
+    if (parsed.tipeSurat) {
+      session.draftSurat.tipeSurat = parsed.tipeSurat;
+      updatedKeys.push('Tipe Klasifikasi');
     }
+    const oldSubject = session.draftSurat.finalSubject || session.draftSurat.extractedData.subject;
     if (parsed.perihal) {
       session.draftSurat.extractedData.perihal = parsed.perihal;
       session.draftSurat.extractedData.event = parsed.perihal;
       session.draftSurat.finalPerihal = parsed.perihal;
+      session.draftSurat.extractedData.namaAcara = parsed.perihal;
+
       // Bila kategori UNR dan user mengubah perihal (misal menambahkan orang tua), sinkronkan mempelai1 dan mempelai2
       if (session.draftSurat.jenisSurat === 'UNR') {
         const unrMatch = parsed.perihal.match(/(?:pernikahan|resepsi)\s+(.+?)\s+(?:dengan|&)\s+(.+)/i);
@@ -796,7 +801,7 @@ export class SuratMasukHandler {
           session.draftSurat.extractedData.mempelai2 = unrMatch[2].trim();
         }
       }
-      if (!parsed.subject) {
+      if (!parsed.subject || parsed.subject === oldSubject) {
         const autoSubj = generateSubjectSummary(parsed.perihal, session.draftSurat.extractedData);
         session.draftSurat.finalSubject = autoSubj;
         session.draftSurat.extractedData.subject = autoSubj;
@@ -806,12 +811,20 @@ export class SuratMasukHandler {
       session.draftSurat.extractedData.event = parsed.event;
       session.draftSurat.extractedData.perihal = parsed.event;
       session.draftSurat.finalPerihal = parsed.event;
-      if (!parsed.subject) {
+      session.draftSurat.extractedData.namaAcara = parsed.event;
+      if (!parsed.subject || parsed.subject === oldSubject) {
         const autoSubj = generateSubjectSummary(parsed.event, session.draftSurat.extractedData);
         session.draftSurat.finalSubject = autoSubj;
         session.draftSurat.extractedData.subject = autoSubj;
       }
       updatedKeys.push('Perihal');
+    }
+
+    if (parsed.subject && (!parsed.perihal || parsed.subject !== oldSubject)) {
+      const cleanSubj = parsed.subject.slice(0, 200);
+      session.draftSurat.finalSubject = cleanSubj;
+      session.draftSurat.extractedData.subject = cleanSubj;
+      if (!updatedKeys.includes('Subject')) updatedKeys.push('Subject');
     }
     if (parsed.dateEvent !== undefined) {
       if (parsed.dateEvent === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(parsed.dateEvent)) {
@@ -891,6 +904,12 @@ export class SuratMasukHandler {
         return this.handleReviewData(session, clean);
       }
 
+      // Cek koreksi spesifik langsung (misal: "ubah perihal menjadi ...", "ganti nomor surat jadi ...")
+      const directCorr = await this.handleDirectCorrection(session, clean);
+      if (directCorr) {
+        return directCorr;
+      }
+
       // Cek apakah pengguna mengetikkan nomor telepon atau PIC secara langsung (misal: "081234567890" atau "Nomor PIC 081234567890")
       const directPic = this.handleDirectPicInput(session, clean);
       if (directPic) {
@@ -903,6 +922,66 @@ export class SuratMasukHandler {
     // Kembali ke state REVIEW_DATA dengan tampilan hasil pembaruan
     sessionService.setState(session.whatsappNumber, BotState.SURAT_MASUK_REVIEW_DATA);
     return this.renderExtractedDataReview(session, true);
+  }
+
+  /**
+   * Menangani koreksi langsung (misal: "ubah perihal menjadi ...", "ganti nomor surat jadi ...", "perihal: ...")
+   * tanpa mengharuskan pengguna menyalin seluruh template koreksi.
+   */
+  public async handleDirectCorrection(session: UserSession, input: string): Promise<BotResponse | null> {
+    if (!session.draftSurat) return null;
+    const clean = input.trim();
+    if (!clean) return null;
+
+    let targetField = '';
+    let targetValue = '';
+
+    const match1 = clean.match(/^(?:ubah|ganti|koreksi|set|edit)\s+([a-zA-Z\s/]+?)\s*(?:menjadi|ke|jadi|\:|\=)\s*(.+)$/i);
+    if (match1) {
+      targetField = match1[1].trim().toLowerCase();
+      targetValue = match1[2].trim();
+    } else {
+      const match2 = clean.match(/^(?:ubah|ganti|koreksi|set|edit)\s+(perihal\s+resmi|perihal|subject|subjek|nomor\s+surat|no\s+surat|tanggal\s+surat|tgl\s+surat|asal\s+surat|pengirim|tanggal\s+acara|tgl\s+acara|jam\s+acara|waktu\s+acara|tempat\s+acara|lokasi\s+acara|lokasi|tempat|nama\s+pic|nomor\s+pic|no\s+pic|kontak\s+pic|pic|kategori|jenis|tipe)\s+(.+)$/i);
+      if (match2) {
+        targetField = match2[1].trim().toLowerCase();
+        targetValue = match2[2].trim();
+      }
+    }
+
+    if (!targetField || !targetValue) {
+      const colonIdx = clean.indexOf(':');
+      if (colonIdx > 0 && colonIdx < 35) {
+        const potentialKey = clean.slice(0, colonIdx)
+          .replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}\p{Emoji}\u200B-\u200D\uFE0F.*_•\-#()\[\]]/gu, '')
+          .trim()
+          .toLowerCase();
+        const potentialVal = clean.slice(colonIdx + 1).trim();
+        if (potentialVal && this.hasTemplateFields(potentialKey)) {
+          targetField = potentialKey;
+          targetValue = potentialVal;
+        }
+      }
+    }
+
+    if (!targetField || !targetValue) return null;
+
+    let templateKey = 'Perihal';
+    if (targetField.includes('perihal') || targetField === 'hal') templateKey = 'Perihal';
+    else if (targetField.includes('subject') || targetField.includes('subjek') || targetField.includes('judul')) templateKey = 'Subject';
+    else if (targetField.includes('nomor') || targetField.includes('no surat')) templateKey = 'Nomor Surat';
+    else if (targetField.includes('tanggal surat') || targetField.includes('tgl surat')) templateKey = 'Tanggal Surat';
+    else if (targetField.includes('asal') || targetField.includes('pengirim') || targetField.includes('instansi')) templateKey = 'Asal Surat';
+    else if (targetField.includes('tanggal acara') || targetField.includes('tgl acara') || targetField.includes('date event')) templateKey = 'Tanggal Acara';
+    else if (targetField.includes('jam') || targetField.includes('waktu') || targetField.includes('pukul')) templateKey = 'Jam Acara';
+    else if (targetField.includes('tempat') || targetField.includes('lokasi') || targetField.includes('venue')) templateKey = 'Tempat Acara';
+    else if (targetField.includes('nama pic') || targetField === 'nama') templateKey = 'Nama PIC';
+    else if (targetField.includes('nomor pic') || targetField.includes('no pic') || targetField.includes('telepon') || targetField.includes('hp') || targetField.includes('wa')) templateKey = 'Nomor PIC';
+    else if (targetField.includes('kategori') || targetField.includes('jenis')) templateKey = 'Kategori';
+    else if (targetField.includes('tipe') || targetField.includes('klasifikasi')) templateKey = 'Tipe';
+    else return null;
+
+    const pseudoTemplate = `${templateKey}: ${targetValue}`;
+    return this.handleEditTemplateInput(session, pseudoTemplate);
   }
 
   /**
@@ -1015,6 +1094,7 @@ export class SuratMasukHandler {
    */
   public parseSuratTemplate(text: string): {
     kategori?: string;
+    tipeSurat?: string;
     nomorSurat?: string;
     tanggalSurat?: string;
     asalSurat?: string;
@@ -1030,6 +1110,7 @@ export class SuratMasukHandler {
   } {
     const result: {
       kategori?: string;
+      tipeSurat?: string;
       nomorSurat?: string;
       tanggalSurat?: string;
       asalSurat?: string;
@@ -1044,6 +1125,7 @@ export class SuratMasukHandler {
       picPhoneNumber?: string;
     } = {};
 
+    let lastField: string | null = null;
     const normalizedText = normalizeUnicodeText(text);
     const lines = normalizedText.split('\n');
     for (const rawLine of lines) {
@@ -1082,7 +1164,19 @@ export class SuratMasukHandler {
 
       // Baris field harus memiliki tanda titik dua ':'
       const colonIdx = line.indexOf(':');
-      if (colonIdx === -1) continue;
+      if (colonIdx === -1) {
+        // Dukung kelanjutan multiline jika baris sebelumnya adalah field teks panjang (perihal, asalSurat, subject, placeEvent)
+        if (lastField && (result as any)[lastField]) {
+          const curVal = (result as any)[lastField];
+          if (typeof curVal === 'string' && !curVal.startsWith('http')) {
+            const cleanAppend = line.replace(/^[\*\_'"“‘`]+|[\*\_'"”’`]+$/g, '').trim();
+            if (cleanAppend && !cleanAppend.toLowerCase().startsWith('ketik')) {
+              (result as any)[lastField] = `${curVal} ${cleanAppend}`.replace(/\s+/g, ' ').trim();
+            }
+          }
+        }
+        continue;
+      }
 
       // Bersihkan emoji, piktograf, bullet, bintang, tanda pagar, tanda kurung, dll. dari nama field (key)
       const rawKey = normalizeUnicodeText(line.slice(0, colonIdx))
@@ -1159,6 +1253,27 @@ export class SuratMasukHandler {
         } else if (valUpper.includes('LAPORAN')) {
           result.kategori = 'LP';
         }
+        lastField = 'kategori';
+      }
+      // 1b. Tipe Klasifikasi Surat
+      else if (
+        rawKey === 'tipe' ||
+        rawKey === 'tipe surat' ||
+        rawKey === 'klasifikasi' ||
+        rawKey === 'tipe klasifikasi' ||
+        rawKey === 'tingkat klasifikasi' ||
+        rawKey === 'sifat' ||
+        rawKey === 'sifat surat'
+      ) {
+        if (rawVal !== '-') {
+          let cleanTipe = rawVal.trim();
+          if (/biasa/i.test(cleanTipe)) cleanTipe = 'Biasa';
+          else if (/rahasia/i.test(cleanTipe)) cleanTipe = 'Rahasia';
+          else if (/penting/i.test(cleanTipe)) cleanTipe = 'Penting';
+          else if (/tembusan/i.test(cleanTipe)) cleanTipe = 'Tembusan';
+          result.tipeSurat = cleanTipe;
+          lastField = 'tipeSurat';
+        }
       }
       // 2. Nomor Surat
       else if (
@@ -1167,7 +1282,10 @@ export class SuratMasukHandler {
         rawKey === 'nomor' ||
         rawKey === 'no'
       ) {
-        if (rawVal !== '-') result.nomorSurat = rawVal;
+        if (rawVal !== '-') {
+          result.nomorSurat = rawVal;
+          lastField = 'nomorSurat';
+        }
       }
       // 3. Tanggal Surat
       else if (
@@ -1176,7 +1294,10 @@ export class SuratMasukHandler {
         rawKey === 'tanggal' ||
         rawKey === 'tgl'
       ) {
-        if (rawVal !== '-') result.tanggalSurat = rawVal;
+        if (rawVal !== '-') {
+          result.tanggalSurat = rawVal;
+          lastField = 'tanggalSurat';
+        }
       }
       // 4. Asal Surat
       else if (
@@ -1187,15 +1308,42 @@ export class SuratMasukHandler {
         rawKey === 'asal instansi' ||
         rawKey === 'instansi'
       ) {
-        if (rawVal !== '-') result.asalSurat = formatAsalSurat(rawVal);
+        if (rawVal !== '-') {
+          result.asalSurat = formatAsalSurat(rawVal);
+          lastField = 'asalSurat';
+        }
       }
       // 5. Subject
-      else if (rawKey === 'subject' || rawKey === 'subjek' || rawKey === 'judul') {
-        if (rawVal !== '-') result.subject = rawVal.slice(0, 200);
+      else if (
+        rawKey === 'subject' ||
+        rawKey === 'subjek' ||
+        rawKey === 'judul' ||
+        rawKey === 'ringkasan' ||
+        rawKey === 'subject surat' ||
+        rawKey === 'subjek surat' ||
+        rawKey === 'judul surat'
+      ) {
+        if (rawVal !== '-') {
+          result.subject = rawVal.slice(0, 200);
+          lastField = 'subject';
+        }
       }
       // 6. Perihal
-      else if (rawKey === 'perihal' || rawKey === 'hal') {
-        if (rawVal !== '-') result.perihal = rawVal;
+      else if (
+        rawKey === 'perihal' ||
+        rawKey === 'hal' ||
+        rawKey === 'perihal resmi' ||
+        rawKey === 'perihal surat' ||
+        rawKey === 'hal surat' ||
+        rawKey === 'isi perihal' ||
+        rawKey === 'perihal/hal' ||
+        rawKey.includes('perihal') ||
+        rawKey.includes('hal surat')
+      ) {
+        if (rawVal !== '-') {
+          result.perihal = rawVal;
+          lastField = 'perihal';
+        }
       }
       // 7. Tanggal Acara (dateEvent)
       else if (
@@ -1210,6 +1358,7 @@ export class SuratMasukHandler {
         rawKey === 'waktu/tgl acara'
       ) {
         result.dateEvent = rawVal;
+        lastField = 'dateEvent';
       }
       // 7b. Jam Acara (timeEvent)
       else if (
@@ -1223,6 +1372,7 @@ export class SuratMasukHandler {
         rawKey === 'jam'
       ) {
         result.timeEvent = rawVal;
+        lastField = 'timeEvent';
         // Jika ada format tanggal di dalam rawVal, pisahkan juga ke dateEvent bila belum terisi
         const rangeCheck = parseIndonesianDateEventRange(rawVal);
         if (rangeCheck.startDate && !result.dateEvent) {
@@ -1238,6 +1388,7 @@ export class SuratMasukHandler {
         rawKey === 'jadwal kegiatan' ||
         rawKey === 'jadwal'
       ) {
+        lastField = 'timeEvent';
         const hasTime = /\b(?:pukul|\d{1,2}[:.]\d{2}|wib|wita|wit)\b/i.test(rawVal);
         const dateCheck = parseIndonesianDateEventRange(rawVal);
 
@@ -1254,6 +1405,7 @@ export class SuratMasukHandler {
           result.timeEvent = rawVal;
         } else {
           result.dateEvent = rawVal;
+          lastField = 'dateEvent';
         }
       }
       // 7d. Tempat Acara / Lokasi (placeEvent)
@@ -1272,6 +1424,7 @@ export class SuratMasukHandler {
         rawKey === 'ruangan'
       ) {
         result.placeEvent = rawVal;
+        lastField = 'placeEvent';
       }
       // 8. Event / Nama Acara
       else if (
@@ -1281,7 +1434,10 @@ export class SuratMasukHandler {
         rawKey === 'nama acara' ||
         rawKey === 'nama kegiatan'
       ) {
-        if (rawVal !== '-') result.event = rawVal;
+        if (rawVal !== '-') {
+          result.event = rawVal;
+          lastField = 'event';
+        }
       }
       // 9. Nama PIC
       else if (

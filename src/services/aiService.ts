@@ -324,6 +324,7 @@ export function generateEventTitleFromSurat(
 ): string {
   if (!data && !fallbackPerihal) return 'Agenda Kegiatan Protokol';
 
+  const cleanFallbackPerihal = (fallbackPerihal || '').trim();
   const kat = (data?.kategoriSurat || '').toUpperCase();
   const rawPenyelenggara = (data?.penyelenggara || '').trim();
   let penyelenggara = rawPenyelenggara;
@@ -332,6 +333,67 @@ export function generateEventTitleFromSurat(
       penyelenggara = data.asalSurat.trim();
     } else {
       penyelenggara = '';
+    }
+  }
+
+  // Jika fallbackPerihal ada dan definitif (misalnya hasil editan user atau perihal resmi), jadikan rujukan utama judul acara
+  if (cleanFallbackPerihal && cleanFallbackPerihal !== '-' && cleanFallbackPerihal.length > 5) {
+    const cleanedActionTitle = cleanTemplatePrefix(cleanFallbackPerihal);
+    if (cleanedActionTitle && cleanedActionTitle.length > 3) {
+      const hasActionVerb = /^(?:menghadiri|memberikan|menjadi|menerima|membuka|pembuatan|rapat|audiensi|kunjungan|pertemuan|pelantikan|upacara|peresmian)\b/i.test(cleanedActionTitle);
+
+      let baseTitle = '';
+      if (hasActionVerb) {
+        baseTitle = cleanedActionTitle;
+      } else {
+        switch (kat) {
+          case 'UND':
+            baseTitle = `Menghadiri ${cleanedActionTitle}`;
+            break;
+          case 'PH': {
+            const sesi = cleanSesiAcara(data?.sesiAcara, cleanedActionTitle);
+            let actionVerb = 'Memberikan Sambutan';
+            if (/narasumber|pembicara|pemateri/i.test(sesi)) actionVerb = 'Menjadi Narasumber';
+            else if (/keynote/i.test(sesi)) actionVerb = 'Menjadi Keynote Speaker';
+            else if (/kuliah\s+umum/i.test(sesi)) actionVerb = 'Memberikan Kuliah Umum';
+            else if (/orasi\s+ilmiah/i.test(sesi)) actionVerb = 'Menjadi Narasumber Orasi Ilmiah';
+            else if (/arahan/i.test(sesi)) actionVerb = 'Memberikan Arahan';
+            else if (/membuka/i.test(sesi)) actionVerb = 'Membuka Acara';
+            baseTitle = `${actionVerb} pada ${cleanedActionTitle}`;
+            break;
+          }
+          case 'AU':
+            baseTitle = `Menerima audiensi terkait ${cleanedActionTitle}`;
+            break;
+          case 'WR':
+            baseTitle = `Menerima wawancara terkait ${cleanedActionTitle}`;
+            break;
+          case 'TAP':
+            baseTitle = `Pembuatan Video Ucapan dalam rangka ${cleanedActionTitle}`;
+            break;
+          case 'UNR':
+            baseTitle = `Menghadiri acara Resepsi Pernikahan ${cleanedActionTitle}`;
+            break;
+          default:
+            baseTitle = `Menghadiri ${cleanedActionTitle}`;
+            break;
+        }
+      }
+
+      // Khusus UNR, pastikan info orang tua/pengundang tidak hilang
+      if (kat === 'UNR') {
+        const hasParentInfo =
+          /\b(?:putra|putri|anak|bapak|ibu|bpk|keluarga|bin|binti)\b/i.test(baseTitle) ||
+          /\(.*?\)/.test(baseTitle);
+        if (!hasParentInfo && data?.asalSurat && data.asalSurat !== '-') {
+          const pengundang = data.asalSurat.split(' - ')[0]?.trim();
+          if (pengundang && !baseTitle.toLowerCase().includes(pengundang.toLowerCase())) {
+            baseTitle = `${baseTitle} (Keluarga ${pengundang})`;
+          }
+        }
+      }
+
+      return cleanRedundantSentence(cleanTemplatePrefix(baseTitle)) || 'Agenda Kegiatan Protokol';
     }
   }
 
@@ -1262,7 +1324,7 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
   /**
    * Helper parsing terpusat untuk output JSON dari model AI (baik teks PDF maupun Vision Gambar)
    */
-  private parseAiExtractionResponse(rawText: string, originalFileName?: string, docText?: string): ExtractedSuratData | null {
+  private parseAiExtractionResponse(rawText: string, _originalFileName?: string, docText?: string): ExtractedSuratData | null {
     if (!rawText || !rawText.trim()) return null;
 
     try {
@@ -2119,7 +2181,7 @@ OUTPUT FORMAT: Kembalikan HANYA JSON valid tanpa blok markdown:
    */
   private parseDisposisiResponse(
     rawText: string,
-    originalFileName?: string,
+    _originalFileName?: string,
     sourceDocumentText?: string
   ): ExtractedDisposisiData {
     let cleanJson = (rawText || '')

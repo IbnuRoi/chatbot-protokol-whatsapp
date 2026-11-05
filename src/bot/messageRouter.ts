@@ -13,7 +13,7 @@ import { sessionService, BotState, UserSession } from '../services/sessionServic
 import { pdfService } from '../services/pdfService';
 import { nluService, NluResult } from '../services/nluService';
 import { jadwalService } from '../services/jadwalService';
-import { extractDateRangeFromText, extractDateFromText, formatTanggalIndo } from '../utils/dateHelper';
+import { extractDateRangeFromText, formatTanggalIndo } from '../utils/dateHelper';
 import { isPureGreeting, isFormConfirmationInput, normalizeUserInput } from '../utils/textHelper';
 import { BotResponse } from './types';
 
@@ -208,6 +208,12 @@ export class MessageRouter {
 
     // Fast-path: Respon cepat konfirmasi atau permintaan koreksi di tahap REVIEW_DATA (Bypass NLU LLM)
     if (session.state === BotState.SURAT_MASUK_REVIEW_DATA) {
+      // Deteksi cepat jika pengguna mengoreksi field spesifik secara langsung (misal: "ubah perihal menjadi ...", "ganti nomor surat jadi ...")
+      const directCorr = await suratMasukHandler.handleDirectCorrection(session, textInput);
+      if (directCorr) {
+        return directCorr;
+      }
+
       const isReviewKoreksi =
         textInput === '2' ||
         lower === 'salah' ||
