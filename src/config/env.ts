@@ -49,16 +49,15 @@ export const ENV = {
     process.env.UPLOAD_STORAGE_PATH || process.env.PRIVATE_STORAGE_PATH || './storage/letters'
   ),
   SESSION_TIMEOUT_MINUTES: 30,
-  FILE_URL: process.env.FILE_URL || 'https://pwa-protokol.gatsu51.com/files/letter/',
+  FILE_URL: process.env.FILE_URL || '',
   DISPOSITION_STORAGE_PATH: path.resolve(
     process.cwd(),
     process.env.DISPOSITION_STORAGE_PATH || './storage/dispositions'
   ),
-  DISPOSITION_FILE_URL:
-    process.env.DISPOSITION_FILE_URL || 'https://pwa-protokol.gatsu51.com/files/disposition/',
+  DISPOSITION_FILE_URL: process.env.DISPOSITION_FILE_URL || '',
 
   // 3. Meta WhatsApp Cloud API Configuration
-  META_VERIFY_TOKEN: process.env.META_VERIFY_TOKEN || 'kemnaker_protokol_secure_token_2026',
+  META_VERIFY_TOKEN: process.env.META_VERIFY_TOKEN || '',
   META_WA_TOKEN: process.env.META_WA_TOKEN || '',
   META_PHONE_NUMBER_ID: process.env.META_PHONE_NUMBER_ID || '',
   META_WEBHOOK_PORT: Number(process.env.META_WEBHOOK_PORT || process.env.PORT || 3000),
@@ -67,7 +66,7 @@ export const ENV = {
   // 4. Gatsu AI Service (protokol-ai-service) Configuration
   AI_SERVICE_ENABLED: process.env.AI_SERVICE_ENABLED !== 'false',
   AI_SERVICE_URL: (process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000').replace(/\/+$/, ''),
-  AI_SERVICE_SECRET_KEY: process.env.AI_SERVICE_SECRET_KEY || 'protokol-secret-key-2026',
+  AI_SERVICE_SECRET_KEY: process.env.AI_SERVICE_SECRET_KEY || '',
   AI_SERVICE_TIMEOUT_MS: Number(process.env.AI_SERVICE_TIMEOUT_MS || 30000),
 };
 

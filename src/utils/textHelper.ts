@@ -344,11 +344,9 @@ export function scoreTextMatch(query: string, target: string | null | undefined)
       matched += 1;
     } else {
       // 2. Fuzzy Token Matching: Bandingkan token query terhadap setiap kata di target
-      let foundFuzzy = false;
       for (const tgtToken of targetTokens) {
         if (isFuzzyMatch(token, tgtToken)) {
           matched += 1.2; // Nilai relevansi tinggi untuk kata yang sedikit typo
-          foundFuzzy = true;
           break;
         }
       }
@@ -475,9 +473,8 @@ export function getDispositionFileUrl(fileName?: string | null): string | null {
     return cleanFile;
   }
 
-  const baseUrl = (ENV.DISPOSITION_FILE_URL || 'https://pwa-protokol.gatsu51.com/files/disposition/').endsWith('/')
-    ? (ENV.DISPOSITION_FILE_URL || 'https://pwa-protokol.gatsu51.com/files/disposition/')
-    : `${ENV.DISPOSITION_FILE_URL || 'https://pwa-protokol.gatsu51.com/files/disposition/'}/`;
+  const rawBase = ENV.DISPOSITION_FILE_URL || ENV.FILE_URL || '';
+  const baseUrl = rawBase.endsWith('/') ? rawBase : `${rawBase}/`;
   return `${baseUrl}${cleanFile}`;
 }
 
