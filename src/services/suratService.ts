@@ -2,12 +2,10 @@ import { prisma } from '../database/prisma';
 import { Prisma, letters } from '@prisma/client';
 import { pdfService } from './pdfService';
 import { SuratDraftData } from './sessionService';
-import { cleanHtml, formatCombinedPic, formatNoteHtml, generateLetterFileName, splitPicNameAndPhone, sanitizePlaceEvent, formatInitialEventTitle, buildNarasiPenayanganTap, cleanPhoneNumber, normalizeUnicodeText, toStandardIndonesianPhone, buildStandardPicJson } from '../utils/textHelper';
+import { cleanHtml, formatCombinedPic, generateLetterFileName, splitPicNameAndPhone, sanitizePlaceEvent, formatInitialEventTitle, buildNarasiPenayanganTap, cleanPhoneNumber, normalizeUnicodeText, toStandardIndonesianPhone, buildStandardPicJson } from '../utils/textHelper';
 import { parseIndonesianDateToDate, formatTanggalIndo, parseIndonesianTimeToDates, parseIndonesianDateEventRange, isValidDate, extractWaktuAcaraFromText } from '../utils/dateHelper';
 import { generateEventTitleFromSurat, generateSubjectSummary } from './aiService';
 import { syncTableSequence, isDuplicateKeyError } from '../database/sequenceSync';
-import { ENV } from '../config/env';
-import path from 'path';
 
 export interface SuratRegistrationResult {
   success: boolean;
@@ -130,7 +128,7 @@ export class SuratService {
       ? new Date(letter.date_letter).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
       : '-';
 
-    const cleanPerihal = cleanHtml(letter.note) || cleanHtml(letter.subject) || cleanHtml(letter.place_event) || '-';
+    const cleanPerihal = cleanHtml(letter.subject) || cleanHtml(letter.note) || cleanHtml(letter.place_event) || '-';
     const cleanSubject = cleanHtml(letter.subject) || cleanPerihal || '-';
 
     let disposisiObj: NormalizedSurat['disposisi'] = {
@@ -533,9 +531,6 @@ export class SuratService {
         generateSubjectSummary(finalPerihal, draft.extractedData)
       ).slice(0, 200);
 
-      // Format perihal ke format HTML (<p>...</p>) sesuai format kolom note di tabel letters
-      const formattedNote = formatNoteHtml(finalPerihal);
-
       const creatorName = (userName || '').trim() || 'Petugas Protokol';
 
       // Pisahkan antara nama PIC dan nomor teleponnya dengan fallback silang yang komprehensif
@@ -639,7 +634,7 @@ export class SuratService {
         subject: safeSubject,
         place_event: safePlaceEvent,
         type_letter: typeId,
-        note: formattedNote,
+        note: null, // Kolom catatan/note pada tabel letters harus tetap kosong/null sesuai skema database
         file: safeFileName,
         pic_name: letterPicName,
         pic_phone_number: letterPicPhone,
@@ -668,13 +663,14 @@ export class SuratService {
           insertErr.code === 'P2000' ||
           insertErr.code === '22001'
         ) {
-          console.warn('[SuratService] Insert pertama gagal karena nilai terlalu panjang, mencoba fallback note dipotong:', insertErr.message);
-          const truncatedNote = formattedNote ? `<p>${finalPerihal.trim().slice(0, 210)}</p>` : null;
+          console.warn('[SuratService] Insert pertama gagal karena nilai terlalu panjang, mencoba fallback subject dipotong:', insertErr.message);
+          const truncatedSubject = safeSubject.slice(0, 150);
           try {
             surat = await prisma.letters.create({
               data: {
                 ...letterPayload,
-                note: truncatedNote,
+                subject: truncatedSubject,
+                note: null,
               },
             });
           } catch (retryErr: any) {
@@ -684,7 +680,8 @@ export class SuratService {
               surat = await prisma.letters.create({
                 data: {
                   ...letterPayload,
-                  note: truncatedNote,
+                  subject: truncatedSubject,
+                  note: null,
                 },
               });
             } else {
@@ -831,8 +828,6 @@ export class SuratService {
         // 6. Kelengkapan kolom lainnya pada tabel events
         const eventPicJson = buildStandardPicJson(safePicName, safePicPhone);
 
-        const eventNotes = `Asal Surat: ${safeAsalSurat} | No. Surat: ${safeNomorSurat} | No. Agenda: ${safeAgendaNumber}`;
-
         // Siapkan data event baru (tanpa id manual agar sequence PostgreSQL bertambah otomatis dan sinkron dengan website)
         const eventDataPayload: Prisma.eventsCreateInput = {
           title: eventTitle,
@@ -849,7 +844,7 @@ export class SuratService {
           pic_name: letterPicName,
           pic_phonenumber: letterPicPhone,
           pic_json: picJson || eventPicJson,
-          notes: eventNotes,
+          notes: null, // Kolom catatan/notes pada tabel events harus tetap kosong/null sesuai skema database
           created_by: safeCreatorName,
           created_at: new Date(),
           updated_at: new Date(),
@@ -1017,7 +1012,7 @@ export class SuratService {
   /**
    * Membatalkan draft dan menghapus berkas sementara
    */
-  public async cancelDraft(draft?: SuratDraftData, userId?: number): Promise<void> {
+  public async cancelDraft(draft?: SuratDraftData, _userId?: number): Promise<void> {
     if (draft?.tempPdfPath) {
       pdfService.deleteTempPdf(draft.tempPdfPath);
     }
@@ -1305,7 +1300,7 @@ export class SuratService {
 
     // 3. Hitung Relevansi Skor Presisi Tinggi (Kecocokan Teks + Kebaruan Tanggal Surat)
     const scored = candidates.map((letter) => {
-      const perihal = cleanHtml(letter.note) || letter.subject || '';
+      const perihal = cleanHtml(letter.subject) || cleanHtml(letter.note) || '';
       const dispInfo = dispMap.get(String(letter.id));
       const metadata = [
         letter.place_event || '',
