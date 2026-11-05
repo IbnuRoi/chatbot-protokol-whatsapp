@@ -23,7 +23,7 @@ export class SuratMasukHandler {
    * Menghasilkan teks respon pembatalan registrasi karena nomor surat sudah ada di database
    */
   public formatDuplicateNomorSuratResponse(nomorSurat: string, existing: any): BotResponse {
-    const rawPerihal = cleanHtml(existing.subject || existing.note || '-');
+    const rawPerihal = cleanHtml(existing.note || existing.subject || '-');
     const cleanPerihal = rawPerihal.replace(/\s+/g, ' ').trim();
     const tglSuratStr = existing.date_letter ? formatTanggalIndo(new Date(existing.date_letter)) : '-';
     const waktuInputStr = existing.created_at ? formatWaktuInputIndo(new Date(existing.created_at)) : '-';
