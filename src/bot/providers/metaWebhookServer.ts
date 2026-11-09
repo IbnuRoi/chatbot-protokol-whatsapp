@@ -207,10 +207,16 @@ export class MetaWebhookServer {
         console.log(`   • Port Lokal    : ${this.port}`);
         console.log(`   • Endpoint Path : /webhook & /webhook-chatbot`);
         console.log(`   • Verify Token  : "${ENV.META_VERIFY_TOKEN}"`);
+        if (ENV.PUBLIC_BASE_URL) {
+          console.log(`   • Public Domain : ${ENV.PUBLIC_BASE_URL}`);
+          console.log(`   • Callback URL  : ${ENV.PUBLIC_BASE_URL}/webhook`);
+        }
         console.log(`======================================================\n`);
 
-        if (ENV.META_AUTO_TUNNEL) {
+        if (ENV.META_AUTO_TUNNEL && !ENV.PUBLIC_BASE_URL) {
           await cloudflaredTunnel.start(this.port);
+        } else if (ENV.PUBLIC_BASE_URL) {
+          console.log(`ℹ️ [Webhook] Menggunakan domain publik langsung: ${ENV.PUBLIC_BASE_URL}/webhook (Cloudflare Tunnel nonaktif).`);
         }
 
         resolve();

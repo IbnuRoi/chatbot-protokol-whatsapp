@@ -62,7 +62,9 @@ export const ENV = {
   META_PHONE_NUMBER_ID: process.env.META_PHONE_NUMBER_ID || '',
   META_WEBHOOK_PORT: Number(process.env.META_WEBHOOK_PORT || process.env.PORT || 3000),
   WHATSAPP_PROVIDER: process.env.WHATSAPP_PROVIDER || 'baileys',
-  META_AUTO_TUNNEL: process.env.META_AUTO_TUNNEL !== 'false',
+  META_AUTO_TUNNEL:
+    process.env.META_AUTO_TUNNEL === 'true' ||
+    (process.env.META_AUTO_TUNNEL !== 'false' && !process.env.PUBLIC_BASE_URL && !process.env.META_WEBHOOK_URL),
   PUBLIC_BASE_URL: (process.env.PUBLIC_BASE_URL || process.env.META_WEBHOOK_URL || '').replace(/\/+$/, ''),
 };
 
