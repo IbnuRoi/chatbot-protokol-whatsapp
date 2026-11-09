@@ -291,14 +291,17 @@ export class DisposisiHandler {
         session.scope
       );
 
-      sessionService.clearDisposisiDraft(session.whatsappNumber);
-      sessionService.resetSession(session.whatsappNumber);
-
       if (!saveResult.success) {
+        sessionService.clearDisposisiDraft(session.whatsappNumber);
+        sessionService.resetSession(session.whatsappNumber);
         return {
           text: `❌ *Gagal Menyimpan Disposisi*\n\n${saveResult.message || 'Terjadi kesalahan sistem.'}`,
         };
       }
+
+      sessionService.clearDisposisiDraft(session.whatsappNumber);
+      sessionService.setState(session.whatsappNumber, BotState.DISPOSISI_SELESAI);
+      session.state = BotState.DISPOSISI_SELESAI;
 
       const fileLinkLine = saveResult.fileUrl
         ? `• *Link Berkas Disposisi* : ${saveResult.fileUrl}\n`
@@ -337,8 +340,11 @@ export class DisposisiHandler {
           fileLinkLine +
           eventStatusLine +
           `${statusNote}\n\n` +
-          `Silakan beri tahu saya jika Anda ingin mencatat disposisi lainnya atau membutuhkan bantuan lain ya.`,
-        list: menuHandler.getMainMenuInteractiveList(),
+          `Silakan sentuh tombol di bawah jika Anda ingin mencatat lembar disposisi lainnya atau kembali ke menu utama.`,
+        buttons: [
+          { id: 'DISPOSISI_LAGI', text: '📥 Input Lagi' },
+          { id: 'MENU', text: '📋 Menu Utama' },
+        ],
       };
     }
 
@@ -374,6 +380,74 @@ export class DisposisiHandler {
         { id: '1', text: isUpdate ? '✅ Perbarui Data' : '✅ Simpan Disposisi' },
         { id: '2', text: '✏️ Edit Isian' },
         { id: '3', text: '❌ Batalkan' },
+      ],
+    };
+  }
+
+  /**
+   * Menangani respon pengguna setelah proses disposisi selesai (DISPOSISI_SELESAI)
+   */
+  public async handleDisposisiSelesaiInput(
+    session: UserSession,
+    input: string,
+    buttonId?: string
+  ): Promise<BotResponse> {
+    const clean = input.trim().toLowerCase();
+
+    // 1. Opsi Input Lagi
+    const isLagi =
+      buttonId === 'DISPOSISI_LAGI' ||
+      clean === '1' ||
+      clean === 'input lagi' ||
+      clean === 'catat lagi' ||
+      clean === 'unggah lagi' ||
+      clean === 'upload lagi' ||
+      clean === 'tambah lagi' ||
+      clean === 'buat lagi' ||
+      clean === 'lagi' ||
+      clean === 'tambah' ||
+      clean === 'input' ||
+      clean === 'unggah' ||
+      clean === 'upload' ||
+      clean.includes('input lagi') ||
+      clean.includes('catat lagi') ||
+      clean.includes('unggah lagi');
+
+    if (isLagi) {
+      sessionService.clearDisposisiDraft(session.whatsappNumber);
+      return this.promptUpload(session);
+    }
+
+    // 2. Opsi Kembali ke Menu Utama
+    const isMenu =
+      buttonId === 'MENU' ||
+      clean === '2' ||
+      clean === 'menu' ||
+      clean === 'menu utama' ||
+      clean === 'kembali' ||
+      clean === 'batal' ||
+      clean === 'selesai' ||
+      clean === 'sudah' ||
+      clean === 'tidak' ||
+      clean === 'home' ||
+      clean === 'keluar' ||
+      clean.includes('menu') ||
+      clean.includes('kembali');
+
+    if (isMenu) {
+      sessionService.resetSession(session.whatsappNumber);
+      return menuHandler.getMainGreeting(session);
+    }
+
+    // Default jika input teks tidak dikenali
+    return {
+      text:
+        `Mohon sentuh salah satu tombol di bawah atau ketik:\n` +
+        `• *1* untuk mencatat disposisi lagi\n` +
+        `• *2* untuk kembali ke menu utama`,
+      buttons: [
+        { id: 'DISPOSISI_LAGI', text: '📥 Input Lagi' },
+        { id: 'MENU', text: '📋 Menu Utama' },
       ],
     };
   }

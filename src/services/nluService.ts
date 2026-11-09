@@ -362,6 +362,48 @@ export class NluService {
       }
     }
 
+    if (currentState === 'DISPOSISI_SELESAI') {
+      const isLagi =
+        lowerText === '1' ||
+        lowerText === 'input lagi' ||
+        lowerText === 'catat lagi' ||
+        lowerText === 'unggah lagi' ||
+        lowerText === 'upload lagi' ||
+        lowerText === 'tambah lagi' ||
+        lowerText === 'lagi' ||
+        lowerText === 'tambah' ||
+        lowerText === 'input' ||
+        lowerText === 'unggah' ||
+        lowerText === 'upload';
+
+      const isMenu =
+        lowerText === '2' ||
+        lowerText === 'menu' ||
+        lowerText === 'menu utama' ||
+        lowerText === 'kembali' ||
+        lowerText === 'batal' ||
+        lowerText === 'selesai' ||
+        lowerText === 'sudah' ||
+        lowerText === 'tidak';
+
+      if (isLagi) {
+        return {
+          intent: 'INPUT_DISPOSISI',
+          confidence: 1.0,
+          conversationalReply: `Baik ${userName}, silakan kirimkan dokumen atau foto lembar disposisi baru.`,
+          entities: {},
+        };
+      }
+      if (isMenu) {
+        return {
+          intent: 'BATAL',
+          confidence: 1.0,
+          conversationalReply: `Baik ${userName}, proses pencatatan disposisi selesai dan kembali ke menu utama.`,
+          entities: {},
+        };
+      }
+    }
+
     // 0d. Shortcut langsung untuk Input Jadwal Arahan Langsung
     const isInputJadwalArahan =
       /\b(?:input|tambah|catat|buat|masukkan|bikin)\s*(?:jadwal|agenda)\s*(?:arahan\s*langsung|arahan|langsung)?\b/i.test(cleanText) ||

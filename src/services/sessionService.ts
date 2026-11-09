@@ -36,6 +36,7 @@ export enum BotState {
   DISPOSISI_EDIT_FIELD = 'DISPOSISI_EDIT_FIELD',
   DISPOSISI_INPUT_NILAI_KOREKSI = 'DISPOSISI_INPUT_NILAI_KOREKSI',
   DISPOSISI_INPUT_AGENDA_MANUAL = 'DISPOSISI_INPUT_AGENDA_MANUAL',
+  DISPOSISI_SELESAI = 'DISPOSISI_SELESAI',
 
   // Alur Riwayat
   RIWAYAT_LIST = 'RIWAYAT_LIST',
@@ -263,6 +264,7 @@ class SessionService {
     const session = this.getSession(whatsappNumber);
     if (session) {
       session.draftDisposisi = undefined;
+      session.selectedSuratId = undefined;
     }
   }
 
@@ -307,3 +309,13 @@ class SessionService {
 }
 
 export const sessionService = new SessionService();
+
+/**
+ * Memeriksa apakah sesi atau nomor WhatsApp pengguna adalah milik user Gufronation (Akses Ganda Menteri & Wamen)
+ */
+export function isGufronation(sessionOrPhone?: UserSession | string | null): boolean {
+  if (!sessionOrPhone) return false;
+  const phone = typeof sessionOrPhone === 'string' ? sessionOrPhone : sessionOrPhone.whatsappNumber;
+  const clean = (phone || '').replace(/\D/g, '');
+  return clean.endsWith('82299294269');
+}

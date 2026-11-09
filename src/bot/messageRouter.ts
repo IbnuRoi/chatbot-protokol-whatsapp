@@ -9,7 +9,7 @@ import { cariSuratHandler } from './handlers/cariSuratHandler';
 import { hybridSearchHandler } from './handlers/hybridSearchHandler';
 import { bantuanHandler } from './handlers/bantuanHandler';
 import { arahanLangsungHandler } from './handlers/arahanLangsungHandler';
-import { sessionService, BotState, UserSession } from '../services/sessionService';
+import { sessionService, BotState, UserSession, isGufronation } from '../services/sessionService';
 import { pdfService } from '../services/pdfService';
 import { nluService, NluResult } from '../services/nluService';
 import { jadwalService } from '../services/jadwalService';
@@ -145,6 +145,7 @@ export class MessageRouter {
     // Perintah Khusus Upload Lembar Disposisi (Tombol atau Perintah Langsung)
     const isUploadDisposisi =
       payload.buttonId === 'UPLOAD_DISPOSISI' ||
+      payload.buttonId === 'DISPOSISI_LAGI' ||
       payload.listRowId === 'UPLOAD_DISPOSISI' ||
       payload.buttonId === 'DISPOSISI_UPLOAD' ||
       payload.listRowId === 'DISPOSISI_UPLOAD' ||
@@ -163,10 +164,14 @@ export class MessageRouter {
       if (session.draftSurat) {
         await suratMasukHandler.handleFinalConfirm(session, '2');
       }
+      if (session.draftDisposisi?.tempFilePath) {
+        pdfService.deleteTempPdf(session.draftDisposisi.tempFilePath);
+      }
+      sessionService.clearDisposisiDraft(session.whatsappNumber);
       return disposisiHandler.promptUpload(session);
     }
 
-    // Perintah Ganti Ruang Lingkup (Hanya diizinkan jika user memiliki otorisasi ganda)
+    // Perintah Ganti Ruang Lingkup (Hanya diizinkan jika user memiliki otorisasi ganda / Gufronation)
     const isSwitchScope =
       payload.buttonId === 'SWITCH_SCOPE' ||
       payload.listRowId === 'SWITCH_SCOPE' ||
@@ -175,11 +180,17 @@ export class MessageRouter {
       lower === 'switch_scope' ||
       lower === 'ganti agenda' ||
       lower === 'ganti wamen' ||
-      lower === 'ganti menaker';
+      lower === 'ganti menaker' ||
+      lower === 'switch wamen' ||
+      lower === 'switch menaker' ||
+      lower === 'switch menteri' ||
+      lower === 'switch ke wamen' ||
+      lower === 'switch ke menteri' ||
+      (isGufronation(session) && (lower === 'wamen' || lower === 'menaker' || lower === 'menteri'));
 
     if (isSwitchScope) {
       const allowed = session.allowedScopes || [session.scope];
-      if (allowed.length <= 1) {
+      if (allowed.length <= 1 || !isGufronation(session)) {
         const currentName = session.scope === 'WAMEN' ? 'Wakil Menteri' : 'Menteri';
         const otherName = session.scope === 'WAMEN' ? 'Menteri' : 'Wakil Menteri';
         return {
@@ -201,9 +212,23 @@ export class MessageRouter {
       sessionService.clearJadwalArahanDraft(session.whatsappNumber);
 
       let targetScope: ProtocolScope;
-      if (lower === '/wamen' || lower === 'ganti wamen') {
+      if (
+        lower === '/wamen' ||
+        lower === 'ganti wamen' ||
+        lower === 'switch wamen' ||
+        lower === 'switch ke wamen' ||
+        lower === 'wamen'
+      ) {
         targetScope = 'WAMEN';
-      } else if (lower === '/menaker' || lower === 'ganti menaker') {
+      } else if (
+        lower === '/menaker' ||
+        lower === 'ganti menaker' ||
+        lower === 'switch menaker' ||
+        lower === 'switch menteri' ||
+        lower === 'switch ke menteri' ||
+        lower === 'menaker' ||
+        lower === 'menteri'
+      ) {
         targetScope = 'MENAKER';
       } else {
         targetScope = session.scope === 'MENAKER' ? 'WAMEN' : 'MENAKER';
@@ -242,8 +267,11 @@ export class MessageRouter {
         ['.jpg', '.jpeg', '.png', '.webp', '.bmp'].includes(ext) ||
         Boolean(payload.media.mimeType && payload.media.mimeType.startsWith('image/'));
 
-      // 4a. Jika sesi sedang dalam status menunggu upload berkas disposisi
-      if (session.state === BotState.DISPOSISI_UPLOAD_BERKAS) {
+      // 4a. Jika sesi sedang dalam status menunggu upload berkas disposisi atau baru selesai disposisi
+      if (
+        session.state === BotState.DISPOSISI_UPLOAD_BERKAS ||
+        session.state === BotState.DISPOSISI_SELESAI
+      ) {
         return disposisiHandler.handleDirectUpload(
           session,
           payload.media.filePath,
@@ -450,6 +478,11 @@ export class MessageRouter {
       if (textInput === '3' || lower === 'batal' || lower === 'cancel') {
         return disposisiHandler.handleReviewResponse(session, '3');
       }
+    }
+
+    // Fast-path: Respon cepat pada tahap DISPOSISI_SELESAI (Bypass NLU LLM)
+    if (session.state === BotState.DISPOSISI_SELESAI) {
+      return disposisiHandler.handleDisposisiSelesaiInput(session, textInput, payload.buttonId);
     }
 
     // 5. Analisis NLU (OpenRouter AI) untuk setiap pesan teks percakapan
