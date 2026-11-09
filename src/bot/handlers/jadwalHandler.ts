@@ -16,7 +16,7 @@ export const JADWAL_NAV_BUTTONS: BotReplyButton[] = [
   { id: 'JADWAL_CARI', text: '🔍 Cari Jadwal' },
   { id: 'MENU', text: '📋 Menu Utama' },
 ];
-import { scoreTextMatch, cleanQueryForSelection, getLetterFileUrl, isPureGreeting, formatStatusBadge, formatListSummary, formatDetailBullets, cleanPicContact } from '../../utils/textHelper';
+import { scoreTextMatch, cleanQueryForSelection, getLetterFileUrl, getLetterShortUrl, isPureGreeting, formatStatusBadge, formatListSummary, formatDetailBullets, cleanPicContact } from '../../utils/textHelper';
 import { extractDateFromText, extractDateRangeFromText, formatWaktuDisplay, getGreetingWib, formatWaktuProtokol } from '../../utils/dateHelper';
 
 export class JadwalHandler {
@@ -83,7 +83,7 @@ export class JadwalHandler {
 
     // Baris Berkas Surat Tertaut
     let fileLine = '';
-    const fileUrl = getLetterFileUrl(j.surat?.fileName);
+    const fileUrl = getLetterShortUrl(j.surat?.id, j.surat?.fileName);
     if (fileUrl) {
       fileLine = `\n*Berkas Surat:* ${fileUrl}`;
     }
@@ -409,7 +409,7 @@ export class JadwalHandler {
     const formattedDate = formatTanggalIndo(item.tanggalKegiatan);
 
     let suratNote = '';
-    const fileUrl = getLetterFileUrl(item.surat?.fileName);
+    const fileUrl = getLetterShortUrl(item.surat?.id, item.surat?.fileName);
     if (item.surat?.nomorAgenda && item.surat.nomorAgenda !== '-') {
       const noSurat = item.surat.nomorSurat && item.surat.nomorSurat !== '-' ? ` (No: ${item.surat.nomorSurat})` : '';
       suratNote = `\n• *Surat Terkait*    : ${item.surat.nomorAgenda}${noSurat}`;
@@ -688,7 +688,7 @@ export class JadwalHandler {
       const picText = cleanPicContact(item.pic);
 
       let fileLine = '';
-      const fileUrl = getLetterFileUrl(item.surat?.fileName);
+      const fileUrl = getLetterShortUrl(item.surat?.id, item.surat?.fileName);
       if (fileUrl) {
         fileLine = `\n📎 *Berkas Surat*     : ${fileUrl}`;
       }

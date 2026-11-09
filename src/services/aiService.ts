@@ -8,7 +8,6 @@ import { splitPicNameAndPhone, sanitizePlaceEvent, cleanTemplatePrefix, buildNar
 import { parseIndonesianDateToDate, formatTanggalIndo, isValidDate, extractWaktuAcaraFromText } from '../utils/dateHelper';
 import { imageService } from './imageService';
 import { pdfService } from './pdfService';
-import { gatsuAiClient } from './gatsuAiClient';
 
 /**
  * Memformat rumusan Perihal resmi sesuai formula template resmi berdasarkan kategori surat:
@@ -113,21 +112,28 @@ export function cleanSesiAcara(rawSesi: string | undefined, namaAcara?: string):
 }
 
 /**
- * Membersihkan nama acara agar bebas dari awalan permohonan/undangan dan imbuhan penyelenggara di akhir
+ * Membersihkan nama acara agar bebas dari awalan permohonan/undangan, judul lampiran, dan imbuhan penyelenggara di akhir
  */
 export function cleanNamaAcara(rawAcara: string, penyelenggara?: string): string {
-  if (!rawAcara || rawAcara === '-') return 'Kegiatan';
+  if (!rawAcara || rawAcara === '-' || rawAcara.trim() === '') return 'Kegiatan';
 
   let clean = rawAcara.trim();
 
-  // 1. Bersihkan awalan permohonan / undangan / surat
+  // 1. Bersihkan judul lampiran, tabel, daftar hadir, atau rundown yang keliru terbaca sebagai nama acara
+  clean = clean
+    .replace(/^lampiran\s*(?:surat)?\s*(?:undangan)?\s*(?:nomor\s*[:\w\/\.\-]+)?\s*[:\-–—]?\s*/i, '')
+    .replace(/^(?:tabel\s+status\s+perkembangan|tabel\s+status|tabel\s+perkembangan|tabel|daftar\s+undangan|susunan\s+acara|rundown|jadwal\s+acara)\s*[:\-–—]?\s*/i, '')
+    .replace(/^lampiran\s*[:\-–—]?\s*/i, '')
+    .trim();
+
+  // 2. Bersihkan awalan permohonan / undangan / surat
   clean = clean
     .replace(/^(?:permohonan|undangan|surat)\s+(?:memberikan|menjadi|menghadiri|kehadiran|resmi)?\s*/i, '')
     .replace(/^(?:keynote speech|sambutan|arahan|narasumber)?\s*(?:pada|dalam rangka)?\s*(?:kegiatan|acara|pembukaan)?\s*/i, '')
     .replace(/^(?:kegiatan|acara)\s+/i, '')
     .trim();
 
-  // 2. Jika nama acara mengulang "Pembukaan X pada X", sederhanakan
+  // 3. Jika nama acara mengulang "Pembukaan X pada X", sederhanakan
   const repeatEventMatch = clean.match(/^pembukaan\s+(.+?)\s+pada\s+(?:kegiatan|acara)?\s*(.+)$/i);
   if (repeatEventMatch) {
     const part1 = repeatEventMatch[1].trim();
@@ -137,13 +143,13 @@ export function cleanNamaAcara(rawAcara: string, penyelenggara?: string): string
     }
   }
 
-  // 3. Bersihkan jika nama acara memiliki akhiran "yang diselenggarakan oleh ..."
+  // 4. Bersihkan jika nama acara memiliki akhiran "yang diselenggarakan oleh ..."
   clean = clean.replace(/\s+(?:yang\s+)?(?:diselenggarakan|diadakan|dilaksanakan)\s+oleh\s+.*$/i, '').trim();
 
-  // 4. Bersihkan jika nama acara memiliki akhiran "dengan tema ..."
+  // 5. Bersihkan jika nama acara memiliki akhiran "dengan tema ..."
   clean = clean.replace(/\s+dengan tema\s+.*$/i, '').trim();
 
-  // 5. Jika nama acara diakhiri dengan " - [Penyelenggara]" yang sama dengan instansi penyelenggara
+  // 6. Jika nama acara diakhiri dengan " - [Penyelenggara]" yang sama dengan instansi penyelenggara
   if (penyelenggara && penyelenggara !== '-' && penyelenggara !== 'Instansi Terkait') {
     const cleanP = penyelenggara.replace(/\s*\([^)]*\)/g, '').trim();
     const pRegex = new RegExp(`\\s*[-–—]\\s*(?:${escapeRegExp(penyelenggara)}|${escapeRegExp(cleanP)})\\s*$`, 'i');
@@ -967,6 +973,217 @@ export function generateSubjectSummary(perihal: string, data?: Partial<Extracted
   return summary || perihal.slice(0, 200);
 }
 
+/**
+ * Membersihkan nomor surat dari kotoran OCR, kutipan liar, spasi berlebih, dan format rusak
+ */
+export function cleanNomorSurat(raw: string | undefined, docText?: string): string {
+  let s = (raw || '').trim();
+
+  // Jika kosong atau '-', coba cari langsung di docText
+  if (!s || s === '-' || s === 'null' || s === 'undefined') {
+    if (docText) {
+      const match = docText.match(/(?:nomor|no)\s*[:.]\s*([A-Za-z0-9\/\.\-_ ]+)/i);
+      if (match && match[1]) {
+        s = match[1].trim();
+      }
+    }
+  }
+
+  if (!s || s === '-') return '-';
+
+  // 1. Bersihkan awalan label "Nomor :", "No :", "Nomor Surat :"
+  s = s.replace(/^(?:nomor(?:\s*surat)?|no\.?)\s*[:.]\s*/i, '').trim();
+
+  // 2. Bersihkan kotoran OCR berupa tanda kutip, backticks, pipes, tilde, caret, underscore liar
+  s = s.replace(/['"`|~^_]/g, '');
+
+  // 3. Normalisasi backslash dan slash ganda menjadi satu garis miring
+  s = s.replace(/[\\/]+/g, '/');
+
+  // 4. Hilangkan spasi di sekitar slash dan titik (" / " -> "/", " . " -> ".")
+  s = s.replace(/\s*\/\s*/g, '/');
+  s = s.replace(/\s*\.\s*/g, '.');
+
+  // 5. Perbaiki artefak OCR pada angka romawi/bulan (misal "/I 1/" -> "/11/", "/I X/" -> "/IX/")
+  s = s.replace(/\/I\s+1\//gi, '/11/')
+       .replace(/\/I\s+X\//gi, '/IX/')
+       .replace(/\/V\s+I\//gi, '/VI/')
+       .replace(/\/V\s+I\s+I\//gi, '/VII/')
+       .replace(/\/V\s+I\s+I\s+I\//gi, '/VIII/')
+       .replace(/\/X\s+I\//gi, '/XI/')
+       .replace(/\/X\s+I\s+I\//gi, '/XII/');
+
+  // 6. Bersihkan slash dan titik yang menggantung di akhir
+  s = s.replace(/[\/\.\s]+$/, '').trim();
+
+  // Jika nomor menyerupai alamat kantor/jalan (misal "2-4" atau "Kav. 51")
+  if (/^\d+\s*-\s*\d+$/.test(s) || /^(?:kav|rt|rw|no)\b/i.test(s)) {
+    return '-';
+  }
+
+  return s || '-';
+}
+
+/**
+ * Menstandarisasi tanggal surat ke dalam format bahasa Indonesia (misal: "1 November 2026")
+ */
+export function cleanTanggalSurat(rawTanggal: string | undefined, docText?: string): string {
+  let s = (rawTanggal || '').trim();
+
+  // 1. Jika berformat ISO YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const d = new Date(s);
+    if (isValidDate(d)) {
+      return formatTanggalIndo(d);
+    }
+  }
+
+  // 2. Jika berformat DD/MM/YYYY atau DD-MM-YYYY
+  const dmyMatch = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const month = parseInt(dmyMatch[2], 10) - 1;
+    const year = parseInt(dmyMatch[3], 10);
+    const d = new Date(year, month, day);
+    if (isValidDate(d)) {
+      return formatTanggalIndo(d);
+    }
+  }
+
+  // 3. Jika sudah format teks tanggal Indonesia (misal: "15 September 2026")
+  if (/^\d{1,2}\s+[A-Za-z]+\s+\d{4}$/.test(s)) {
+    return s;
+  }
+
+  // 4. Jika model gagal, coba cari langsung di docText (teks dokumen surat)
+  if (docText) {
+    const tglMatch = docText.match(
+      /(\d{1,2}\s+(?:Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)\s+\d{4})/i
+    );
+    if (tglMatch && tglMatch[1]) {
+      return tglMatch[1].trim();
+    }
+  }
+
+  return s || formatTanggalIndo(new Date());
+}
+
+/**
+ * Daftar instansi, kementerian, dan lembaga beserta pola kode surat resminya
+ */
+export const KNOWN_INSTITUTIONS: Array<{ pattern: RegExp; fullName: string; shortName: string }> = [
+  { pattern: /\b(?:SES\.M\.EKON|M\.EKON|D\.IV\.M\.EKON|D\.[I|V|X]+\.M\.EKON|EKON|PEREKONOMIAN)\b/i, fullName: 'Kementerian Koordinator Bidang Perekonomian', shortName: 'Kemenko Perekonomian' },
+  { pattern: /\b(?:SES\.M\.PMK|M\.PMK|PMK)\b/i, fullName: 'Kementerian Koordinator Bidang Pembangunan Manusia dan Kebudayaan', shortName: 'Kemenko PMK' },
+  { pattern: /\b(?:SES\.M\.POLHUKAM|POLHUKAM)\b/i, fullName: 'Kementerian Koordinator Bidang Politik, Hukum, dan Keamanan', shortName: 'Kemenko Polhukam' },
+  { pattern: /\b(?:KEMENSETNEG|SETNEG)\b/i, fullName: 'Kementerian Sekretariat Negara', shortName: 'Kemensetneg' },
+  { pattern: /\b(?:SETKAB)\b/i, fullName: 'Sekretariat Kabinet', shortName: 'Setkab' },
+  { pattern: /\b(?:KEMENKEU|DJP|DJBC|DJA|DJKR)\b/i, fullName: 'Kementerian Keuangan', shortName: 'Kemenkeu' },
+  { pattern: /\b(?:KEMNAKER|BINAPENTA|BINWASNAKER|BINALAVOTAS|PHIJSK)\b/i, fullName: 'Kementerian Ketenagakerjaan', shortName: 'Kemnaker' },
+  { pattern: /\b(?:KEMENHAN|HAN)\b/i, fullName: 'Kementerian Pertahanan', shortName: 'Kemenhan' },
+  { pattern: /\b(?:KEMLU)\b/i, fullName: 'Kementerian Luar Negeri', shortName: 'Kemlu' },
+  { pattern: /\b(?:KEMENKUMHAM|KEMENKUM)\b/i, fullName: 'Kementerian Hukum', shortName: 'Kemenkum' },
+  { pattern: /\b(?:KEMENDAGRI)\b/i, fullName: 'Kementerian Dalam Negeri', shortName: 'Kemendagri' },
+  { pattern: /\b(?:KEMENDIKBUD|KEMENDIKDASMEN|KEMENDIKTISAINTEK)\b/i, fullName: 'Kementerian Pendidikan', shortName: 'Kemendikbud' },
+  { pattern: /\b(?:KEMENKES)\b/i, fullName: 'Kementerian Kesehatan', shortName: 'Kemenkes' },
+  { pattern: /\b(?:KEMENSOS)\b/i, fullName: 'Kementerian Sosial', shortName: 'Kemensos' },
+  { pattern: /\b(?:KEMENAG)\b/i, fullName: 'Kementerian Agama', shortName: 'Kemenag' },
+  { pattern: /\b(?:KEMENHUB)\b/i, fullName: 'Kementerian Perhubungan', shortName: 'Kemenhub' },
+  { pattern: /\b(?:KOMINFO|KOMDIGI|KEMKOMDIGI)\b/i, fullName: 'Kementerian Komunikasi dan Digital', shortName: 'Kemkomdigi' },
+  { pattern: /\b(?:KEMENPERIN)\b/i, fullName: 'Kementerian Perindustrian', shortName: 'Kemenperin' },
+  { pattern: /\b(?:KEMENDAG)\b/i, fullName: 'Kementerian Perdagangan', shortName: 'Kemendag' },
+  { pattern: /\b(?:KEMENTAN)\b/i, fullName: 'Kementerian Pertanian', shortName: 'Kementan' },
+  { pattern: /\b(?:PANRB|KEMENPANRB)\b/i, fullName: 'Kementerian Pendayagunaan Aparatur Negara dan Reformasi Birokrasi', shortName: 'KemenPAN-RB' },
+  { pattern: /\b(?:BAPPENAS)\b/i, fullName: 'Kementerian PPN/Bappenas', shortName: 'Bappenas' },
+  { pattern: /\b(?:KEMENBUMN)\b/i, fullName: 'Kementerian BUMN', shortName: 'Kementerian BUMN' },
+  { pattern: /\b(?:KEMENPORA)\b/i, fullName: 'Kementerian Pemuda dan Olahraga', shortName: 'Kemenpora' },
+  { pattern: /\b(?:KEMENPAREKRAF|KEMENPAR)\b/i, fullName: 'Kementerian Pariwisata', shortName: 'Kemenpar' },
+  { pattern: /\b(?:KLHK|KLH|KEMENHUT)\b/i, fullName: 'Kementerian Lingkungan Hidup dan Kehutanan', shortName: 'KLHK' },
+  { pattern: /\b(?:PUPR|KEMENPU)\b/i, fullName: 'Kementerian Pekerjaan Umum', shortName: 'Kementerian PU' },
+  { pattern: /\b(?:KEMENKOP|KEMENKOPUKM)\b/i, fullName: 'Kementerian Koperasi', shortName: 'Kemenkop' },
+  { pattern: /\b(?:KEMENPPPA)\b/i, fullName: 'Kementerian Pemberdayaan Perempuan dan Perlindungan Anak', shortName: 'KemenPPPA' },
+  { pattern: /\b(?:ATR\/BPN|BPN)\b/i, fullName: 'Kementerian ATR/BPN', shortName: 'ATR/BPN' },
+  { pattern: /\b(?:BKPM)\b/i, fullName: 'Kementerian Investasi/BKPM', shortName: 'BKPM' },
+  { pattern: /\b(?:BPJS)\b/i, fullName: 'BPJS Ketenagakerjaan', shortName: 'BPJS Ketenagakerjaan' },
+  { pattern: /\b(?:BPS)\b/i, fullName: 'Badan Pusat Statistik', shortName: 'BPS' },
+  { pattern: /\b(?:BRIN)\b/i, fullName: 'Badan Riset dan Inovasi Nasional', shortName: 'BRIN' },
+  { pattern: /\b(?:BPOM)\b/i, fullName: 'Badan Pengawas Obat dan Makanan', shortName: 'BPOM' },
+];
+
+/**
+ * Deteksi instansi penyelenggara dari nomor surat atau kepala surat (KOP)
+ */
+export function detectInstitutionFromText(text: string, nomorSurat?: string): { fullName: string; shortName: string } | null {
+  // 1. Cek kode instansi pada nomor surat terlebih dahulu (sangat akurat)
+  if (nomorSurat && nomorSurat !== '-') {
+    for (const inst of KNOWN_INSTITUTIONS) {
+      if (inst.pattern.test(nomorSurat)) {
+        return { fullName: inst.fullName, shortName: inst.shortName };
+      }
+    }
+  }
+
+  // 2. Cek kop surat / kepala dokumen (1000 karakter pertama)
+  if (text) {
+    const headerSlice = text.slice(0, 1000);
+    for (const inst of KNOWN_INSTITUTIONS) {
+      if (inst.pattern.test(headerSlice)) {
+        return { fullName: inst.fullName, shortName: inst.shortName };
+      }
+    }
+
+    // Cek kamus nama instansi umum (INSTITUTION_ACRONYM_MAP)
+    const lowerHeader = headerSlice.toLowerCase();
+    for (const [k, v] of Object.entries(INSTITUTION_ACRONYM_MAP)) {
+      if (lowerHeader.includes(k)) {
+        const fullCapitalized = k.replace(/\b\w/g, l => l.toUpperCase());
+        return { fullName: fullCapitalized, shortName: v };
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Ekstraksi PIC dan Narahubung langsung dari isi teks surat jika AI tidak menemukannya
+ */
+export function extractPicFromText(text: string): { picName: string; picPhone: string } {
+  if (!text) return { picName: '-', picPhone: '-' };
+
+  let picName = '-';
+  let picPhone = '-';
+
+  // Mendukung format HP dengan atau tanpa tanda strip/spasi/titik (misal: 0812-3456-7890, 081234567890, +62 812-3456-789)
+  const phoneRegex = /(?:(?:\+62|62|0)8[1-9][0-9\-\s.]{6,14}[0-9])\b/g;
+  const matches = [...text.matchAll(phoneRegex)];
+
+  if (matches.length > 0) {
+    for (const m of matches) {
+      const idx = m.index ?? 0;
+      const rawPhone = m[0];
+      const cleanDigits = rawPhone.replace(/[^\d+]/g, '');
+      const surrounding = text.slice(Math.max(0, idx - 120), Math.min(text.length, idx + 80));
+
+      if (/(?:narahubung|contact\s*person|cp\b|pic\b|hubungi|informasi|konfirmasi|wa\b|whatsapp|sdr\.?|sdri\.?)/i.test(surrounding)) {
+        picPhone = cleanDigits.startsWith('0')
+          ? cleanDigits
+          : (cleanDigits.startsWith('+62') ? '0' + cleanDigits.slice(3) : (cleanDigits.startsWith('62') ? '0' + cleanDigits.slice(2) : cleanDigits));
+
+        const nameMatch = surrounding.match(/(?:\b(?:narahubung|contact\s*person|cp|pic)\b\s*[:.\-]?\s*(?:(?:sdr|sdri)\.?\s*)?|\b(?:sdr|sdri)\.?\s*)([A-Za-z\s.,'-]{3,40})/i);
+        if (nameMatch && nameMatch[1]) {
+          const rawName = nameMatch[1].replace(/^(?:sdr|sdri)\.?\s*/i, '').trim();
+          if (!/^(?:dapat|bisa|melalui|telepon|hp|nomor|wa|pada|lebih|lanjut)$/i.test(rawName) && rawName.length >= 3) {
+            picName = rawName;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return { picName, picPhone };
+}
+
 export class AiService {
   private genAiClient: GoogleGenAI | null = null;
   private openAiClient: OpenAI | null = null;
@@ -1009,22 +1226,6 @@ export class AiService {
     originalFileName?: string,
     pdfFilePath?: string
   ): Promise<ExtractedSuratData> {
-    // 0. Jalur Utama: Gatsu AI Service (Headless Microservice Fastify)
-    if (ENV.AI_SERVICE_ENABLED && pdfFilePath && fs.existsSync(pdfFilePath)) {
-      try {
-        console.log(`[AiService] 🚀 Mengirim PDF '${originalFileName || path.basename(pdfFilePath)}' ke Gatsu AI Service...`);
-        const gatsuData = await gatsuAiClient.extractLetter(pdfFilePath, originalFileName);
-        const standardized = this.parseAiExtractionResponse(JSON.stringify(gatsuData), originalFileName, pdfText);
-        if (standardized) {
-          console.log(`✅ [AiService] Ekstraksi sukses via Gatsu AI Service! (Kategori: ${standardized.kategoriSurat})`);
-          return standardized;
-        }
-        return gatsuData;
-      } catch (gatsuErr: any) {
-        console.warn(`[AiService] ⚠️ Gatsu AI Service gagal/tidak tersedia (${gatsuErr.message}), beralih ke parser internal chatbot...`);
-      }
-    }
-
     // 1. Cek apakah dokumen PDF merupakan PDF hasil scan (tanpa layer teks atau teks sangat sedikit/rusak)
     if (pdfFilePath && (await pdfService.isScannedPdf(pdfFilePath, pdfText))) {
       console.log(
@@ -1048,19 +1249,17 @@ export class AiService {
 
   public async extractDocumentMetadata(pdfText: string, originalFileName?: string): Promise<ExtractedSuratData> {
     const isUsingOpenRouter = Boolean(this.openAiClient);
-    let model = 'openrouter/free';
+    let model = 'google/gemini-2.5-flash';
 
     if (isUsingOpenRouter) {
-      // Jika pengguna memasukkan API key OpenRouter berbayar ke PDF_EXTRACTION_API_KEY atau OPENROUTER_API_KEY
-      if (ENV.PDF_EXTRACTION_API_KEY && ENV.PDF_EXTRACTION_API_KEY.startsWith('sk-')) {
-        // Jika model disetel khusus (misal google/gemini-2.5-flash, openai/gpt-4o-mini, dll), gunakan model tersebut
-        model = ENV.PDF_EXTRACTION_MODEL && !ENV.PDF_EXTRACTION_MODEL.startsWith('gemini-')
-          ? ENV.PDF_EXTRACTION_MODEL
-          : (ENV.PDF_EXTRACTION_MODEL ? `google/${ENV.PDF_EXTRACTION_MODEL}` : 'google/gemini-2.5-flash');
-      } else if (ENV.PDF_EXTRACTION_PROVIDER === 'openrouter' && ENV.PDF_EXTRACTION_MODEL) {
+      if (ENV.PDF_EXTRACTION_MODEL && ENV.PDF_EXTRACTION_MODEL.includes('/')) {
         model = ENV.PDF_EXTRACTION_MODEL;
+      } else if (ENV.PDF_EXTRACTION_MODEL && !ENV.PDF_EXTRACTION_MODEL.startsWith('gemini-')) {
+        model = ENV.PDF_EXTRACTION_MODEL;
+      } else if (ENV.PDF_EXTRACTION_MODEL) {
+        model = `google/${ENV.PDF_EXTRACTION_MODEL}`;
       } else {
-        model = ENV.CHAT_MODEL || 'openrouter/free';
+        model = 'google/gemini-2.5-flash';
       }
     } else {
       model = ENV.PDF_EXTRACTION_MODEL || 'gemini-2.5-flash';
@@ -1069,11 +1268,12 @@ export class AiService {
     // 1. Ekstraksi cerdas menggunakan AI
     if ((this.genAiClient || this.openAiClient) && pdfText.trim().length > 20) {
       try {
-        const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan (Kemnaker) yang ahli dalam menganalisis dokumen surat dinas masuk.
+        const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan (Kemnaker) yang ahli dan sangat teliti dalam menganalisis dokumen surat dinas masuk.
 
 TUGAS UTAMA:
-1. Pahami isi keseluruhan teks dokumen surat resmi berikut.
-2. Tentukan KATEGORI SURAT (kategoriSurat) secara akurat dari salah satu kode berikut:
+Pahami isi dokumen surat resmi di bawah ini secara cermat dari bagian KOP SURAT teratas, nomor registrasi, tanggal terbit, perihal, isi acara, hingga pejabat penandatangan dan kontak narahubung di alinea penutup.
+
+1. Tentukan KATEGORI SURAT (kategoriSurat) secara akurat dari salah satu kode berikut:
    - "UND" : Undangan Menghadiri acara/rapat/seminar/konferensi/FGD/diskusi/lokakarya/dies natalis/peringatan umum (BUKAN pernikahan, BUKAN meminta pimpinan memberi sambutan/speech khusus).
    - "PH"  : Permohonan Hadir yang meminta Menteri / Pimpinan Kemnaker untuk MEMBERIKAN SAMBUTAN, KEYNOTE SPEECH, ARAHAN, MEMBUKA ACARA, atau menjadi NARASUMBER / PEMBICARA.
    - "UNR" : Undangan Pernikahan (akad nikah, resepsi pernikahan, walimah, ngunduh mantu).
@@ -1082,28 +1282,28 @@ TUGAS UTAMA:
    - "TAP" : Permohonan pembuatan atau rekaman Video Ucapan (selamat ulang tahun, harlah, milad, perayaan hari jadi).
    - "LP"  : Dokumen Laporan (laporan kegiatan, laporan pelaksanaan, pertanggungjawaban).
 
-3. Aturan ekstraksi entitas secara presisi:
+2. Aturan ekstraksi kolom secara presisi dan bebas halusinasi:
    - "kategoriSurat": "UND" | "PH" | "UNR" | "WR" | "AU" | "TAP" | "LP"
    - "alasanKategori": "penjelasan singkat mengapa dokumen masuk kategori ini"
-   - "nomorSurat": "nomor registrasi surat dinas resmi (CONTOH: 'HM.4.6/189/D.IV.M.EKON/09/2026' atau 'B-102/DIR/IX/2026'). SANGAT PENTING: JANGAN mengambil nomor jalan/alamat pengirim/penerima (seperti 'No. 2-4' atau 'Kav. 51')!"
-   - "tanggalSurat": "tanggal surat dibuat dalam bahasa Indonesia (misal: '15 September 2026')"
-   - "namaPengirim": "nama lengkap orang/pejabat pengirim yang menandatangani surat di bagian paling bawah surat beserta gelarnya jika ada (CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM' atau 'Budi Santoso, S.E.'). BUKAN instansi! JIKA ADA BEBERAPA ORANG PENANDATANGAN (misal: Ketua dan Sekretaris, atau beberapa pimpinan): PILIH SALAH SATU NAMA SAJA (utamakan penandatangan pertama/jabatan tertinggi). JANGAN menggabungkan beberapa nama!"
-   - "jabatanPengirim": "jabatan resmi orang/pejabat yang menandatangani surat di bagian paling bawah surat yang SESUAI DENGAN namaPengirim yang dipilih (CONTOH: 'Deputi Bidang Koordinasi Ekonomi Digital' atau 'Direktur Utama' atau 'Ketua Umum'). BUKAN instansi!"
-   - "asalSurat": "gabungan nama pengirim yang bertanda tangan di paling bawah, jabatannya, dan asal instansi dengan format 'Nama Pengirim - Jabatan Singkatan Instansi' (pemisah strip HANYA di antara nama pengirim dan jabatan instansi, TIDAK ADA strip antara jabatan dan instansi, serta jika nama instansi memiliki singkatan gunakan singkatannya saja, CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital Kemenko Perekonomian' atau 'Budi Santoso, S.E. - Direktur Utama PT Telkom' atau 'Prof. Dr. Ir. Arif Satria, S.P., M.Si. - Rektor IPB'). Khusus UNR (Undangan Pernikahan), asalSurat adalah nama orang tua / pihak keluarga yang mengundang Menteri/Pimpinan Kemnaker beserta jabatan dan instansinya jika ada. JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA BESERTA JABATAN DAN ASAL INSTANSINYA (jangan gabungkan beberapa nama orang)!"
-   - "penyelenggara": "nama lembaga/instansi/organisasi pengirim atau penyelenggara acara dari KOP SURAT teratas atau stempel resmi (CONTOH: 'Kementerian Koordinator Bidang Perekonomian' atau 'PT Telekomunikasi Indonesia Tbk' atau 'Institut Pertanian Bogor')"
-   - "namaAcara": "nama murni acara/kegiatan saja (CONTOH: 'Rapat Kerja Nasional (Rakornas) VII Tahun 2026' atau 'Forum Koordinasi Ketenagakerjaan Nasional 2026'). HAPUS dan JANGAN masukkan kata pengantar permohonan seperti 'Permohonan Sambutan pada Pembukaan' atau 'Undangan Menghadiri' atau nama instansi penyelenggara di bagian akhir acara!"
+   - "nomorSurat": "nomor registrasi surat dinas resmi di kepala surat (CONTOH: 'HM.4.6/189/D.IV.M.EKON/09/2026' atau 'UND-307/SES.M.EKON/XI/2026'). BERSIHKAN kotoran OCR seperti tanda petik, coretan paraf tanda tangan, atau spasi acak di sekitar garis miring. DILARANG KERAS mengambil nomor jalan/alamat kantor (seperti 'No. 2-4' atau 'Kav. 51')!"
+   - "tanggalSurat": "tanggal surat diterbitkan/ditandatangani yang tertulis di kepala surat atau di atas tanda tangan pejabat dalam bahasa Indonesia (CONTOH: '1 November 2026' atau '15 September 2026'). BUKAN tanggal pelaksanaan acara!"
+   - "namaPengirim": "nama lengkap pejabat pengirim yang menandatangani surat di bagian paling bawah surat beserta gelarnya jika ada (CONTOH: 'Susiwijono Moegiarso' atau 'Dr. Ir. Rudy Salahuddin, MEM' atau 'Budi Santoso, S.E.'). BUKAN instansi! JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA (utamakan penandatangan pertama/jabatan tertinggi). JANGAN menggabungkan beberapa nama!"
+   - "jabatanPengirim": "jabatan resmi pejabat yang menandatangani surat di bagian bawah yang SESUAI DENGAN namaPengirim yang dipilih (CONTOH: 'Sekretaris Kementerian Koordinator' atau 'Deputi Bidang Koordinasi Ekonomi Digital' atau 'Direktur Utama'). BUKAN instansi!"
+   - "asalSurat": "gabungan nama pejabat pengirim yang bertanda tangan di paling bawah, jabatannya, dan asal instansi dengan format 'Nama Pengirim - Jabatan Singkatan Instansi' (pemisah strip HANYA di antara nama pengirim dan jabatan instansi, TIDAK ADA strip antara jabatan dan instansi, serta jika nama instansi memiliki singkatan gunakan singkatannya saja, CONTOH: 'Susiwijono Moegiarso - Sesmenko Perekonomian' atau 'Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital Kemenko Perekonomian' atau 'Budi Santoso, S.E. - Direktur Utama PT Telkom'). Jika penandatangan hanya berupa stempel/barcode tanpa nama orang, isi 'Pimpinan - Singkatan Instansi' (misal: 'Pimpinan - Kemenko Perekonomian'). DILARANG MENGISI '-' JIKA INSTANSI DAPAT DIKETAHUI!"
+   - "penyelenggara": "nama lembaga/instansi/organisasi pengirim atau penyelenggara acara dari KOP SURAT teratas atau stempel resmi (CONTOH: 'Kementerian Koordinator Bidang Perekonomian' atau 'PT Telekomunikasi Indonesia Tbk' atau 'Institut Pertanian Bogor'). Jika KOP SURAT tidak terbaca jelas, simpulkan dari kode instansi pada nomor surat (misal: 'SES.M.EKON' adalah Kementerian Koordinator Bidang Perekonomian). JANGAN MENGISI '-'!"
+   - "namaAcara": "SANGAT PENTING: Ambil nama acara dan topik HANYA dari halaman pertama pada baris 'Hal :' atau 'Perihal :'. DILARANG KERAS mengambil teks dari judul lampiran atau tabel lampiran (seperti 'LAMPIRAN SURAT UNDANGAN', 'Tabel Status Perkembangan...', 'Daftar Undangan', 'Susunan Acara / Rundown') sebagai nama acara atau perihal! Tuliskan nama murni acara/kegiatan saja (CONTOH: 'Rapat Kerja Nasional (Rakornas) VII' atau 'Rapat Koordinasi Status Perkembangan Proses Aksesi OECD'). HAPUS kata pengantar seperti 'Permohonan Sambutan pada Pembukaan' atau 'Undangan Menghadiri'!"
    - "temaAcara": "tema spesifik acara jika ada tertulis (misal: 'Transformasi Tenaga Kerja Menuju Indonesia Emas 2045', atau '-' jika tidak ada tema)"
-   - "sesiAcara": "khusus kategori PH, peran/sesi yang dimohonkan kepada Menteri / Pimpinan Kemnaker (CONTOH: 'Sambutan', 'Keynote Speech', 'Sambutan dan Arahan', 'Membuka Acara', 'Narasumber'). HANYA sebutkan jenis perannya saja, JANGAN memasukkan nama acara atau nama penyelenggara ke dalam sesiAcara (misal: isi 'Sambutan', BUKAN 'Sambutan dalam Pembukaan Rakornas FSPTI')!"
-   - "mempelai1": "KHUSUS UNR: nama mempelai 1 BESERTA nama orang tua lengkapnya di dalam tanda kurung (misal: 'Anisa Rahmawati, S.E. (Putri Bapak Ahmad dan Ibu Siti)', atau '-'). WAJIB: Jangan pernah hilangkan nama orang tua karena acuan utama pengundang protokol adalah orang tuanya!"
-   - "mempelai2": "KHUSUS UNR: nama mempelai 2 BESERTA nama orang tua lengkapnya di dalam tanda kurung (misal: 'Dimas Pratama, S.T. (Putra Bapak Bambang dan Ibu Sri)', atau '-'). WAJIB: Jangan pernah hilangkan nama orang tua!"
+   - "sesiAcara": "khusus kategori PH, peran/sesi yang dimohonkan kepada Menteri / Pimpinan Kemnaker (CONTOH: 'Sambutan', 'Keynote Speech', 'Sambutan dan Arahan', 'Membuka Acara', 'Narasumber'). HANYA sebutkan jenis perannya saja tanpa mengulang nama acara/penyelenggara!"
+   - "mempelai1": "KHUSUS UNR: nama mempelai 1 BESERTA nama orang tua lengkapnya di dalam tanda kurung (misal: 'Anisa Rahmawati, S.E. (Putri Bapak Ahmad dan Ibu Siti)', atau '-')."
+   - "mempelai2": "KHUSUS UNR: nama mempelai 2 BESERTA nama orang tua lengkapnya di dalam tanda kurung (misal: 'Dimas Pratama, S.T. (Putra Bapak Bambang dan Ibu Sri)', atau '-')."
    - "pokokBahasan": "jika WR/AU, pokok bahasan audiensi atau wawancara (atau '-')"
    - "rangkaUcapan": "jika TAP, rangka pembuatan video ucapan (misal: 'Hari Ulang Tahun ke-75 PT Aneka Tambang Tbk', atau '-')"
-   - "picName": "nama lengkap orang PIC / Narahubung / Contact Person jika tertera di surat (CONTOH: 'Sdr. Ahmad Fauzi' atau 'Budi Santoso'). BUKAN nomor telepon! Jika tidak ada, isi '-'"
-   - "picPhoneNumber": "nomor HP / telepon / WhatsApp dari PIC (CONTOH: '081234567890' atau '+6281234567890'). HANYA digit nomor kontak tanpa nama! Jika tidak ada, isi '-'"
+   - "picName": "nama lengkap orang PIC / Narahubung / Contact Person jika tertera di alinea penutup surat (CONTOH: 'Sdr. Ahmad Fauzi' atau 'Budi Santoso'). BUKAN nomor telepon! Jika tidak ada, isi '-'"
+   - "picPhoneNumber": "nomor HP / telepon / WhatsApp dari PIC (CONTOH: '081234567890' atau '+6281234567890'). HANYA digit nomor kontak! Jika tidak ada, isi '-'"
    - "picPengirim": "gabungan nama PIC dan nomor telepon (CONTOH: 'Ahmad Fauzi (081234567890)'). Jika tidak ada, isi '-'"
-   - "dateEvent": "hari/tanggal pelaksanaan acara/kegiatan/event yang disebutkan di dalam isi surat (CONTOH: 'Senin, 20 Oktober 2026' atau '20 Oktober 2026' atau '25 - 27 November 2026'). BUKAN tanggal pembuatan surat! Jika surat TIDAK memiliki tanggal event/acara (misalnya surat laporan biasa, pemberitahuan tanpa acara, dll), isi '-'"
-   - "timeEvent": "jam/waktu mulai dan/atau selesai pelaksanaan acara/kegiatan yang tercantum di dalam surat (CONTOH: '09.00 WIB' atau '08.30 - 12.00 WIB' atau '13.00 WIB s.d. selesai' atau '10.00 WITA'). Jika surat TIDAK memuat jam acara, isi '-'"
-   - "placeEvent": "lokasi/tempat diselenggarakannya acara/kegiatan/event yang tercantum di dalam isi surat (CONTOH: 'Hotel Bidakara Jakarta' atau 'Ruang Rapat Tridharma Lantai 2' atau 'Grand Ballroom Hotel Indonesia Kempinski' atau 'Aplikasi Zoom Meeting / Daring' atau 'Bandung'). SANGAT PENTING: JANGAN PERNAH mengisi placeEvent dengan teks perihal, permohonan, atau nama acara! HANYA nama tempat/lokasi fisik/daring acara! Jika surat TIDAK memuat tempat/lokasi acara, WAJIB ISI '-'"
+   - "dateEvent": "hari/tanggal pelaksanaan acara/kegiatan yang disebutkan di dalam isi surat (CONTOH: 'Senin, 20 Oktober 2026' atau '20 Oktober 2026' atau '25 - 27 November 2026'). BUKAN tanggal surat dibuat! Jika surat tidak memuat tanggal acara, isi '-'"
+   - "timeEvent": "jam/waktu mulai dan/atau selesai pelaksanaan acara/kegiatan yang tercantum di dalam surat (CONTOH: '09.00 WIB' atau '08.30 - 12.00 WIB' atau '13.00 WIB s.d. selesai' atau '10.00 WITA'). Jika surat tidak memuat jam acara, isi '-'"
+   - "placeEvent": "lokasi/tempat diselenggarakannya acara/kegiatan yang tercantum di dalam isi surat (CONTOH: 'Hotel Bidakara Jakarta' atau 'Ruang Rapat Ali Sadikin Lantai 2' atau 'Aplikasi Zoom Meeting / Daring'). SANGAT PENTING: JANGAN PERNAH mengisi placeEvent dengan teks perihal atau nama acara! HANYA lokasi fisik/daring acara! Jika tidak ada, WAJIB ISI '-'"
 
 KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN TANPA PENJELASAN LAIN:
 
@@ -1111,24 +1311,38 @@ TEKS SURAT:
 ${pdfText.slice(0, 6000)}
 `;
 
+        const candidateModels = isUsingOpenRouter
+          ? [model, 'google/gemini-2.5-flash', 'openai/gpt-4o-mini'].filter((m, i, arr) => Boolean(m) && arr.indexOf(m) === i)
+          : [model];
+
         let rawText = '';
-        if (this.openAiClient) {
-          const res = await this.openAiClient.chat.completions.create({
-            model,
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 0.1,
-            max_tokens: 2500,
-          });
-          rawText = res.choices?.[0]?.message?.content || '';
-          if (!rawText && (res.choices?.[0]?.message as any)?.reasoning) {
-            rawText = (res.choices?.[0]?.message as any).reasoning;
+        for (const candidate of candidateModels) {
+          try {
+            if (this.openAiClient) {
+              const res = await this.openAiClient.chat.completions.create({
+                model: candidate,
+                messages: [{ role: 'user', content: prompt }],
+                temperature: 0.1,
+                max_tokens: 2500,
+              });
+              rawText = res.choices?.[0]?.message?.content || '';
+              if (!rawText && (res.choices?.[0]?.message as any)?.reasoning) {
+                rawText = (res.choices?.[0]?.message as any).reasoning;
+              }
+            } else if (this.genAiClient) {
+              const res = await this.genAiClient.models.generateContent({
+                model: candidate,
+                contents: prompt,
+              });
+              rawText = res.text || '';
+            }
+
+            if (rawText && rawText.trim().length > 10) {
+              break;
+            }
+          } catch (modelErr: any) {
+            console.warn(`[AiService] Percobaan ekstraksi AI model ${candidate} gagal:`, modelErr?.message || modelErr);
           }
-        } else if (this.genAiClient) {
-          const res = await this.genAiClient.models.generateContent({
-            model,
-            contents: prompt,
-          });
-          rawText = res.text || '';
         }
 
         const parsedResult = this.parseAiExtractionResponse(rawText, originalFileName, pdfText);
@@ -1150,22 +1364,6 @@ ${pdfText.slice(0, 6000)}
    */
   public async extractSuratFromImages(imagePaths: string[], originalFileName?: string): Promise<ExtractedSuratData> {
     const validPaths = imagePaths.filter((p) => fs.existsSync(p));
-
-    // 0. Jalur Utama: Gatsu AI Service (Microservice)
-    if (ENV.AI_SERVICE_ENABLED && validPaths.length > 0) {
-      try {
-        console.log(`[AiService] 🚀 Mengirim gambar '${originalFileName || path.basename(validPaths[0])}' ke Gatsu AI Service...`);
-        const gatsuData = await gatsuAiClient.extractLetter(validPaths[0], originalFileName);
-        const standardized = this.parseAiExtractionResponse(JSON.stringify(gatsuData), originalFileName);
-        if (standardized) {
-          console.log(`✅ [AiService] Ekstraksi gambar sukses via Gatsu AI Service! (Kategori: ${standardized.kategoriSurat})`);
-          return standardized;
-        }
-        return gatsuData;
-      } catch (gatsuErr: any) {
-        console.warn(`[AiService] ⚠️ Gatsu AI Service gagal/tidak tersedia (${gatsuErr.message}), beralih ke Vision AI internal...`);
-      }
-    }
 
     const isUsingOpenRouter = Boolean(this.openAiClient);
     let model = 'google/gemini-2.5-flash';
@@ -1198,7 +1396,7 @@ ${pdfText.slice(0, 6000)}
         const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan (Kemnaker) yang ahli dan sangat teliti dalam menganalisis berkas dokumen surat dinas resmi (baik dokumen hasil scan scanner/kamera HP, foto fisik surat, maupun berkas gambar dokumen dinas).
 
 TUGAS UTAMA:
-Bacalah seluruh isi dokumen surat dinas terlampir secara teliti dan menyeluruh dari gambar halaman yang disediakan (dari kop surat teratas, nomor, tanggal, lampiran, perihal, isi surat, jadwal/tempat acara, hingga penandatangan dan stempel di bagian bawah surat). Jika terdapat lebih dari satu halaman terlampir, rangkum dan gabungkan informasinya secara lengkap. Pastikan semua entitas diekstrak persis dan akurat sesuai yang tertulis pada dokumen.
+Bacalah seluruh isi dokumen surat dinas terlampir secara teliti dan menyeluruh dari gambar halaman yang disediakan (dari KOP SURAT teratas, nomor registrasi, tanggal terbit, perihal, isi acara, hingga pejabat penandatangan dan kontak narahubung di alinea penutup). Jika terdapat lebih dari satu halaman terlampir, rangkum dan gabungkan informasinya secara lengkap.
 
 1. Tentukan KATEGORI SURAT (kategoriSurat) secara akurat dari salah satu kode berikut:
    - "UND" : Undangan Menghadiri acara/rapat/seminar/konferensi/FGD/diskusi/lokakarya/dies natalis/peringatan umum (BUKAN pernikahan, BUKAN meminta pimpinan memberi sambutan/speech khusus).
@@ -1212,25 +1410,25 @@ Bacalah seluruh isi dokumen surat dinas terlampir secara teliti dan menyeluruh d
 2. Aturan ekstraksi entitas secara presisi sesuai gambar:
    - "kategoriSurat": "UND" | "PH" | "UNR" | "WR" | "AU" | "TAP" | "LP"
    - "alasanKategori": "penjelasan singkat mengapa dokumen masuk kategori ini berdasarkan gambar"
-   - "nomorSurat": "nomor registrasi surat dinas resmi yang tertulis pada gambar (CONTOH: 'HM.4.6/189/D.IV.M.EKON/09/2026' atau 'B-102/DIR/IX/2026'). SANGAT PENTING: JANGAN mengambil nomor jalan/alamat kantor!"
-   - "tanggalSurat": "tanggal surat dibuat/diterbitkan yang tertulis pada gambar dalam bahasa Indonesia (misal: '15 September 2026')"
-   - "namaPengirim": "nama lengkap orang/pejabat pengirim yang menandatangani surat di bagian paling bawah surat beserta gelar lengkapnya (CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM' atau 'Budi Santoso, S.E.'). BUKAN instansi! JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA (utamakan penandatangan pertama/jabatan tertinggi). JANGAN menggabungkan beberapa nama!"
-   - "jabatanPengirim": "jabatan resmi orang/pejabat yang menandatangani surat di bagian paling bawah surat yang SESUAI DENGAN namaPengirim yang dipilih (CONTOH: 'Deputi Bidang Koordinasi Ekonomi Digital' atau 'Direktur Utama' atau 'Ketua Umum'). BUKAN instansi!"
-   - "asalSurat": "gabungan nama pengirim yang bertanda tangan di paling bawah, jabatannya, dan asal instansi dengan format 'Nama Pengirim - Jabatan Singkatan Instansi' (pemisah strip HANYA di antara nama pengirim dan jabatan instansi, TIDAK ADA strip antara jabatan dan instansi, serta jika nama instansi memiliki singkatan gunakan singkatannya saja, CONTOH: 'Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital Kemenko Perekonomian' atau 'Budi Santoso, S.E. - Direktur Utama PT Telkom' atau 'Prof. Dr. Ir. Arif Satria, S.P., M.Si. - Rektor IPB'). Khusus UNR (Undangan Pernikahan), asalSurat adalah nama orang tua / pihak keluarga yang mengundang Menteri/Pimpinan Kemnaker beserta jabatan dan instansinya jika ada. JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA BESERTA JABATAN DAN ASAL INSTANSINYA!"
-   - "penyelenggara": "nama lembaga/instansi/organisasi pengirim atau penyelenggara acara dari KOP SURAT teratas atau stempel resmi pada gambar (CONTOH: 'Kementerian Koordinator Bidang Perekonomian' atau 'PT Telekomunikasi Indonesia Tbk' atau 'Institut Pertanian Bogor')"
-   - "namaAcara": "nama murni acara/kegiatan saja (CONTOH: 'Rapat Kerja Nasional (Rakornas) VII Tahun 2026' atau 'Forum Koordinasi Ketenagakerjaan Nasional 2026'). HAPUS kata pengantar seperti 'Permohonan Sambutan pada Pembukaan' atau nama instansi di akhir!"
+   - "nomorSurat": "nomor registrasi surat dinas resmi di kepala surat (CONTOH: 'HM.4.6/189/D.IV.M.EKON/09/2026' atau 'UND-307/SES.M.EKON/XI/2026'). BERSIHKAN kotoran OCR seperti tanda petik, coretan paraf tanda tangan, atau spasi acak di sekitar garis miring. DILARANG KERAS mengambil nomor jalan/alamat kantor!"
+   - "tanggalSurat": "tanggal surat diterbitkan/ditandatangani yang tertulis di kepala surat atau di atas tanda tangan dalam bahasa Indonesia (CONTOH: '1 November 2026' atau '15 September 2026'). BUKAN tanggal pelaksanaan acara!"
+   - "namaPengirim": "nama lengkap pejabat pengirim yang menandatangani surat di bagian paling bawah surat beserta gelar lengkapnya (CONTOH: 'Susiwijono Moegiarso' atau 'Dr. Ir. Rudy Salahuddin, MEM' atau 'Budi Santoso, S.E.'). BUKAN instansi! JIKA ADA BEBERAPA ORANG PENANDATANGAN, PILIH SALAH SATU NAMA SAJA (utamakan penandatangan pertama/jabatan tertinggi). JANGAN menggabungkan beberapa nama!"
+   - "jabatanPengirim": "jabatan resmi pejabat yang menandatangani surat di bagian paling bawah surat yang SESUAI DENGAN namaPengirim yang dipilih (CONTOH: 'Sekretaris Kementerian Koordinator' atau 'Deputi Bidang Koordinasi Ekonomi Digital' atau 'Direktur Utama'). BUKAN instansi!"
+   - "asalSurat": "gabungan nama pejabat pengirim yang bertanda tangan di paling bawah, jabatannya, dan asal instansi dengan format 'Nama Pengirim - Jabatan Singkatan Instansi' (pemisah strip HANYA di antara nama pengirim dan jabatan instansi, TIDAK ADA strip antara jabatan dan instansi, serta jika nama instansi memiliki singkatan gunakan singkatannya saja, CONTOH: 'Susiwijono Moegiarso - Sesmenko Perekonomian' atau 'Dr. Ir. Rudy Salahuddin, MEM - Deputi Bidang Koordinasi Ekonomi Digital Kemenko Perekonomian' atau 'Budi Santoso, S.E. - Direktur Utama PT Telkom'). Jika penandatangan hanya berupa stempel/barcode tanpa nama orang, isi 'Pimpinan - Singkatan Instansi' (misal: 'Pimpinan - Kemenko Perekonomian'). DILARANG MENGISI '-' JIKA INSTANSI DAPAT DIKETAHUI!"
+   - "penyelenggara": "nama lembaga/instansi/organisasi pengirim atau penyelenggara acara dari KOP SURAT teratas atau stempel resmi pada gambar (CONTOH: 'Kementerian Koordinator Bidang Perekonomian' atau 'PT Telekomunikasi Indonesia Tbk' atau 'Institut Pertanian Bogor'). Jika KOP SURAT tidak terbaca jelas, simpulkan dari kode instansi pada nomor surat (misal: 'SES.M.EKON' adalah Kementerian Koordinator Bidang Perekonomian). JANGAN MENGISI '-'!"
+   - "namaAcara": "SANGAT PENTING: Ambil nama acara dan topik HANYA dari halaman pertama pada baris 'Hal :' atau 'Perihal :'. DILARANG KERAS mengambil teks dari judul lampiran atau tabel lampiran (seperti 'LAMPIRAN SURAT UNDANGAN', 'Tabel Status Perkembangan...', 'Daftar Undangan', 'Susunan Acara / Rundown') sebagai nama acara atau perihal! Tuliskan nama murni acara/kegiatan saja (CONTOH: 'Rapat Kerja Nasional (Rakornas) VII' atau 'Rapat Koordinasi Status Perkembangan Proses Aksesi OECD'). HAPUS kata pengantar seperti 'Permohonan Sambutan pada Pembukaan' atau 'Undangan Menghadiri'!"
    - "temaAcara": "tema spesifik acara jika ada tertulis di gambar (misal: 'Transformasi Tenaga Kerja Menuju Indonesia Emas 2045', atau '-' jika tidak ada tema)"
    - "sesiAcara": "khusus kategori PH, peran/sesi yang dimohonkan kepada Menteri / Pimpinan Kemnaker (CONTOH: 'Sambutan', 'Keynote Speech', 'Sambutan dan Arahan', 'Membuka Acara', 'Narasumber'). HANYA sebutkan jenis perannya saja tanpa mengulang nama acara/instansi!"
-   - "mempelai1": "KHUSUS UNR: nama mempelai 1 BESERTA nama orang tua lengkapnya di dalam tanda kurung (misal: 'Anisa Rahmawati, S.E. (Putri Bapak Ahmad dan Ibu Siti)', atau '-'). WAJIB: Jangan pernah hilangkan nama orang tua karena acuan utama pengundang protokol adalah orang tuanya!"
-   - "mempelai2": "KHUSUS UNR: nama mempelai 2 BESERTA nama orang tua lengkapnya di dalam tanda kurung (misal: 'Dimas Pratama, S.T. (Putra Bapak Bambang dan Ibu Sri)', atau '-'). WAJIB: Jangan pernah hilangkan nama orang tua!"
+   - "mempelai1": "KHUSUS UNR: nama mempelai 1 BESERTA nama orang tua lengkapnya di dalam tanda kurung (misal: 'Anisa Rahmawati, S.E. (Putri Bapak Ahmad dan Ibu Siti)', atau '-')."
+   - "mempelai2": "KHUSUS UNR: nama mempelai 2 BESERTA nama orang tua lengkapnya di dalam tanda kurung (misal: 'Dimas Pratama, S.T. (Putra Bapak Bambang dan Ibu Sri)', atau '-')."
    - "pokokBahasan": "jika WR/AU, pokok bahasan audiensi atau wawancara (atau '-')"
    - "rangkaUcapan": "jika TAP, rangka pembuatan video ucapan (misal: 'Hari Ulang Tahun ke-75 PT Aneka Tambang Tbk', atau '-')"
-   - "picName": "nama lengkap orang PIC / Narahubung / Contact Person jika tertera di gambar surat (CONTOH: 'Sdr. Ahmad Fauzi' atau 'Budi Santoso'). BUKAN nomor telepon! Jika tidak ada, isi '-'"
+   - "picName": "nama lengkap orang PIC / Narahubung / Contact Person jika tertera di alinea penutup surat (CONTOH: 'Sdr. Ahmad Fauzi' atau 'Budi Santoso'). BUKAN nomor telepon! Jika tidak ada, isi '-'"
    - "picPhoneNumber": "nomor HP / telepon / WhatsApp dari PIC yang tertera di gambar (CONTOH: '081234567890' atau '+6281234567890'). HANYA digit nomor kontak! Jika tidak ada, isi '-'"
    - "picPengirim": "gabungan nama PIC dan nomor telepon (CONTOH: 'Ahmad Fauzi (081234567890)'). Jika tidak ada, isi '-'"
-   - "dateEvent": "hari/tanggal pelaksanaan acara/kegiatan yang disebutkan di dalam isi surat pada gambar (CONTOH: 'Senin, 20 Oktober 2026' atau '20 Oktober 2026'). BUKAN tanggal pembuatan surat! Jika surat TIDAK memiliki tanggal event/acara, isi '-'"
-   - "timeEvent": "jam/waktu mulai dan/atau selesai pelaksanaan acara/kegiatan yang tercantum di dalam gambar surat (CONTOH: '09.00 WIB' atau '08.30 - 12.00 WIB' atau '13.00 WIB s.d. selesai'). Jika surat TIDAK memuat jam acara, isi '-'"
-   - "placeEvent": "lokasi/tempat diselenggarakannya acara/kegiatan yang tercantum di dalam gambar surat (CONTOH: 'Hotel Bidakara Jakarta' atau 'Ruang Rapat Tridharma Lantai 2' atau 'Grand Ballroom Hotel Indonesia Kempinski' atau 'Aplikasi Zoom Meeting / Daring'). SANGAT PENTING: JANGAN PERNAH mengisi placeEvent dengan teks perihal, permohonan, atau nama acara! HANYA nama tempat/lokasi fisik/daring acara! Jika tidak ada tempat acara, WAJIB ISI '-'"
+   - "dateEvent": "hari/tanggal pelaksanaan acara/kegiatan yang disebutkan di dalam isi surat pada gambar (CONTOH: 'Senin, 20 Oktober 2026' atau '20 Oktober 2026' atau '25 - 27 November 2026'). BUKAN tanggal pembuatan surat! Jika surat tidak memuat tanggal acara, isi '-'"
+   - "timeEvent": "jam/waktu mulai dan/atau selesai pelaksanaan acara/kegiatan yang tercantum di dalam gambar surat (CONTOH: '09.00 WIB' atau '08.30 - 12.00 WIB' atau '13.00 WIB s.d. selesai' atau '10.00 WITA'). Jika surat tidak memuat jam acara, isi '-'"
+   - "placeEvent": "lokasi/tempat diselenggarakannya acara/kegiatan yang tercantum di dalam gambar surat (CONTOH: 'Hotel Bidakara Jakarta' atau 'Ruang Rapat Ali Sadikin Lantai 2' atau 'Aplikasi Zoom Meeting / Daring'). SANGAT PENTING: JANGAN PERNAH mengisi placeEvent dengan teks perihal atau nama acara! HANYA nama tempat/lokasi fisik/daring acara! Jika tidak ada, WAJIB ISI '-'"
 
 KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN TANPA PENJELASAN LAIN:
 `;
@@ -1341,13 +1539,34 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
           ? parsed.kategoriSurat
           : 'UND';
 
-      const extractedPenyelenggara = (parsed.penyelenggara || '').trim();
-      // Bersihkan nama acara dan peran sesi acara agar bebas dari pengulangan/redundansi
-      const rawAcara = (parsed.namaAcara || parsed.event || '-').trim();
+      // 1. Bersihkan dan standarisasi nomor surat & tanggal surat
+      const cleanNomor = cleanNomorSurat(parsed.nomorSurat, docText);
+      const cleanTanggal = cleanTanggalSurat(parsed.tanggalSurat, docText);
+
+      // 2. Deteksi instansi penyelenggara (utamakan AI, jika kosong deteksi dari KOP atau nomor surat)
+      let extractedPenyelenggara = (parsed.penyelenggara || '').trim();
+      if (!extractedPenyelenggara || extractedPenyelenggara === '-' || extractedPenyelenggara === 'Instansi Terkait') {
+        const detected = detectInstitutionFromText(docText || '', cleanNomor);
+        if (detected) {
+          extractedPenyelenggara = detected.fullName;
+        }
+      }
+
+      // 3. Bersihkan nama acara dan peran sesi acara (cegah mengambil judul lampiran/tabel)
+      let rawAcara = (parsed.namaAcara || parsed.event || '-').trim();
+      if (/lampiran\s*(?:surat)?\s*(?:undangan)?|tabel\s+status/i.test(rawAcara) && docText) {
+        const halMatch = docText.match(/(?:(?:Hal|Perihal)\s*[:.]\s*)([^\n\r]+)/i);
+        if (halMatch && halMatch[1]) {
+          const candidate = halMatch[1].trim();
+          if (!/lampiran|tabel\s+status/i.test(candidate) && candidate.length > 5) {
+            rawAcara = candidate;
+          }
+        }
+      }
       const cleanAcara = cleanNamaAcara(rawAcara, extractedPenyelenggara);
       const cleanSesi = cleanSesiAcara(parsed.sesiAcara, cleanAcara);
 
-      // Format asalSurat: WAJIB nama pengirim yang bertanda tangan di paling bawah, jabatan, dan instansi: "Nama Pengirim - Jabatan Singkatan Instansi"
+      // 4. Format asalSurat: WAJIB "Nama Pengirim - Jabatan Singkatan Instansi"
       let finalAsalSurat = (parsed.asalSurat || '').trim();
       const namaPengirim = (parsed.namaPengirim || '').trim();
       const jabatanPengirim = (parsed.jabatanPengirim || '').trim();
@@ -1372,6 +1591,13 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       }
       finalAsalSurat = formatAsalSurat(finalAsalSurat, jabatanPengirim, instansiPenyelenggara);
 
+      // Fallback: Jika finalAsalSurat masih '-' padahal ada instansi penyelenggara
+      if ((!finalAsalSurat || finalAsalSurat === '-') && instansiPenyelenggara) {
+        const shortInst = shortenInstitutionName(instansiPenyelenggara);
+        finalAsalSurat = `Pimpinan - ${shortInst || instansiPenyelenggara}`;
+      }
+
+      // 5. Ekstraksi PIC dan Narahubung
       const rawPicName = (parsed.picName || '').trim();
       const rawPicPhone = (parsed.picPhoneNumber || '').trim();
       const rawPicPengirim = (parsed.picPengirim || '').trim();
@@ -1389,6 +1615,23 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
         if (splitted.phone !== '-') {
           finalPicPhone = splitted.phone;
           finalPicName = splitted.name;
+        }
+      }
+
+      // Jika masih kosong, coba scan docText langsung
+      if ((finalPicName === '-' || finalPicPhone === '-') && docText) {
+        const scannedPic = extractPicFromText(docText);
+        if (finalPicPhone === '-' && scannedPic.picPhone !== '-') finalPicPhone = scannedPic.picPhone;
+        if (finalPicName === '-' && scannedPic.picName !== '-') finalPicName = scannedPic.picName;
+      }
+
+      // Normalisasi nomor telepon PIC
+      if (finalPicPhone !== '-') {
+        finalPicPhone = finalPicPhone.replace(/[^\d+]/g, '').trim();
+        if (finalPicPhone.startsWith('+62')) {
+          finalPicPhone = '0' + finalPicPhone.slice(3);
+        } else if (finalPicPhone.startsWith('62')) {
+          finalPicPhone = '0' + finalPicPhone.slice(2);
         }
       }
 
@@ -1433,8 +1676,8 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       const extracted: ExtractedSuratData = {
         kategoriSurat: kategori,
         alasanKategori: parsed.alasanKategori || '',
-        tanggalSurat: parsed.tanggalSurat || this.getTodayFormatted(),
-        nomorSurat: (parsed.nomorSurat || '-').trim().slice(0, 100),
+        tanggalSurat: cleanTanggal,
+        nomorSurat: cleanNomor,
         subject: cleanAcara || parsed.subject || 'Surat Masuk',
         asalSurat: finalAsalSurat.slice(0, 220),
         event: cleanAcara,
@@ -1541,22 +1784,29 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
     if (nomorSurat === '-' && fileName) {
       nomorSurat = `REF-${fileName.replace('.pdf', '')}`;
     }
+    nomorSurat = cleanNomorSurat(nomorSurat, text);
 
     // 3. Cari tanggal surat
     const tanggalMatch = text.match(
       /(\d{1,2}\s+(?:Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember|Jan|Feb|Mar|Apr|Mei|Jun|Jul|Ags|Sep|Okt|Nov|Des)\s+\d{4})/i
     );
-    const tanggalSurat = tanggalMatch ? tanggalMatch[1].trim() : this.getTodayFormatted();
+    const tanggalSurat = cleanTanggalSurat(tanggalMatch ? tanggalMatch[1].trim() : undefined, text);
 
     // 4. Cari hal/perihal
     const halMatch = text.match(/(?:Hal|Perihal|HAL|PERIHAL)\s*[:.]\s*([^\n]+)/i);
     const subject = halMatch ? halMatch[1].trim() : 'Surat Dinas / Undangan Acara';
 
     // 5. Cari instansi pengirim pada kop surat untuk penyelenggara
-    const instansiMatch = text.match(
-      /(?:Kementerian|Direktorat|Dinas|Badan|PT|CV|Dewan|Pengurus|Sekretariat)\s+[A-Za-z0-9\s,.-]+/i
-    );
-    const penyelenggara = instansiMatch ? instansiMatch[0].trim().split('\n')[0].slice(0, 60) : 'Instansi Terkait';
+    const detectedInst = detectInstitutionFromText(text, nomorSurat);
+    let penyelenggara = detectedInst ? detectedInst.fullName : 'Instansi Terkait';
+    if (penyelenggara === 'Instansi Terkait') {
+      const instansiMatch = text.match(
+        /(?:Kementerian|Direktorat|Dinas|Badan|PT|CV|Dewan|Pengurus|Sekretariat)\s+[A-Za-z0-9\s,.-]+/i
+      );
+      if (instansiMatch) {
+        penyelenggara = instansiMatch[0].trim().split('\n')[0].slice(0, 60);
+      }
+    }
 
     // 6. Cari nama pengirim & jabatan yang bertanda tangan di paling bawah surat (Asal Surat: Nama - Jabatan)
     let namaPengirim = '';
@@ -1681,17 +1931,23 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
     asalSurat = formatAsalSurat(asalSurat, jabatanPengirim, instansiClean);
 
     // 7. Cari PIC / kontak (pisahkan nama dan nomor HP)
-    const hpMatch = text.match(/(?:08\d{2}[- ]?\d{4}[- ]?\d{3,4}|\+62\d{2}[- ]?\d{4}[- ]?\d{3,4})/);
-    const picPhone = hpMatch ? hpMatch[0].replace(/[^\d+]/g, '').slice(0, 50) : '-';
-    let picName = '-';
-    if (hpMatch) {
-      const idx = text.indexOf(hpMatch[0]);
-      const surrounding = text.slice(Math.max(0, idx - 100), Math.min(text.length, idx + 50));
-      const nameMatch = surrounding.match(/(?:narahubung|contact\s+person|cp|pic|hubungi|sdr\.?|sdri\.?)\s*[:.-]?\s*([A-Za-z\s.,'-]{3,40})/i);
-      if (nameMatch && nameMatch[1]) {
-        picName = nameMatch[1].replace(/^(?:sdr|sdri)\.?\s*/i, '').trim().slice(0, 100);
+    const scannedPic = extractPicFromText(text);
+    let picPhone = scannedPic.picPhone;
+    let picName = scannedPic.picName;
+
+    if (picPhone === '-' && picName === '-') {
+      const hpMatch = text.match(/(?:08\d{2}[- ]?\d{4}[- ]?\d{3,4}|\+62\d{2}[- ]?\d{4}[- ]?\d{3,4})/);
+      if (hpMatch) {
+        picPhone = hpMatch[0].replace(/[^\d+]/g, '').slice(0, 50);
+        const idx = text.indexOf(hpMatch[0]);
+        const surrounding = text.slice(Math.max(0, idx - 100), Math.min(text.length, idx + 50));
+        const nameMatch = surrounding.match(/(?:narahubung|contact\s+person|cp|pic|hubungi|sdr\.?|sdri\.?)\s*[:.-]?\s*([A-Za-z\s.,'-]{3,40})/i);
+        if (nameMatch && nameMatch[1]) {
+          picName = nameMatch[1].replace(/^(?:sdr|sdri)\.?\s*/i, '').trim().slice(0, 100);
+        }
       }
     }
+
     const picPengirim = picName !== '-' && picPhone !== '-'
       ? `${picName} (${picPhone})`
       : (picPhone !== '-' ? picPhone : (picName !== '-' ? picName : '-'));
@@ -1855,24 +2111,6 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
   ): Promise<ExtractedDisposisiData> {
     const pdfText = await pdfService.extractText(pdfFilePath);
 
-    // 0. Jalur Utama: Gatsu AI Service (Microservice)
-    if (ENV.AI_SERVICE_ENABLED && fs.existsSync(pdfFilePath)) {
-      try {
-        console.log(`[AiService] 🚀 Mengirim PDF disposisi '${originalFileName || path.basename(pdfFilePath)}' ke Gatsu AI Service...`);
-        const gatsuData = await gatsuAiClient.extractDisposition(pdfFilePath, originalFileName);
-        const standardized = this.parseDisposisiResponse(JSON.stringify(gatsuData), originalFileName, pdfText);
-        if (standardized && ((standardized.nomorAgenda && standardized.nomorAgenda !== '-') || (standardized.perihal && standardized.perihal !== '-'))) {
-          console.log(`✅ [AiService] Ekstraksi lembar disposisi sukses via Gatsu AI Service!`);
-          return standardized;
-        }
-        if (gatsuData && ((gatsuData.nomorAgenda && gatsuData.nomorAgenda !== '-') || (gatsuData.perihal && gatsuData.perihal !== '-'))) {
-          return gatsuData;
-        }
-      } catch (gatsuErr: any) {
-        console.warn(`[AiService] ⚠️ Gatsu AI Service disposisi gagal/tidak tersedia (${gatsuErr.message}), beralih ke parser internal disposisi...`);
-      }
-    }
-
     // Lembar disposisi selalu berada pada halaman 1 (atau 1-2 jika lembar disposisi + surat pengantar).
     // Render 2 halaman pertama pada skala tinggi (2.0x) agar kotak centang dan teks kecil sangat tajam.
     try {
@@ -1990,24 +2228,6 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
     fallbackDocText?: string
   ): Promise<ExtractedDisposisiData> {
     const validPaths = imagePaths.filter((p) => fs.existsSync(p));
-
-    // 0. Jalur Utama: Gatsu AI Service (Microservice)
-    if (ENV.AI_SERVICE_ENABLED && validPaths.length > 0) {
-      try {
-        console.log(`[AiService] 🚀 Mengirim gambar disposisi '${originalFileName || path.basename(validPaths[0])}' ke Gatsu AI Service...`);
-        const gatsuData = await gatsuAiClient.extractDisposition(validPaths[0], originalFileName);
-        const standardized = this.parseDisposisiResponse(JSON.stringify(gatsuData), originalFileName, fallbackDocText);
-        if (standardized && ((standardized.nomorAgenda && standardized.nomorAgenda !== '-') || (standardized.perihal && standardized.perihal !== '-'))) {
-          console.log(`✅ [AiService] Ekstraksi gambar disposisi sukses via Gatsu AI Service!`);
-          return standardized;
-        }
-        if (gatsuData && ((gatsuData.nomorAgenda && gatsuData.nomorAgenda !== '-') || (gatsuData.perihal && gatsuData.perihal !== '-'))) {
-          return gatsuData;
-        }
-      } catch (gatsuErr: any) {
-        console.warn(`[AiService] ⚠️ Gatsu AI Service disposisi gagal/tidak tersedia (${gatsuErr.message}), beralih ke Vision AI internal...`);
-      }
-    }
 
     const isUsingOpenRouter = Boolean(this.openAiClient);
     let model = 'openrouter/free';

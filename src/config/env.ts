@@ -28,9 +28,9 @@ export const ENV = {
   CHAT_MODEL: process.env.CHAT_MODEL || process.env.OPENROUTER_MODEL || 'openrouter/free',
 
   // 2. Ekstraksi Dokumen PDF & Rekomendasi Perihal
-  PDF_EXTRACTION_PROVIDER: process.env.PDF_EXTRACTION_PROVIDER || ((process.env.PDF_EXTRACTION_API_KEY || process.env.GEMINI_API_KEY || '').startsWith('sk-') ? 'openrouter' : 'gemini'),
+  PDF_EXTRACTION_PROVIDER: process.env.PDF_EXTRACTION_PROVIDER || ((process.env.PDF_EXTRACTION_API_KEY || process.env.CHAT_API_KEY || process.env.OPENROUTER_API_KEY || '').startsWith('sk-') ? 'openrouter' : 'gemini'),
   PDF_EXTRACTION_API_KEY: process.env.PDF_EXTRACTION_API_KEY || process.env.GEMINI_API_KEY || '',
-  PDF_EXTRACTION_MODEL: process.env.PDF_EXTRACTION_MODEL || 'gemini-2.5-flash',
+  PDF_EXTRACTION_MODEL: process.env.PDF_EXTRACTION_MODEL || 'google/gemini-2.5-flash',
 
   // Backward compatibility aliases
   AI_PROVIDER: process.env.AI_PROVIDER || 'gemini',
@@ -63,12 +63,7 @@ export const ENV = {
   META_WEBHOOK_PORT: Number(process.env.META_WEBHOOK_PORT || process.env.PORT || 3000),
   WHATSAPP_PROVIDER: process.env.WHATSAPP_PROVIDER || 'baileys',
   META_AUTO_TUNNEL: process.env.META_AUTO_TUNNEL !== 'false',
-
-  // 4. Gatsu AI Service (protokol-ai-service) Configuration
-  AI_SERVICE_ENABLED: process.env.AI_SERVICE_ENABLED !== 'false',
-  AI_SERVICE_URL: (process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000').replace(/\/+$/, ''),
-  AI_SERVICE_SECRET_KEY: process.env.AI_SERVICE_SECRET_KEY || '',
-  AI_SERVICE_TIMEOUT_MS: Number(process.env.AI_SERVICE_TIMEOUT_MS || 30000),
+  PUBLIC_BASE_URL: (process.env.PUBLIC_BASE_URL || process.env.META_WEBHOOK_URL || '').replace(/\/+$/, ''),
 };
 
 // Pastikan direktori storage tersedia

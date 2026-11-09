@@ -24,6 +24,7 @@ export interface NormalizedJadwal {
   statusDisposisi?: string;
   statusDisposisiCode?: number | null;
   surat?: {
+    id?: number | bigint | string | null;
     nomorAgenda: string;
     nomorSurat: string;
     fileName?: string | null;
@@ -589,6 +590,7 @@ export class JadwalService {
 
     const letterInfo = letter
       ? {
+          id: letter.id ? Number(letter.id) : null,
           nomorAgenda: letter.agenda_number || '-',
           nomorSurat: letter.number_or_date || '-',
           fileName: letter.file || null,

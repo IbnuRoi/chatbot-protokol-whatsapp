@@ -8,6 +8,13 @@ export class CloudflaredTunnel {
   private publicUrl: string | null = null;
 
   /**
+   * Mengambil URL publik aktif dari tunnel (jika sedang berjalan)
+   */
+  public getPublicUrl(): string | null {
+    return this.publicUrl;
+  }
+
+  /**
    * Menemukan lokasi file executable cloudflared di komputer pengguna
    */
   public findBinaryPath(): string {

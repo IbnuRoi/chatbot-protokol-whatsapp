@@ -7,6 +7,8 @@ import { metaClient } from './metaClient';
 import { pdfService } from '../../services/pdfService';
 import { imageService } from '../../services/imageService';
 import { cloudflaredTunnel } from './cloudflaredTunnel';
+import { prisma } from '../../database/prisma';
+import { getLetterFileUrl } from '../../utils/textHelper';
 
 export class MetaWebhookServer {
   private server: http.Server | null = null;
@@ -52,7 +54,91 @@ export class MetaWebhookServer {
             return;
           }
 
-          // 2. Verifikasi Webhook Meta (GET/HEAD /webhook, /webhook-chatbot, atau dengan parameter hub.mode)
+          // 2. Short URL Document Redirect (GET /s/:id atau /d/:id atau /surat/:id)
+          const redirectMatch = pathname.match(/^\/(?:s|d|surat)\/([a-zA-Z0-9_.-]+)/i);
+          if (isGetOrHead && redirectMatch) {
+            const letterIdParam = redirectMatch[1].trim();
+            console.log(`\n🔗 [Short Link Redirect] Menerima akses tautan berkas: ${pathname} (ID/Ref: ${letterIdParam})`);
+
+            let targetFileName: string | null = null;
+
+            // Jika parameter berupa angka (Letter ID)
+            if (/^\d+$/.test(letterIdParam)) {
+              try {
+                const letter = await prisma.letters.findFirst({
+                  where: { id: BigInt(letterIdParam) },
+                  select: { id: true, file: true, agenda_number: true },
+                });
+                if (letter && letter.file) {
+                  targetFileName = letter.file;
+                }
+              } catch (dbErr: any) {
+                console.warn(`⚠️ [Short Link] Gagal mencari surat ID ${letterIdParam}: ${dbErr.message}`);
+              }
+            }
+
+            // Jika belum ditemukan, coba cocokkan dengan agenda_number atau nama file langsung
+            if (!targetFileName) {
+              try {
+                const letter = await prisma.letters.findFirst({
+                  where: {
+                    OR: [
+                      { agenda_number: letterIdParam },
+                      { file: { contains: letterIdParam } },
+                    ],
+                  },
+                  select: { id: true, file: true },
+                });
+                if (letter && letter.file) {
+                  targetFileName = letter.file;
+                }
+              } catch {}
+            }
+
+            // Jika tetap belum ditemukan tapi parameter berakhiran .pdf, anggap sebagai file langsung
+            if (!targetFileName && letterIdParam.toLowerCase().endsWith('.pdf')) {
+              targetFileName = letterIdParam;
+            }
+
+            if (targetFileName) {
+              const fullFileUrl = getLetterFileUrl(targetFileName);
+              if (fullFileUrl) {
+                console.log(`➡️ [Short Link Redirect] Mengalihkan ke berkas asli: ${fullFileUrl}`);
+                res.writeHead(302, {
+                  'Location': fullFileUrl,
+                  'Cache-Control': 'no-cache, no-store, must-revalidate',
+                });
+                res.end();
+                return;
+              }
+            }
+
+            // Fallback tampilan 404 jika berkas tidak ditemukan
+            res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(`<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <title>Berkas Dokumen Protokol</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 80vh; margin: 0; background: #f8fafc; color: #1e293b; text-align: center; }
+    .card { background: white; padding: 36px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); max-width: 420px; margin: 16px; border: 1px solid #e2e8f0; }
+    h2 { margin-top: 0; color: #e11d48; font-size: 1.25rem; }
+    p { color: #64748b; font-size: 0.95rem; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Dokumen Tidak Ditemukan</h2>
+    <p>Berkas surat yang Anda tuju belum dilampirkan atau telah diarsipkan dari sistem database protokol.</p>
+  </div>
+</body>
+</html>`);
+            return;
+          }
+
+          // 3. Verifikasi Webhook Meta (GET/HEAD /webhook, /webhook-chatbot, atau dengan parameter hub.mode)
           if (isGetOrHead && isWebhookPath) {
             const mode = reqUrl.searchParams.get('hub.mode');
             const token = reqUrl.searchParams.get('hub.verify_token');

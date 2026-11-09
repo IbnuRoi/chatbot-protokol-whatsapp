@@ -399,6 +399,45 @@ export function cleanQueryForSelection(input: string): string {
 import { ENV } from '../config/env';
 import crypto from 'crypto';
 import path from 'path';
+import { cloudflaredTunnel } from '../bot/providers/cloudflaredTunnel';
+
+/**
+ * Mengambil base URL publik aktif (baik dari ENV.PUBLIC_BASE_URL maupun dari tunnel Cloudflare)
+ */
+export function getPublicBaseUrl(): string | null {
+  if (ENV.PUBLIC_BASE_URL && ENV.PUBLIC_BASE_URL.trim() !== '') {
+    return ENV.PUBLIC_BASE_URL.trim().replace(/\/+$/, '');
+  }
+  const tunnelUrl = cloudflaredTunnel.getPublicUrl();
+  if (tunnelUrl && tunnelUrl.trim() !== '') {
+    return tunnelUrl.trim().replace(/\/+$/, '');
+  }
+  return null;
+}
+
+/**
+ * Menghasilkan tautan pendek (Short URL Redirect) untuk berkas surat.
+ * Jika public base URL (atau Cloudflared tunnel) aktif dan ID surat tersedia,
+ * mengembalikan URL pendek (contoh: https://<domain>/s/45).
+ * Jika tidak, fallback ke URL berkas langsung (getLetterFileUrl).
+ */
+export function getLetterShortUrl(
+  letterId?: number | bigint | string | null,
+  fileName?: string | null
+): string | null {
+  const fileUrl = getLetterFileUrl(fileName);
+  if (!fileUrl) return null;
+
+  const publicBase = getPublicBaseUrl();
+  if (publicBase && letterId) {
+    const cleanId = String(letterId).trim();
+    if (cleanId && cleanId !== '0' && cleanId !== '-') {
+      return `${publicBase}/s/${cleanId}`;
+    }
+  }
+
+  return fileUrl;
+}
 
 /**
  * Mengambil URL publik berkas surat yang dapat langsung diklik oleh pengguna di WhatsApp.
@@ -1577,7 +1616,7 @@ export function formatSuratListItem(s: SuratCardData, index: number): string {
 export function formatSuratDetail(surat: SuratCardData, waktuInputStr: string): string {
   const disposisi = surat.disposisi;
   const isSudah = disposisi?.status === 'SUDAH_DISPOSISI';
-  const fileUrl = getLetterFileUrl(surat.fileName);
+  const fileUrl = getLetterShortUrl(surat.id, surat.fileName);
 
   const cleanPerihalText = cleanHtml(surat.perihal) || cleanHtml(surat.subject) || 'Surat Masuk';
   const noSuratLine =
