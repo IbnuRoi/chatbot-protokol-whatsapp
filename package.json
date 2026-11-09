@@ -19,6 +19,7 @@
     "db:tunnel": "tsx src/tools/dbTunnel.ts",
     "db:test": "tsx src/tools/testDbConnection.ts",
     "user:add": "tsx src/tools/addUser.ts",
+    "user:add:wamen": "tsx src/tools/addUserWamen.ts",
     "user:delete": "tsx src/tools/deleteUser.ts",
     "user:sync-lids": "tsx src/tools/syncLids.ts",
     "schedule:add": "tsx src/tools/addUpcomingSchedules.ts",
