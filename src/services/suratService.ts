@@ -1,4 +1,5 @@
 import { prisma } from '../database/prisma';
+import { dbManager, ProtocolScope } from '../database/dbManager';
 import { Prisma, letters } from '@prisma/client';
 import { pdfService } from './pdfService';
 import { SuratDraftData } from './sessionService';
@@ -114,6 +115,10 @@ export interface SuratSearchOptions {
 }
 
 export class SuratService {
+  private getClient(scope: ProtocolScope = 'MENAKER') {
+    return dbManager.getClient(scope);
+  }
+
   /**
    * Mengonversi baris tabel letters + disposisi ke interface NormalizedSurat
    */
@@ -210,9 +215,9 @@ export class SuratService {
 
   /**
    * Menghasilkan Nomor Agenda berikutnya berdasarkan Jenis Surat dan Bulan/Tahun berjalan
-   * Format sesuai standar database: {SEQ}/M/{JENIS}/{ROMAN_MONTH}/{YEAR} (misal: 208/M/UND/IX/2026)
+   * Format sesuai standar database: {SEQ}/M/{JENIS}/{ROMAN_MONTH}/{YEAR} (Menaker) atau {SEQ}/WM/{JENIS}/{ROMAN_MONTH}/{YEAR} (Wamen)
    */
-  public async generateNomorAgenda(jenisSurat: string): Promise<string> {
+  public async generateNomorAgenda(jenisSurat: string, scope: ProtocolScope = 'MENAKER'): Promise<string> {
     const cleanJenis = (jenisSurat || 'UND').trim().toUpperCase();
     const now = new Date();
     const tahun = now.getFullYear();
@@ -234,24 +239,33 @@ export class SuratService {
     };
     const romanMonth = romanMonths[monthNum] || 'IX';
 
-    const pattern = `/M/${cleanJenis}/`;
+    const ministerCode = scope === 'WAMEN' ? 'WM' : 'M';
+    const pattern = `/${ministerCode}/${cleanJenis}/`;
+    const client = this.getClient(scope);
 
-    const existing = await prisma.letters.findMany({
-      where: {
-        deleted_at: null,
-        agenda_number: {
-          contains: pattern,
+    let existing: any[] = [];
+    try {
+      existing = await client.letters.findMany({
+        where: {
+          deleted_at: null,
+          agenda_number: {
+            contains: pattern,
+          },
         },
-      },
-      select: { agenda_number: true },
-      take: 100,
-      orderBy: { id: 'desc' },
-    });
+        select: { agenda_number: true },
+        take: 100,
+        orderBy: { id: 'desc' },
+      });
+    } catch (dbErr: any) {
+      console.warn(`[SuratService ${scope}] Peringatan: Tidak dapat menjangkau DB (${dbErr.message}), menggunakan penomoran urut awal.`);
+      return `1/${ministerCode}/${cleanJenis}/${romanMonth}/${tahun}`;
+    }
 
     let maxSeq = 0;
+    const regex = new RegExp(`^(\\d+)/${ministerCode}/`, 'i');
     for (const item of existing) {
       if (!item.agenda_number) continue;
-      const match = item.agenda_number.match(/^(\d+)\/M\//i);
+      const match = item.agenda_number.match(regex);
       if (match) {
         const num = parseInt(match[1], 10);
         if (!isNaN(num) && num > maxSeq) {
@@ -264,11 +278,13 @@ export class SuratService {
     // Format urutan nomor agenda di database mengikuti angka natural (contoh: 56/M/UNR/..., 248/M/UND/...)
     const formatSeq = (seq: number) => String(seq);
 
-    let candidate = `${formatSeq(nextSeq)}/M/${cleanJenis}/${romanMonth}/${tahun}`;
-    while (await this.isNomorAgendaExists(candidate)) {
-      nextSeq++;
-      candidate = `${formatSeq(nextSeq)}/M/${cleanJenis}/${romanMonth}/${tahun}`;
-    }
+    let candidate = `${formatSeq(nextSeq)}/${ministerCode}/${cleanJenis}/${romanMonth}/${tahun}`;
+    try {
+      while (await this.isNomorAgendaExists(candidate, scope)) {
+        nextSeq++;
+        candidate = `${formatSeq(nextSeq)}/${ministerCode}/${cleanJenis}/${romanMonth}/${tahun}`;
+      }
+    } catch {}
 
     return candidate;
   }
@@ -276,29 +292,35 @@ export class SuratService {
   /**
    * Memeriksa apakah suatu nomor agenda sudah digunakan
    */
-  public async isNomorAgendaExists(nomorAgenda: string): Promise<boolean> {
-    const existing = await prisma.letters.findFirst({
-      where: {
-        deleted_at: null,
-        agenda_number: nomorAgenda,
-      },
-    });
-    return !!existing;
+  public async isNomorAgendaExists(nomorAgenda: string, scope: ProtocolScope = 'MENAKER'): Promise<boolean> {
+    try {
+      const client = this.getClient(scope);
+      const existing = await client.letters.findFirst({
+        where: {
+          deleted_at: null,
+          agenda_number: nomorAgenda,
+        },
+      });
+      return !!existing;
+    } catch (dbErr) {
+      return false;
+    }
   }
 
   /**
    * Memeriksa apakah ada surat di database yang memiliki kesamaan nomor surat (number_or_date).
    * Melakukan pencocokan secara case-insensitive dan mengabaikan perbedaan spasi pemisah.
    */
-  public async findExistingLetterByNomorSurat(nomorSurat: string): Promise<letters | null> {
+  public async findExistingLetterByNomorSurat(nomorSurat: string, scope: ProtocolScope = 'MENAKER'): Promise<letters | null> {
     if (!nomorSurat) return null;
     const clean = nomorSurat.trim();
     if (!clean || clean === '-' || clean.length < 3) return null;
     if (/^(?:tidak\s+ada|belum\s+ada|kosong|null|undefined|-)$/i.test(clean)) return null;
 
     try {
+      const client = this.getClient(scope);
       // 1. Pencocokan exact case-insensitive via Prisma
-      const exactMatch = await prisma.letters.findFirst({
+      const exactMatch = await client.letters.findFirst({
         where: {
           deleted_at: null,
           number_or_date: {
@@ -316,7 +338,7 @@ export class SuratService {
       // 2. Pencocokan normalisasi spasi (misal: "B - 123 / 2026" vs "B-123/2026")
       const cleanNoSpace = clean.replace(/\s+/g, '').toLowerCase();
       if (cleanNoSpace.length >= 3) {
-        const rawMatches = await prisma.$queryRaw<letters[]>`
+        const rawMatches = await client.$queryRaw<letters[]>`
           SELECT * FROM "letters"
           WHERE "deleted_at" IS NULL
             AND "number_or_date" IS NOT NULL
@@ -334,7 +356,7 @@ export class SuratService {
 
       return null;
     } catch (err: any) {
-      console.warn('[SuratService] Gagal memeriksa duplikasi nomor surat:', err.message);
+      console.warn(`[SuratService ${scope}] Gagal memeriksa duplikasi nomor surat:`, err.message);
       return null;
     }
   }
@@ -342,8 +364,8 @@ export class SuratService {
   /**
    * Cek apakah nomor surat sudah ada di database
    */
-  public async isNomorSuratExists(nomorSurat: string): Promise<boolean> {
-    const existing = await this.findExistingLetterByNomorSurat(nomorSurat);
+  public async isNomorSuratExists(nomorSurat: string, scope: ProtocolScope = 'MENAKER'): Promise<boolean> {
+    const existing = await this.findExistingLetterByNomorSurat(nomorSurat, scope);
     return !!existing;
   }
 
@@ -354,11 +376,13 @@ export class SuratService {
   public async findConflictingEvents(
     eventTimeStart: Date | null,
     eventTimeFinish: Date | null,
-    excludeEventId?: number | bigint
+    excludeEventId?: number | bigint,
+    scope: ProtocolScope = 'MENAKER'
   ): Promise<any[]> {
     if (!eventTimeStart || !isValidDate(eventTimeStart)) return [];
 
     try {
+      const client = this.getClient(scope);
       const where: Prisma.eventsWhereInput = {
         deleted_at: null,
       };
@@ -381,7 +405,7 @@ export class SuratService {
         where.event_time_start = eventTimeStart;
       }
 
-      const conflicts = await prisma.events.findMany({
+      const conflicts = await client.events.findMany({
         where,
         select: {
           id: true,
@@ -408,8 +432,10 @@ export class SuratService {
   public async saveSuratDraft(
     draft: SuratDraftData,
     userId: number,
-    userName?: string
+    userName?: string,
+    scope: ProtocolScope = 'MENAKER'
   ): Promise<SuratRegistrationResult> {
+    const client = this.getClient(scope);
     if (!draft.nomorAgenda || !draft.jenisSurat || !draft.tipeSurat || !draft.extractedData || !draft.tempPdfPath) {
       return {
         success: false,
@@ -420,9 +446,9 @@ export class SuratService {
     // Validasi Anti-Duplikasi: Batalkan proses jika nomor surat sudah ada di database
     const nomorSuratToCheck = (draft.extractedData.nomorSurat || '').trim();
     if (nomorSuratToCheck && nomorSuratToCheck !== '-' && nomorSuratToCheck.length >= 3) {
-      const existingLetter = await this.findExistingLetterByNomorSurat(nomorSuratToCheck);
+      const existingLetter = await this.findExistingLetterByNomorSurat(nomorSuratToCheck, scope);
       if (existingLetter) {
-        console.warn(`[SuratService] Pendaftaran surat dibatalkan: Nomor surat "${nomorSuratToCheck}" sudah ada pada nomor agenda "${existingLetter.agenda_number}".`);
+        console.warn(`[SuratService ${scope}] Pendaftaran surat dibatalkan: Nomor surat "${nomorSuratToCheck}" sudah ada pada nomor agenda "${existingLetter.agenda_number}".`);
         if (draft.tempPdfPath) {
           try {
             pdfService.deleteTempPdf(draft.tempPdfPath);
@@ -442,7 +468,7 @@ export class SuratService {
       const finalFileName = draft.finalFileName || generateLetterFileName(draft.tempPdfName);
 
       // 1. Pindahkan berkas dari temp ke folder upload storage (siap disymlink di server)
-      const permanentFilePath = pdfService.moveToUploadStorage(draft.tempPdfPath, finalFileName);
+      const permanentFilePath = pdfService.moveToUploadStorage(draft.tempPdfPath, finalFileName, scope);
       draft.tempPdfPath = permanentFilePath;
 
       const categoryId = LETTER_CATEGORY_MAP[draft.jenisSurat] || BigInt(2);
@@ -651,14 +677,14 @@ export class SuratService {
       // Simpan surat ke tabel letters dengan fallback protektif & self-healing sequence sync
       let surat: any;
       try {
-        surat = await prisma.letters.create({
+        surat = await client.letters.create({
           data: letterPayload,
         });
       } catch (insertErr: any) {
         if (isDuplicateKeyError(insertErr)) {
           console.warn('[SuratService] Terdeteksi bentrok sequence pada tabel letters. Menjalankan auto-sync sequence dan me-retry insert...');
-          await syncTableSequence('letters');
-          surat = await prisma.letters.create({
+          await syncTableSequence('letters', 'id', client);
+          surat = await client.letters.create({
             data: letterPayload,
           });
         } else if (
@@ -670,7 +696,7 @@ export class SuratService {
           const truncatedNote = formattedNote ? `<p>${finalPerihal.trim().slice(0, 210)}</p>` : null;
           const truncatedSubject = safeSubject.slice(0, 150);
           try {
-            surat = await prisma.letters.create({
+            surat = await client.letters.create({
               data: {
                 ...letterPayload,
                 subject: truncatedSubject,
@@ -680,8 +706,8 @@ export class SuratService {
           } catch (retryErr: any) {
             if (isDuplicateKeyError(retryErr)) {
               console.warn('[SuratService] Terdeteksi bentrok sequence pada tabel letters saat retry note. Menjalankan auto-sync sequence...');
-              await syncTableSequence('letters');
-              surat = await prisma.letters.create({
+              await syncTableSequence('letters', 'id', client);
+              surat = await client.letters.create({
                 data: {
                   ...letterPayload,
                   subject: truncatedSubject,
@@ -699,7 +725,7 @@ export class SuratService {
 
       // Catat activity log surat dengan penanganan bentrok sequence
       try {
-        await prisma.activity_log.create({
+        await client.activity_log.create({
           data: {
             log_name: 'default',
             description: `Menambah Surat oleh ${creatorName}`,
@@ -721,9 +747,9 @@ export class SuratService {
         });
       } catch (logErr: any) {
         if (isDuplicateKeyError(logErr)) {
-          await syncTableSequence('activity_log');
+          await syncTableSequence('activity_log', 'id', client);
           try {
-            await prisma.activity_log.create({
+            await client.activity_log.create({
               data: {
                 log_name: 'default',
                 description: `Menambah Surat oleh ${creatorName}`,
@@ -855,14 +881,14 @@ export class SuratService {
         };
 
         try {
-          createdEvent = await prisma.events.create({
+          createdEvent = await client.events.create({
             data: eventDataPayload,
           });
         } catch (evIdErr: any) {
           if (isDuplicateKeyError(evIdErr)) {
             console.warn('[SuratService] Terdeteksi bentrok sequence pada tabel events. Menjalankan auto-sync sequence dan me-retry insert...');
-            await syncTableSequence('events');
-            createdEvent = await prisma.events.create({
+            await syncTableSequence('events', 'id', client);
+            createdEvent = await client.events.create({
               data: eventDataPayload,
             });
           } else {
@@ -875,7 +901,7 @@ export class SuratService {
         if (createdEvent) {
           // Hubungkan ke tabel pivot event_letters untuk relasi many-to-many Laravel
           try {
-            await prisma.event_letters.create({
+            await client.event_letters.create({
               data: {
                 event_id: createdEvent.id.toString(),
                 letter_id: surat.id.toString(),
@@ -889,9 +915,9 @@ export class SuratService {
           } catch (elErr: any) {
             if (isDuplicateKeyError(elErr)) {
               console.warn('[SuratService] Terdeteksi bentrok sequence pada tabel event_letters. Menjalankan auto-sync sequence dan me-retry...');
-              await syncTableSequence('event_letters');
+              await syncTableSequence('event_letters', 'id', client);
               try {
-                await prisma.event_letters.create({
+                await client.event_letters.create({
                   data: {
                     event_id: createdEvent.id.toString(),
                     letter_id: surat.id.toString(),
@@ -911,7 +937,7 @@ export class SuratService {
 
           // Catat activity log untuk penambahan agenda acara
           try {
-            await prisma.activity_log.create({
+            await client.activity_log.create({
               data: {
                 log_name: 'default',
                 description: `Menambah Jadwal Kegiatan Otomatis dari Surat ${surat.agenda_number} oleh ${creatorName}`,
@@ -935,9 +961,9 @@ export class SuratService {
             });
           } catch (evLogErr: any) {
             if (isDuplicateKeyError(evLogErr)) {
-              await syncTableSequence('activity_log');
+              await syncTableSequence('activity_log', 'id', client);
               try {
-                await prisma.activity_log.create({
+                await client.activity_log.create({
                   data: {
                     log_name: 'default',
                     description: `Menambah Jadwal Kegiatan Otomatis dari Surat ${surat.agenda_number} oleh ${creatorName}`,
@@ -1016,7 +1042,7 @@ export class SuratService {
   /**
    * Membatalkan draft dan menghapus berkas sementara
    */
-  public async cancelDraft(draft?: SuratDraftData, _userId?: number): Promise<void> {
+  public async cancelDraft(draft?: SuratDraftData, _userId?: number, _scope: ProtocolScope = 'MENAKER'): Promise<void> {
     if (draft?.tempPdfPath) {
       pdfService.deleteTempPdf(draft.tempPdfPath);
     }
@@ -1025,12 +1051,13 @@ export class SuratService {
   /**
    * Mengambil riwayat surat terbaru dengan pagination (5 surat per halaman)
    */
-  public async getRiwayatSurat(page: number = 0, pageSize: number = 5) {
-    const totalCount = await prisma.letters.count({
+  public async getRiwayatSurat(page: number = 0, pageSize: number = 5, scope: ProtocolScope = 'MENAKER') {
+    const client = this.getClient(scope);
+    const totalCount = await client.letters.count({
       where: { deleted_at: null },
     });
 
-    const items = await prisma.letters.findMany({
+    const items = await client.letters.findMany({
       where: { deleted_at: null },
       skip: page * pageSize,
       take: pageSize,
@@ -1040,7 +1067,7 @@ export class SuratService {
     });
 
     const letterIds = items.map((i) => i.id);
-    const dispositions = await prisma.dispositions.findMany({
+    const dispositions = await client.dispositions.findMany({
       where: {
         letter_id: { in: letterIds },
         deleted_at: null,
@@ -1070,8 +1097,9 @@ export class SuratService {
   /**
    * Mengambil detail lengkap satu surat berdasarkan ID
    */
-  public async getDetailSurat(id: number): Promise<NormalizedSurat | null> {
-    const letter = await prisma.letters.findFirst({
+  public async getDetailSurat(id: number, scope: ProtocolScope = 'MENAKER'): Promise<NormalizedSurat | null> {
+    const client = this.getClient(scope);
+    const letter = await client.letters.findFirst({
       where: {
         id: BigInt(id),
         deleted_at: null,
@@ -1080,7 +1108,7 @@ export class SuratService {
 
     if (!letter) return null;
 
-    const disp = await prisma.dispositions.findFirst({
+    const disp = await client.dispositions.findFirst({
       where: {
         letter_id: letter.id,
         deleted_at: null,
@@ -1124,11 +1152,13 @@ export class SuratService {
    */
   public async searchSuratByPerihal(
     keyword: string,
-    limitOrOptions: number | SuratSearchOptions = 10
+    limitOrOptions: number | SuratSearchOptions = 10,
+    scope: ProtocolScope = 'MENAKER'
   ): Promise<NormalizedSurat[]> {
     const clean = keyword.trim().toLowerCase();
     if (!clean) return [];
 
+    const client = this.getClient(scope);
     const options: SuratSearchOptions =
       typeof limitOrOptions === 'number' ? { limit: limitOrOptions } : limitOrOptions;
     const limit = options.limit || 10;
@@ -1163,7 +1193,7 @@ export class SuratService {
       clean === 'surat terakhir' ||
       clean === 'surat baru'
     ) {
-      const recentLetters = await prisma.letters.findMany({
+      const recentLetters = await client.letters.findMany({
         where: {
           deleted_at: null,
           ...dateFilter,
@@ -1176,7 +1206,7 @@ export class SuratService {
       });
 
       const candidateIds = recentLetters.map((c) => c.id);
-      const disps = await prisma.dispositions.findMany({
+      const disps = await client.dispositions.findMany({
         where: {
           letter_id: { in: candidateIds },
           deleted_at: null,
@@ -1203,7 +1233,7 @@ export class SuratService {
     const qMode: Prisma.QueryMode = 'insensitive';
     let dispLetterIds: bigint[] = [];
     try {
-      const matchingDisps = await prisma.dispositions.findMany({
+      const matchingDisps = await client.dispositions.findMany({
         where: {
           deleted_at: null,
           OR: searchTermsArray.flatMap((term) => [
@@ -1226,7 +1256,7 @@ export class SuratService {
 
     // Jika query terdiri dari 2 kata atau lebih, coba cari dengan klausa AND terlebih dahulu
     if (expansion.meaningfulTokens.length >= 2) {
-      candidates = await prisma.letters.findMany({
+      candidates = await client.letters.findMany({
         where: {
           deleted_at: null,
           ...dateFilter,
@@ -1254,7 +1284,7 @@ export class SuratService {
 
     // Jika tidak ditemukan dengan AND atau query hanya 1 token, cari dengan klausa OR
     if (candidates.length === 0) {
-      candidates = await prisma.letters.findMany({
+      candidates = await client.letters.findMany({
         where: {
           deleted_at: null,
           ...dateFilter,
@@ -1286,7 +1316,7 @@ export class SuratService {
 
     // Ambil disposisi terkait
     const candidateIds = candidates.map((c) => c.id);
-    const disps = await prisma.dispositions.findMany({
+    const disps = await client.dispositions.findMany({
       where: {
         letter_id: { in: candidateIds },
         deleted_at: null,

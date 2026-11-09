@@ -423,9 +423,10 @@ export function getPublicBaseUrl(): string | null {
  */
 export function getLetterShortUrl(
   letterId?: number | bigint | string | null,
-  fileName?: string | null
+  fileName?: string | null,
+  scope: 'MENAKER' | 'WAMEN' = 'MENAKER'
 ): string | null {
-  const fileUrl = getLetterFileUrl(fileName);
+  const fileUrl = getLetterFileUrl(fileName, scope);
   if (!fileUrl) return null;
 
   const publicBase = getPublicBaseUrl();
@@ -441,10 +442,10 @@ export function getLetterShortUrl(
 
 /**
  * Mengambil URL publik berkas surat yang dapat langsung diklik oleh pengguna di WhatsApp.
- * Menggunakan base URL dari ENV.FILE_URL + nama berkas dari kolom `file` tabel `letters`.
+ * Menggunakan base URL dari ENV.FILE_URL / ENV.FILE_URL_WAMEN + nama berkas dari kolom `file` tabel `letters`.
  * Mengembalikan null jika berkas tidak ada atau kosong.
  */
-export function getLetterFileUrl(fileName?: string | null): string | null {
+export function getLetterFileUrl(fileName?: string | null, scope: 'MENAKER' | 'WAMEN' = 'MENAKER'): string | null {
   if (!fileName || fileName.trim() === '' || fileName.trim() === '-') {
     return null;
   }
@@ -458,7 +459,8 @@ export function getLetterFileUrl(fileName?: string | null): string | null {
   cleanFile = cleanFile.replace(/^\/?(?:files\/letter\/)+/i, '');
   cleanFile = cleanFile.replace(/^\/+/, '');
 
-  const baseUrl = (ENV.FILE_URL || '').endsWith('/') ? ENV.FILE_URL : `${ENV.FILE_URL}/`;
+  const rawBase = scope === 'WAMEN' ? (ENV.FILE_URL_WAMEN || ENV.FILE_URL) : ENV.FILE_URL;
+  const baseUrl = (rawBase || '').endsWith('/') ? rawBase : `${rawBase}/`;
   return `${baseUrl}${cleanFile}`;
 }
 
@@ -467,9 +469,13 @@ export function getLetterFileUrl(fileName?: string | null): string | null {
  * WhatsApp tidak mendukung sintaks Markdown hyperlink [text](url), sehingga link harus
  * ditampilkan sebagai URL langsung agar dapat diklik.
  */
-export function formatNomorAgendaLink(nomorAgenda: string | null | undefined, fileName?: string | null): string {
+export function formatNomorAgendaLink(
+  nomorAgenda: string | null | undefined,
+  fileName?: string | null,
+  scope: 'MENAKER' | 'WAMEN' = 'MENAKER'
+): string {
   const agenda = (nomorAgenda || '-').trim();
-  const fileUrl = getLetterFileUrl(fileName);
+  const fileUrl = getLetterShortUrl(agenda, fileName, scope) || getLetterFileUrl(fileName, scope);
   if (!fileUrl) {
     return agenda;
   }
@@ -506,7 +512,7 @@ export function generateDispositionFileName(originalOrExtName?: string | null): 
 /**
  * Mendapatkan URL publik berkas lembar disposisi berdasarkan nama file di database.
  */
-export function getDispositionFileUrl(fileName?: string | null): string | null {
+export function getDispositionFileUrl(fileName?: string | null, scope: 'MENAKER' | 'WAMEN' = 'MENAKER'): string | null {
   if (!fileName || fileName.trim() === '' || fileName.trim() === '-') {
     return null;
   }
@@ -516,7 +522,10 @@ export function getDispositionFileUrl(fileName?: string | null): string | null {
     return cleanFile;
   }
 
-  const rawBase = ENV.DISPOSITION_FILE_URL || ENV.FILE_URL || '';
+  const rawBase =
+    scope === 'WAMEN'
+      ? (ENV.DISPOSITION_FILE_URL_WAMEN || ENV.DISPOSITION_FILE_URL || ENV.FILE_URL_WAMEN || ENV.FILE_URL || '')
+      : (ENV.DISPOSITION_FILE_URL || ENV.FILE_URL || '');
   const baseUrl = rawBase.endsWith('/') ? rawBase : `${rawBase}/`;
   return `${baseUrl}${cleanFile}`;
 }
@@ -1555,7 +1564,7 @@ export function formatFriendlyCategory(categoryCode?: string | null, typeName?: 
 /**
  * Format satu kartu ringkasan surat masuk untuk tampilan daftar hasil pencarian di WhatsApp
  */
-export function formatSuratListItem(s: SuratCardData, index: number): string {
+export function formatSuratListItem(s: SuratCardData, index: number, scope: 'MENAKER' | 'WAMEN' = 'MENAKER'): string {
   const isSudah = s.disposisi?.status === 'SUDAH_DISPOSISI';
   let statusBadge = isSudah ? '🟢 Sudah Disposisi' : '🟡 Belum Disposisi';
   if (isSudah && s.disposisi?.tujuanDisposisi && s.disposisi.tujuanDisposisi !== '-') {
@@ -1602,7 +1611,7 @@ export function formatSuratListItem(s: SuratCardData, index: number): string {
 
   lines.push(`   📋 *Status*     : ${statusBadge}`);
 
-  const fileUrl = getLetterFileUrl(s.fileName);
+  const fileUrl = getLetterFileUrl(s.fileName, scope);
   if (fileUrl) {
     lines.push(`   📎 *Dokumen*    : ${fileUrl}`);
   }
@@ -1613,10 +1622,10 @@ export function formatSuratListItem(s: SuratCardData, index: number): string {
 /**
  * Format tampilan rincian lengkap surat masuk beserta lembar disposisi dan agenda terkait
  */
-export function formatSuratDetail(surat: SuratCardData, waktuInputStr: string): string {
+export function formatSuratDetail(surat: SuratCardData, waktuInputStr: string, scope: 'MENAKER' | 'WAMEN' = 'MENAKER'): string {
   const disposisi = surat.disposisi;
   const isSudah = disposisi?.status === 'SUDAH_DISPOSISI';
-  const fileUrl = getLetterShortUrl(surat.id, surat.fileName);
+  const fileUrl = getLetterShortUrl(surat.id, surat.fileName, scope);
 
   const cleanPerihalText = cleanHtml(surat.perihal) || cleanHtml(surat.subject) || 'Surat Masuk';
   const noSuratLine =

@@ -266,7 +266,8 @@ export class ArahanLangsungHandler {
       const saveResult = await jadwalService.saveJadwalArahanLangsung(
         draft,
         session.userId,
-        session.userName
+        session.userName,
+        session.scope
       );
 
       if (!saveResult.success) {

@@ -27,7 +27,7 @@ export const CRITICAL_SYNC_TABLES = [
 /**
  * Mendapatkan nama sequence PostgreSQL untuk suatu tabel dan kolom
  */
-async function resolveSequenceName(tableName: string, columnName: string = 'id'): Promise<string | null> {
+async function resolveSequenceName(tableName: string, columnName: string = 'id', client: any = prisma): Promise<string | null> {
   // 1. Coba pg_get_serial_sequence dengan berbagai format nama tabel
   const patterns = [
     `SELECT pg_get_serial_sequence('${tableName}', '${columnName}') as seq`,
@@ -38,7 +38,7 @@ async function resolveSequenceName(tableName: string, columnName: string = 'id')
 
   for (const query of patterns) {
     try {
-      const res: any[] = await prisma.$queryRawUnsafe(query);
+      const res: any[] = await client.$queryRawUnsafe(query);
       if (res && res[0] && res[0].seq) {
         return res[0].seq;
       }
@@ -49,7 +49,7 @@ async function resolveSequenceName(tableName: string, columnName: string = 'id')
 
   // 2. Coba periksa default value dari information_schema.columns (misal: nextval('letters_id_seq'::regclass))
   try {
-    const colDefRes: any[] = await prisma.$queryRawUnsafe(`
+    const colDefRes: any[] = await client.$queryRawUnsafe(`
       SELECT column_default 
       FROM information_schema.columns 
       WHERE table_schema = 'public' 
@@ -68,7 +68,7 @@ async function resolveSequenceName(tableName: string, columnName: string = 'id')
 
   // 3. Coba cari nama sequence dari pg_class yang cocok dengan pola nama tabel
   try {
-    const pgClassRes: any[] = await prisma.$queryRawUnsafe(`
+    const pgClassRes: any[] = await client.$queryRawUnsafe(`
       SELECT relname 
       FROM pg_class 
       WHERE relkind = 'S' 
@@ -92,14 +92,21 @@ async function resolveSequenceName(tableName: string, columnName: string = 'id')
  */
 export async function syncTableSequence(
   tableName: string,
-  columnName: string = 'id'
+  columnNameOrClient: string | any = 'id',
+  clientOrNone: any = prisma
 ): Promise<SequenceSyncResult> {
+  const columnName = typeof columnNameOrClient === 'string' ? columnNameOrClient : 'id';
+  const client =
+    typeof columnNameOrClient === 'object' && columnNameOrClient !== null
+      ? columnNameOrClient
+      : clientOrNone;
+
   try {
     // 1. Cari nama sequence
-    const seqName = await resolveSequenceName(tableName, columnName);
+    const seqName = await resolveSequenceName(tableName, columnName, client);
 
     // 2. Dapatkan MAX(id) dari data yang ada di tabel
-    const maxRes: any[] = await prisma.$queryRawUnsafe(
+    const maxRes: any[] = await client.$queryRawUnsafe(
       `SELECT COALESCE(MAX("${columnName}"), 0) as max_id FROM "${tableName}"`
     );
     const maxId = BigInt(maxRes[0]?.max_id || 0);
@@ -117,9 +124,9 @@ export async function syncTableSequence(
 
     // 3. Setval sequence ke MAX(id) jika ada data, atau 1 jika kosong (is_called false)
     if (maxId > BigInt(0)) {
-      await prisma.$queryRawUnsafe(`SELECT setval('${seqName}', ${maxId.toString()}, true)`);
+      await client.$queryRawUnsafe(`SELECT setval('${seqName}', ${maxId.toString()}, true)`);
     } else {
-      await prisma.$queryRawUnsafe(`SELECT setval('${seqName}', 1, false)`);
+      await client.$queryRawUnsafe(`SELECT setval('${seqName}', 1, false)`);
     }
 
     return {

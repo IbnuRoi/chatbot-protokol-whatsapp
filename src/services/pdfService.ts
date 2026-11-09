@@ -4,6 +4,7 @@ import { PDFParse } from 'pdf-parse';
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { PDFDocument, PageSizes } from 'pdf-lib';
 import { ENV } from '../config/env';
+import { dbManager, ProtocolScope } from '../database/dbManager';
 
 export interface PdfValidationResult {
   isValid: boolean;
@@ -132,8 +133,8 @@ export class PdfService {
   /**
    * Memindahkan file dari temp ke storage upload (folder lokal / symlink server)
    */
-  public moveToUploadStorage(tempFilePath: string, finalFileName: string): string {
-    const uploadDir = ENV.UPLOAD_STORAGE_PATH;
+  public moveToUploadStorage(tempFilePath: string, finalFileName: string, scope: ProtocolScope = 'MENAKER'): string {
+    const uploadDir = dbManager.getUploadStoragePath(scope);
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
     }
@@ -157,8 +158,8 @@ export class PdfService {
   /**
    * Memindahkan file lembar disposisi dari temp ke storage disposisi (folder lokal / symlink server)
    */
-  public moveToDispositionStorage(tempFilePath: string, finalFileName: string): string {
-    const uploadDir = ENV.DISPOSITION_STORAGE_PATH;
+  public moveToDispositionStorage(tempFilePath: string, finalFileName: string, scope: ProtocolScope = 'MENAKER'): string {
+    const uploadDir = dbManager.getDispositionStoragePath(scope);
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
     }
@@ -300,9 +301,10 @@ export class PdfService {
   public async mergeDispositionWithLetterPdf(
     dispositionPath: string,
     letterFileName: string | null | undefined,
-    finalDispositionFileName: string
+    finalDispositionFileName: string,
+    scope: ProtocolScope = 'MENAKER'
   ): Promise<{ targetPath: string; finalFileName: string }> {
-    const uploadDir = ENV.DISPOSITION_STORAGE_PATH;
+    const uploadDir = dbManager.getDispositionStoragePath(scope);
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
     }
@@ -362,8 +364,24 @@ export class PdfService {
         const candidatePaths = [
           path.join(ENV.UPLOAD_STORAGE_PATH, letterFileName),
           path.join(ENV.PRIVATE_STORAGE_PATH, letterFileName),
+          path.join(ENV.UPLOAD_STORAGE_PATH_WAMEN, letterFileName),
           path.join(process.cwd(), 'storage', 'letters', letterFileName),
+          path.join(process.cwd(), 'storage', 'letters_wamen', letterFileName),
           path.join(process.cwd(), 'storage', 'private', letterFileName),
+          ...(ENV.FILES_ROOT
+            ? [
+                path.join(ENV.FILES_ROOT, 'letter', letterFileName),
+                path.join(ENV.FILES_ROOT, 'letters', letterFileName),
+                path.join(ENV.FILES_ROOT, letterFileName),
+              ]
+            : []),
+          ...(ENV.FILES_ROOT_WAMEN && ENV.FILES_ROOT_WAMEN !== ENV.FILES_ROOT
+            ? [
+                path.join(ENV.FILES_ROOT_WAMEN, 'letter', letterFileName),
+                path.join(ENV.FILES_ROOT_WAMEN, 'letters', letterFileName),
+                path.join(ENV.FILES_ROOT_WAMEN, letterFileName),
+              ]
+            : []),
         ];
 
         for (const cp of candidatePaths) {
@@ -437,7 +455,7 @@ export class PdfService {
     } catch (mergeErr: any) {
       console.error('[PdfService] Terjadi kesalahan saat menggabungkan disposisi dan surat:', mergeErr);
       // Fallback aman: jika merge gagal, pindahkan file asli disposisi menggunakan moveToDispositionStorage
-      const fallbackPath = this.moveToDispositionStorage(dispositionPath, cleanFinalFileName);
+      const fallbackPath = this.moveToDispositionStorage(dispositionPath, cleanFinalFileName, scope);
       return {
         targetPath: fallbackPath,
         finalFileName: cleanFinalFileName,

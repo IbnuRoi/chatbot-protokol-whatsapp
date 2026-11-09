@@ -7,7 +7,7 @@ import { metaClient } from './metaClient';
 import { pdfService } from '../../services/pdfService';
 import { imageService } from '../../services/imageService';
 import { cloudflaredTunnel } from './cloudflaredTunnel';
-import { prisma } from '../../database/prisma';
+import { dbManager, ProtocolScope } from '../../database/dbManager';
 import { getLetterFileUrl } from '../../utils/textHelper';
 
 export class MetaWebhookServer {
@@ -61,16 +61,29 @@ export class MetaWebhookServer {
             console.log(`\n🔗 [Short Link Redirect] Menerima akses tautan berkas: ${pathname} (ID/Ref: ${letterIdParam})`);
 
             let targetFileName: string | null = null;
+            let foundScope: ProtocolScope = 'MENAKER';
 
             // Jika parameter berupa angka (Letter ID)
             if (/^\d+$/.test(letterIdParam)) {
               try {
-                const letter = await prisma.letters.findFirst({
+                // Cari di database Menaker dulu
+                let letter = await dbManager.getClient('MENAKER').letters.findFirst({
                   where: { id: BigInt(letterIdParam) },
                   select: { id: true, file: true, agenda_number: true },
                 });
                 if (letter && letter.file) {
                   targetFileName = letter.file;
+                  foundScope = 'MENAKER';
+                } else if (ENV.DB_NAME_WAMEN || ENV.DATABASE_URL_WAMEN) {
+                  // Fallback ke database Wamen
+                  letter = await dbManager.getClient('WAMEN').letters.findFirst({
+                    where: { id: BigInt(letterIdParam) },
+                    select: { id: true, file: true, agenda_number: true },
+                  });
+                  if (letter && letter.file) {
+                    targetFileName = letter.file;
+                    foundScope = 'WAMEN';
+                  }
                 }
               } catch (dbErr: any) {
                 console.warn(`⚠️ [Short Link] Gagal mencari surat ID ${letterIdParam}: ${dbErr.message}`);
@@ -80,7 +93,7 @@ export class MetaWebhookServer {
             // Jika belum ditemukan, coba cocokkan dengan agenda_number atau nama file langsung
             if (!targetFileName) {
               try {
-                const letter = await prisma.letters.findFirst({
+                let letter = await dbManager.getClient('MENAKER').letters.findFirst({
                   where: {
                     OR: [
                       { agenda_number: letterIdParam },
@@ -91,6 +104,21 @@ export class MetaWebhookServer {
                 });
                 if (letter && letter.file) {
                   targetFileName = letter.file;
+                  foundScope = 'MENAKER';
+                } else if (ENV.DB_NAME_WAMEN || ENV.DATABASE_URL_WAMEN) {
+                  letter = await dbManager.getClient('WAMEN').letters.findFirst({
+                    where: {
+                      OR: [
+                        { agenda_number: letterIdParam },
+                        { file: { contains: letterIdParam } },
+                      ],
+                    },
+                    select: { id: true, file: true },
+                  });
+                  if (letter && letter.file) {
+                    targetFileName = letter.file;
+                    foundScope = 'WAMEN';
+                  }
                 }
               } catch {}
             }
@@ -101,9 +129,9 @@ export class MetaWebhookServer {
             }
 
             if (targetFileName) {
-              const fullFileUrl = getLetterFileUrl(targetFileName);
+              const fullFileUrl = getLetterFileUrl(targetFileName, foundScope);
               if (fullFileUrl) {
-                console.log(`➡️ [Short Link Redirect] Mengalihkan ke berkas asli: ${fullFileUrl}`);
+                console.log(`➡️ [Short Link Redirect ${foundScope}] Mengalihkan ke berkas asli: ${fullFileUrl}`);
                 res.writeHead(302, {
                   'Location': fullFileUrl,
                   'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -398,8 +426,19 @@ export class MetaWebhookServer {
             }
           }
 
+          // Deteksi scope berdasarkan Phone Number ID penerima
+          let detectedScope: ProtocolScope | undefined = undefined;
+          if (ENV.META_PHONE_NUMBER_ID_WAMEN && metadata?.phone_number_id === ENV.META_PHONE_NUMBER_ID_WAMEN) {
+            detectedScope = 'WAMEN';
+          } else if (ENV.META_PHONE_NUMBER_ID && metadata?.phone_number_id === ENV.META_PHONE_NUMBER_ID) {
+            detectedScope = 'MENAKER';
+          }
+
           // Proses melalui MessageRouter dan kirimkan respons balasan
           if (routerPayload) {
+            routerPayload.phoneNumberId = metadata?.phone_number_id;
+            routerPayload.scope = detectedScope;
+
             try {
               // Jika ini adalah simulasi pesan uji coba (mock test) dari Meta Developer Dashboard
               const isMetaMockTest =
@@ -417,7 +456,9 @@ export class MetaWebhookServer {
               const targetPhoneId =
                 metadata?.phone_number_id && metadata.phone_number_id !== '123456123'
                   ? metadata.phone_number_id
-                  : ENV.META_PHONE_NUMBER_ID;
+                  : (detectedScope === 'WAMEN' && ENV.META_PHONE_NUMBER_ID_WAMEN
+                      ? ENV.META_PHONE_NUMBER_ID_WAMEN
+                      : ENV.META_PHONE_NUMBER_ID);
 
               await metaClient.sendMessage(senderNumber, botReply, targetPhoneId);
             } catch (err) {

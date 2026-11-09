@@ -61,17 +61,25 @@ export class HybridSearchHandler {
 
     // 1. Eksekusi pencarian dengan filter konteks (waktu, pengirim, lokasi) jika tersedia
     let [letters, schedules] = await Promise.all([
-      suratService.searchSuratByPerihal(clean, {
-        dateStart: context?.startDate,
-        dateEnd: context?.endDate,
-        sender: context?.sender,
-      }),
-      jadwalService.searchJadwal(clean, {
-        startDate: context?.startDate,
-        endDate: context?.endDate,
-        location: context?.location,
-        onlyDiagendakan: context?.onlyDiagendakan,
-      }),
+      suratService.searchSuratByPerihal(
+        clean,
+        {
+          dateStart: context?.startDate,
+          dateEnd: context?.endDate,
+          sender: context?.sender,
+        },
+        session.scope
+      ),
+      jadwalService.searchJadwal(
+        clean,
+        {
+          startDate: context?.startDate,
+          endDate: context?.endDate,
+          location: context?.location,
+          onlyDiagendakan: context?.onlyDiagendakan,
+        },
+        session.scope
+      ),
     ]);
 
     // Simpan ke sesi
@@ -149,7 +157,7 @@ export class HybridSearchHandler {
           }
 
           let fileLine = '';
-          const fileUrl = getLetterShortUrl(j.surat?.id, j.surat?.fileName);
+          const fileUrl = getLetterShortUrl(j.surat?.id, j.surat?.fileName, session.scope);
           if (fileUrl) {
             fileLine = `\n*Berkas Surat:* ${fileUrl}`;
           }
@@ -244,7 +252,7 @@ export class HybridSearchHandler {
         if (cleanPic && cleanPic !== '-') {
           lines.push(`   👤 *PIC*     : ${cleanPic}`);
         }
-        const fileUrl = getLetterShortUrl(j.surat?.id, j.surat?.fileName);
+        const fileUrl = getLetterShortUrl(j.surat?.id, j.surat?.fileName, session.scope);
         if (fileUrl) {
           lines.push(`   📎 *Berkas*  : ${fileUrl}`);
         }
@@ -259,7 +267,7 @@ export class HybridSearchHandler {
 
     // 2. Format bagian Arsip Surat Masuk
     const suratListText = displayedLetters
-      .map((s, idx) => formatSuratListItem(s, idx + 1))
+      .map((s, idx) => formatSuratListItem(s, idx + 1, session.scope))
       .join('\n\n');
 
     const scheduleNote = schedules.length > maxItems ? ` _(Menampilkan ${maxItems} dari total ${schedules.length} kegiatan)_` : '';

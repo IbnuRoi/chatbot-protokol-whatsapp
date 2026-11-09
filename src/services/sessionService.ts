@@ -1,3 +1,7 @@
+import { ProtocolScope } from '../database/dbManager';
+
+export { ProtocolScope };
+
 export enum BotState {
   IDLE = 'IDLE',
   MAIN_MENU = 'MAIN_MENU',
@@ -150,6 +154,8 @@ export interface UserSession {
   userName: string;
   userRole: string;
   state: BotState;
+  scope: ProtocolScope;
+  allowedScopes?: ProtocolScope[];
   lastActive: Date;
   draftSurat?: SuratDraftData;
   draftDisposisi?: DisposisiDraftData;
@@ -186,7 +192,9 @@ class SessionService {
     userId: number,
     userName: string,
     userRole: string,
-    initialState: BotState = BotState.MAIN_MENU
+    initialState: BotState = BotState.MAIN_MENU,
+    scope: ProtocolScope = 'MENAKER',
+    allowedScopes?: ProtocolScope[]
   ): UserSession {
     const session: UserSession = {
       whatsappNumber,
@@ -194,10 +202,24 @@ class SessionService {
       userName,
       userRole,
       state: initialState,
+      scope: scope || 'MENAKER',
+      allowedScopes: allowedScopes || [scope || 'MENAKER'],
       lastActive: new Date(),
     };
     this.sessions.set(whatsappNumber, session);
     return session;
+  }
+
+  public setScope(whatsappNumber: string, scope: ProtocolScope): void {
+    const session = this.getSession(whatsappNumber);
+    if (session) {
+      if (!session.allowedScopes || session.allowedScopes.includes(scope)) {
+        session.scope = scope;
+        session.lastActive = new Date();
+      } else {
+        console.warn(`[Session] Penolakan pengalihan scope [${scope}] untuk nomor ${whatsappNumber} (Otorisasi: ${session.allowedScopes?.join(',')})`);
+      }
+    }
   }
 
   public setState(whatsappNumber: string, state: BotState): void {

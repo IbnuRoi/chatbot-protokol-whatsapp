@@ -1,6 +1,8 @@
 import { ENV } from '../config/env';
 import { sshTunnel } from './sshTunnel';
 
+export type ProtocolScope = 'MENAKER' | 'WAMEN';
+
 export interface DatabaseConnectionInfo {
   isTunnel: boolean;
   host: string;
@@ -9,32 +11,65 @@ export interface DatabaseConnectionInfo {
   schema: string;
   user: string;
   url: string;
+  scope?: ProtocolScope;
 }
 
 /**
- * Membangun URL koneksi PostgreSQL dinamis berdasarkan konfigurasi ENV.
+ * Membangun URL koneksi PostgreSQL dinamis berdasarkan konfigurasi ENV dan scope (MENAKER / WAMEN).
  * Mengarahkan koneksi ke PostgreSQL lokal via SSH Tunnel atau Direct host.
  */
-export function getDatabaseUrl(): string {
+export function getDatabaseUrl(scope: ProtocolScope = 'MENAKER'): string {
+  // 1. Dukungan Ruang Lingkup Wamen (Wakil Menteri)
+  if (scope === 'WAMEN') {
+    if (ENV.DATABASE_URL_WAMEN) {
+      if (ENV.SSH_ENABLED) {
+        const localPort = sshTunnel.isRunning() ? sshTunnel.getLocalPort() : (ENV.DB_LOCAL_PORT || 5433);
+        return ENV.DATABASE_URL_WAMEN.replace(/@(localhost|127\.0\.0\.1)(:\d+)?\//, `@127.0.0.1:${localPort}/`);
+      }
+      return ENV.DATABASE_URL_WAMEN;
+    }
+    const dbNameWamen = ENV.DB_NAME_WAMEN;
+    if (dbNameWamen) {
+      const user = encodeURIComponent(ENV.DB_USER_WAMEN || ENV.DB_USER || 'appproto_user');
+      const password = encodeURIComponent(ENV.DB_PASSWORD_WAMEN || ENV.DB_PASSWORD || '');
+      const schema = ENV.DB_SCHEMA_WAMEN || ENV.DB_SCHEMA || 'public';
+
+      if (ENV.SSH_ENABLED) {
+        const localPort = sshTunnel.isRunning() ? sshTunnel.getLocalPort() : (ENV.DB_LOCAL_PORT || 5433);
+        return `postgresql://${user}:${password}@127.0.0.1:${localPort}/${dbNameWamen}?schema=${schema}&sslmode=prefer`;
+      }
+
+      const host = ENV.DB_HOST_WAMEN || ENV.DB_HOST || '127.0.0.1';
+      const port = ENV.DB_PORT_WAMEN || ENV.DB_PORT || 5432;
+      return `postgresql://${user}:${password}@${host}:${port}/${dbNameWamen}?schema=${schema}&sslmode=prefer`;
+    }
+
+    console.warn('⚠️ [Database] Konfigurasi DB_NAME_WAMEN belum diatur, beralih ke DB Menaker.');
+  }
+
+  // 2. Ruang Lingkup Menaker (Default)
   const user = encodeURIComponent(ENV.DB_USER || 'postgres');
   const password = encodeURIComponent(ENV.DB_PASSWORD || '');
-  const dbName = ENV.DB_NAME || 'postgres';
+  const dbName = ENV.DB_NAME_MENAKER || ENV.DB_NAME || 'postgres';
   const schema = ENV.DB_SCHEMA || 'public';
 
-  // 1. Mode SSH Tunnel (Forwarding 127.0.0.1:localPort ke Remote PostgreSQL)
+  // Mode SSH Tunnel (Forwarding 127.0.0.1:localPort ke Remote PostgreSQL)
   if (ENV.SSH_ENABLED) {
     const localPort = sshTunnel.isRunning() ? sshTunnel.getLocalPort() : (ENV.DB_LOCAL_PORT || 5433);
+    if (ENV.DATABASE_URL) {
+      return ENV.DATABASE_URL.replace(/@(localhost|127\.0\.0\.1)(:\d+)?\//, `@127.0.0.1:${localPort}/`);
+    }
     return `postgresql://${user}:${password}@127.0.0.1:${localPort}/${dbName}?schema=${schema}&sslmode=prefer`;
   }
 
-  // 2. Mode Direct PostgreSQL
-  if (ENV.DB_HOST && ENV.DB_USER && ENV.DB_NAME) {
+  // Mode Direct PostgreSQL
+  if (ENV.DB_HOST && ENV.DB_USER && (ENV.DB_NAME_MENAKER || ENV.DB_NAME)) {
     const host = ENV.DB_HOST;
     const port = ENV.DB_PORT || 5432;
     return `postgresql://${user}:${password}@${host}:${port}/${dbName}?schema=${schema}&sslmode=prefer`;
   }
 
-  // 3. Gunakan DATABASE_URL jika ditentukan secara eksplisit
+  // Gunakan DATABASE_URL jika ditentukan secara eksplisit
   if (ENV.DATABASE_URL) {
     return ENV.DATABASE_URL;
   }

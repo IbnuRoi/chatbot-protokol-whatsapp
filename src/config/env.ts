@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 
 dotenv.config({ override: true });
 
@@ -22,6 +23,22 @@ export const ENV = {
 
   DATABASE_URL: process.env.DATABASE_URL || '',
   DIRECT_URL: process.env.DIRECT_URL || '',
+
+  // Konfigurasi Database Multi-Tenancy (Menaker & Wamen)
+  DB_NAME_MENAKER: process.env.DB_NAME_MENAKER || process.env.DB_NAME || '',
+  DB_NAME_WAMEN: process.env.DB_NAME_WAMEN || 'appprotowamen_db',
+  DATABASE_URL_WAMEN:
+    process.env.DATABASE_URL_WAMEN ||
+    (process.env.DATABASE_URL &&
+    (process.env.DATABASE_URL.includes('wamen') || process.env.DATABASE_URL.includes('appprotowamen'))
+      ? process.env.DATABASE_URL
+      : '') ||
+    'postgresql://appproto_user:DmCOkBzYCCUO@localhost:5432/appprotowamen_db?schema=public',
+  DB_HOST_WAMEN: process.env.DB_HOST_WAMEN || '127.0.0.1',
+  DB_PORT_WAMEN: Number(process.env.DB_PORT_WAMEN || 5432),
+  DB_USER_WAMEN: process.env.DB_USER_WAMEN || 'appproto_user',
+  DB_PASSWORD_WAMEN: process.env.DB_PASSWORD_WAMEN || 'DmCOkBzYCCUO',
+  DB_SCHEMA_WAMEN: process.env.DB_SCHEMA_WAMEN || 'public',
 
   // 1. Chat & NLU Intention (OpenRouter - Model Free Tanpa Biaya)
   CHAT_API_KEY: process.env.CHAT_API_KEY || process.env.OPENROUTER_API_KEY || '',
@@ -56,10 +73,45 @@ export const ENV = {
   ),
   DISPOSITION_FILE_URL: process.env.DISPOSITION_FILE_URL || '',
 
+  // Lokasi Penyimpanan Dokumen Files Root (Disediakan Server Wamen / Symlink)
+  FILES_ROOT: process.env.FILES_ROOT || '',
+  FILES_ROOT_WAMEN:
+    process.env.FILES_ROOT_WAMEN ||
+    process.env.FILES_ROOT ||
+    '/home/gatsu51/app/v3-protokolwamen.gatsu51.com/files',
+
+  // Penyimpanan Berkas & URL Khusus Agenda Wamen (Multi-Tenancy)
+  UPLOAD_STORAGE_PATH_WAMEN: (() => {
+    if (process.env.UPLOAD_STORAGE_PATH_WAMEN) {
+      return path.resolve(process.cwd(), process.env.UPLOAD_STORAGE_PATH_WAMEN);
+    }
+    const root = process.env.FILES_ROOT_WAMEN || process.env.FILES_ROOT;
+    if (root && fs.existsSync(path.join(root, 'letter'))) {
+      return path.join(root, 'letter');
+    }
+    return path.resolve(process.cwd(), './storage/letters_wamen');
+  })(),
+  FILE_URL_WAMEN:
+    process.env.FILE_URL_WAMEN || 'https://v3-protokolwamen.gatsu51.com/files/letter/',
+  DISPOSITION_STORAGE_PATH_WAMEN: (() => {
+    if (process.env.DISPOSITION_STORAGE_PATH_WAMEN) {
+      return path.resolve(process.cwd(), process.env.DISPOSITION_STORAGE_PATH_WAMEN);
+    }
+    const root = process.env.FILES_ROOT_WAMEN || process.env.FILES_ROOT;
+    if (root && fs.existsSync(path.join(root, 'disposition'))) {
+      return path.join(root, 'disposition');
+    }
+    return path.resolve(process.cwd(), './storage/dispositions_wamen');
+  })(),
+  DISPOSITION_FILE_URL_WAMEN:
+    process.env.DISPOSITION_FILE_URL_WAMEN || 'https://v3-protokolwamen.gatsu51.com/files/disposition/',
+
   // 3. Meta WhatsApp Cloud API Configuration
   META_VERIFY_TOKEN: process.env.META_VERIFY_TOKEN || '',
   META_WA_TOKEN: process.env.META_WA_TOKEN || '',
   META_PHONE_NUMBER_ID: process.env.META_PHONE_NUMBER_ID || '',
+  META_PHONE_NUMBER_ID_MENAKER: process.env.META_PHONE_NUMBER_ID_MENAKER || process.env.META_PHONE_NUMBER_ID || '',
+  META_PHONE_NUMBER_ID_WAMEN: process.env.META_PHONE_NUMBER_ID_WAMEN || process.env.META_WA_PHONE_NUMBER_ID_WAMEN || '',
   META_WEBHOOK_PORT: Number(process.env.META_WEBHOOK_PORT || process.env.PORT || 3000),
   WHATSAPP_PROVIDER: process.env.WHATSAPP_PROVIDER || 'baileys',
   META_AUTO_TUNNEL:
@@ -69,13 +121,28 @@ export const ENV = {
 };
 
 // Pastikan direktori storage tersedia
-import fs from 'fs';
 if (!fs.existsSync(ENV.TEMP_STORAGE_PATH)) {
-  fs.mkdirSync(ENV.TEMP_STORAGE_PATH, { recursive: true });
+  try {
+    fs.mkdirSync(ENV.TEMP_STORAGE_PATH, { recursive: true });
+  } catch {}
 }
 if (!fs.existsSync(ENV.UPLOAD_STORAGE_PATH)) {
-  fs.mkdirSync(ENV.UPLOAD_STORAGE_PATH, { recursive: true });
+  try {
+    fs.mkdirSync(ENV.UPLOAD_STORAGE_PATH, { recursive: true });
+  } catch {}
 }
 if (!fs.existsSync(ENV.DISPOSITION_STORAGE_PATH)) {
-  fs.mkdirSync(ENV.DISPOSITION_STORAGE_PATH, { recursive: true });
+  try {
+    fs.mkdirSync(ENV.DISPOSITION_STORAGE_PATH, { recursive: true });
+  } catch {}
+}
+if (!fs.existsSync(ENV.UPLOAD_STORAGE_PATH_WAMEN)) {
+  try {
+    fs.mkdirSync(ENV.UPLOAD_STORAGE_PATH_WAMEN, { recursive: true });
+  } catch {}
+}
+if (!fs.existsSync(ENV.DISPOSITION_STORAGE_PATH_WAMEN)) {
+  try {
+    fs.mkdirSync(ENV.DISPOSITION_STORAGE_PATH_WAMEN, { recursive: true });
+  } catch {}
 }

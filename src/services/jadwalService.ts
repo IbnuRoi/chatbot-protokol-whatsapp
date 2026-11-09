@@ -1,4 +1,5 @@
 import { prisma } from '../database/prisma';
+import { dbManager, ProtocolScope } from '../database/dbManager';
 import { Prisma } from '@prisma/client';
 import { cleanHtml, splitPicNameAndPhone, extractEventTitleDetails, formatPicWithWhatsApp, toStandardIndonesianPhone, buildStandardPicJson } from '../utils/textHelper';
 import { expandSearchTermsWithAcronyms, calculateRelevanceScore } from '../utils/acronymHelper';
@@ -74,6 +75,10 @@ export interface JadwalSearchOptions {
 }
 
 export class JadwalService {
+  private getClient(scope: ProtocolScope = 'MENAKER') {
+    return dbManager.getClient(scope);
+  }
+
   /**
    * Mengembalikan rentang waktu query basis data untuk tanggal tertentu (offset hari dari hari ini)
    * Kolom events.event_time_start di PostgreSQL menyimpan waktu kegiatan secara langsung.
@@ -181,8 +186,10 @@ export class JadwalService {
    */
   public async getJadwalByDate(
     dateInput: string | Date,
-    options?: { onlyDiagendakan?: boolean }
+    options?: { onlyDiagendakan?: boolean },
+    scope: ProtocolScope = 'MENAKER'
   ): Promise<{ items: NormalizedJadwal[]; formattedDate: string; dateStr: string }> {
+    const client = this.getClient(scope);
     const { dateStr, year: y, month: m, day: d } = this.getWibRangeForDate(dateInput);
     const formattedDate = formatTanggalIndo(dateStr, true);
 
@@ -198,7 +205,7 @@ export class JadwalService {
     const letterDateEnd = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
 
     // 1. Ambil events berdasarkan event_time_start
-    const eventsByTime = await prisma.events.findMany({
+    const eventsByTime = await client.events.findMany({
       where: {
         deleted_at: null,
         event_time_start: {
@@ -215,7 +222,7 @@ export class JadwalService {
     });
 
     // 2. Ambil letters pada tanggal target
-    const lettersOnDate = await prisma.letters.findMany({
+    const lettersOnDate = await client.letters.findMany({
       where: {
         deleted_at: null,
         date_event: {
@@ -247,7 +254,7 @@ export class JadwalService {
     // 3. Ambil events yang berelasi dengan letters pada tanggal tersebut
     let eventsByLetter: any[] = [];
     if (letterIdsOnDate.length > 0) {
-      eventsByLetter = await prisma.events.findMany({
+      eventsByLetter = await client.events.findMany({
         where: {
           deleted_at: null,
           letter_id: { in: letterIdsOnDate },
@@ -275,13 +282,13 @@ export class JadwalService {
     });
 
     // Map events ke NormalizedJadwal
-    const normalizedEventItems = await this.enrichAndMapEvents(mergedEvents);
+    const normalizedEventItems = await this.enrichAndMapEvents(mergedEvents, scope);
 
     // 4. Cari surat pada tanggal tersebut yang belum dibuatkan row di tabel events (kecuali surat TAP / video ucapan yang belum ada event)
     const unlinkedLetters = lettersOnDate.filter(
       (l) => !eventLetterIds.has(l.id.toString()) && !(l.agenda_number || '').toUpperCase().includes('/TAP/')
     );
-    const unlinkedLetterItems: NormalizedJadwal[] = unlinkedLetters.map((l) => this.mapLetterToJadwal(l, dateStr));
+    const unlinkedLetterItems: NormalizedJadwal[] = unlinkedLetters.map((l) => this.mapLetterToJadwal(l, dateStr, scope));
 
     // 5. Gabungkan dan filter tanggal agar sesuai dateStr
     const allItems = [...normalizedEventItems, ...unlinkedLetterItems].filter((item) => {
@@ -307,7 +314,8 @@ export class JadwalService {
    */
   public async getJadwalRentangHari(
     daysCount: number,
-    labelText?: string
+    labelText?: string,
+    scope: ProtocolScope = 'MENAKER'
   ): Promise<{
     items: NormalizedJadwal[];
     formattedRange: string;
@@ -315,6 +323,7 @@ export class JadwalService {
     startDateStr: string;
     endDateStr: string;
   }> {
+    const client = this.getClient(scope);
     const todayRange = this.getWibDayRange(0);
     const endRange = this.getWibDayRange(daysCount);
 
@@ -331,7 +340,7 @@ export class JadwalService {
     const safeStart = new Date(Date.UTC(todayRange.year, todayRange.month - 1, todayRange.day - 1, 17, 0, 0, 0));
     const safeEnd = new Date(Date.UTC(endRange.year, endRange.month - 1, endRange.day, 23, 59, 59, 999));
 
-    const eventsByTime = await prisma.events.findMany({
+    const eventsByTime = await client.events.findMany({
       where: {
         deleted_at: null,
         event_time_start: {
@@ -346,7 +355,7 @@ export class JadwalService {
       take: 100,
     });
 
-    const lettersInRange = await prisma.letters.findMany({
+    const lettersInRange = await client.letters.findMany({
       where: {
         deleted_at: null,
         date_event: {
@@ -376,7 +385,7 @@ export class JadwalService {
     const letterIdsInRange = lettersInRange.map((l) => l.id);
     let eventsByLetter: any[] = [];
     if (letterIdsInRange.length > 0) {
-      eventsByLetter = await prisma.events.findMany({
+      eventsByLetter = await client.events.findMany({
         where: {
           deleted_at: null,
           letter_id: { in: letterIdsInRange },
@@ -401,14 +410,14 @@ export class JadwalService {
       if (e.letter_id) eventLetterIds.add(e.letter_id.toString());
     });
 
-    const normalizedEvents = await this.enrichAndMapEvents(mergedEvents);
+    const normalizedEvents = await this.enrichAndMapEvents(mergedEvents, scope);
 
     // Cari surat yang belum dibuatkan row di tabel events (kecuali surat TAP / video ucapan yang belum ada event)
     const unlinkedLetters = lettersInRange.filter(
       (l) => !eventLetterIds.has(l.id.toString()) && !(l.agenda_number || '').toUpperCase().includes('/TAP/')
     );
     const unlinkedLetterItems: NormalizedJadwal[] = unlinkedLetters.map((l) =>
-      this.mapLetterToJadwal(l, startDateStr)
+      this.mapLetterToJadwal(l, startDateStr, scope)
     );
 
     const allItems = [...normalizedEvents, ...unlinkedLetterItems].filter((item) => {
@@ -444,9 +453,10 @@ export class JadwalService {
   /**
    * Memperkaya daftar event dengan data dari tabel letters dan memetakannya ke NormalizedJadwal
    */
-  private async enrichAndMapEvents(events: any[]): Promise<NormalizedJadwal[]> {
+  private async enrichAndMapEvents(events: any[], scope: ProtocolScope = 'MENAKER'): Promise<NormalizedJadwal[]> {
     if (!events || events.length === 0) return [];
 
+    const client = this.getClient(scope);
     const letterIds = new Set<bigint>();
     for (const e of events) {
       if (e.letter_id !== null && e.letter_id !== undefined) {
@@ -462,7 +472,7 @@ export class JadwalService {
     const eventToLetterPivotMap = new Map<string, bigint>();
     if (eventIdsWithoutLetter.length > 0) {
       try {
-        const pivots = await prisma.event_letters.findMany({
+        const pivots = await client.event_letters.findMany({
           where: {
             event_id: { in: eventIdsWithoutLetter },
             deleted_at: null,
@@ -478,13 +488,13 @@ export class JadwalService {
           eventToLetterPivotMap.set(p.event_id.toString(), lId);
         }
       } catch (pivotErr) {
-        console.warn('[JadwalService] Gagal membaca event_letters pivot:', pivotErr);
+        console.warn(`[JadwalService ${scope}] Gagal membaca event_letters pivot:`, pivotErr);
       }
     }
 
     const letterMap = new Map<string, any>();
     if (letterIds.size > 0) {
-      const letters = await prisma.letters.findMany({
+      const letters = await client.letters.findMany({
         where: { id: { in: Array.from(letterIds) } },
         select: {
           id: true,
@@ -510,14 +520,14 @@ export class JadwalService {
 
     return events.map((e) => {
       const lId = e.letter_id ? e.letter_id.toString() : eventToLetterPivotMap.get(e.id.toString())?.toString();
-      return this.mapEventToJadwal(e, lId ? letterMap.get(lId) : null);
+      return this.mapEventToJadwal(e, lId ? letterMap.get(lId) : null, scope);
     });
   }
 
   /**
    * Mengonversi baris tabel events PostgreSQL DB ke interface NormalizedJadwal
    */
-  private mapEventToJadwal(event: any, letter?: any | null): NormalizedJadwal {
+  private mapEventToJadwal(event: any, letter?: any | null, scope: ProtocolScope = 'MENAKER'): NormalizedJadwal {
     let tglKegiatan = '';
     let waktuMulai = '09:00';
     let waktuSelesai: string | null = null;
@@ -636,7 +646,7 @@ export class JadwalService {
   /**
    * Mengonversi baris tabel letters menjadi interface NormalizedJadwal jika belum dibuatkan baris events
    */
-  private mapLetterToJadwal(letter: any, defaultDateStr: string): NormalizedJadwal {
+  private mapLetterToJadwal(letter: any, defaultDateStr: string, _scope: ProtocolScope = 'MENAKER'): NormalizedJadwal {
     let tglKegiatan = defaultDateStr;
     if (letter.date_event) {
       const dt = new Date(letter.date_event);
@@ -702,9 +712,9 @@ export class JadwalService {
   /**
    * Mengambil jadwal kegiatan besok (H+1) dari basis data
    */
-  public async getJadwalBesok(): Promise<NormalizedJadwal[]> {
+  public async getJadwalBesok(scope: ProtocolScope = 'MENAKER'): Promise<NormalizedJadwal[]> {
     const tomorrowStr = this.getTomorrowString();
-    const result = await this.getJadwalByDate(tomorrowStr);
+    const result = await this.getJadwalByDate(tomorrowStr, undefined, scope);
     return result.items;
   }
 
@@ -715,10 +725,11 @@ export class JadwalService {
    */
   public async getJadwalHariIni(
     onlyUpcoming: boolean = false,
-    onlyDiagendakan: boolean = false
+    onlyDiagendakan: boolean = false,
+    scope: ProtocolScope = 'MENAKER'
   ): Promise<NormalizedJadwal[]> {
     const todayStr = this.getTodayString();
-    const result = await this.getJadwalByDate(todayStr, { onlyDiagendakan });
+    const result = await this.getJadwalByDate(todayStr, { onlyDiagendakan }, scope);
     let items = result.items;
 
     if (onlyUpcoming) {
@@ -734,7 +745,8 @@ export class JadwalService {
   /**
    * Mengambil 1 kegiatan terdekat berikutnya hari ini atau di hari-hari mendatang
    */
-  public async getJadwalBerikutnyaTerdekat(): Promise<{ item: NormalizedJadwal; isToday: boolean } | null> {
+  public async getJadwalBerikutnyaTerdekat(scope: ProtocolScope = 'MENAKER'): Promise<{ item: NormalizedJadwal; isToday: boolean } | null> {
+    const client = this.getClient(scope);
     const nowWibMs = Date.now() + 7 * 3600000;
     const nowWib = new Date(nowWibMs);
     const dbNow = new Date(Date.UTC(
@@ -748,7 +760,7 @@ export class JadwalService {
     const { endOfDay, dateStr } = this.getWibDayRange(0);
 
     // 1. Cari kegiatan hari ini yang waktu mulainya belum lewat
-    const todayUpcoming = await prisma.events.findFirst({
+    const todayUpcoming = await client.events.findFirst({
       where: {
         deleted_at: null,
         event_time_start: {
@@ -762,12 +774,12 @@ export class JadwalService {
     });
 
     if (todayUpcoming) {
-      const items = await this.enrichAndMapEvents([todayUpcoming]);
+      const items = await this.enrichAndMapEvents([todayUpcoming], scope);
       return { item: items[0], isToday: true };
     }
 
     // 2. Jika hari ini sudah selesai semua, cari kegiatan terdekat di masa depan
-    const nextEvent = await prisma.events.findFirst({
+    const nextEvent = await client.events.findFirst({
       where: {
         deleted_at: null,
         event_time_start: {
@@ -780,12 +792,12 @@ export class JadwalService {
     });
 
     if (nextEvent) {
-      const items = await this.enrichAndMapEvents([nextEvent]);
+      const items = await this.enrichAndMapEvents([nextEvent], scope);
       return { item: items[0], isToday: items[0].tanggalKegiatan === dateStr };
     }
 
     // 3. Fallback jika tidak ada event masa depan: ambil event terjadwal terakhir yang tercatat
-    const fallbackEvent = await prisma.events.findFirst({
+    const fallbackEvent = await client.events.findFirst({
       where: {
         deleted_at: null,
         event_time_start: { not: null },
@@ -796,7 +808,7 @@ export class JadwalService {
     });
 
     if (fallbackEvent) {
-      const items = await this.enrichAndMapEvents([fallbackEvent]);
+      const items = await this.enrichAndMapEvents([fallbackEvent], scope);
       return { item: items[0], isToday: false };
     }
 
@@ -806,10 +818,11 @@ export class JadwalService {
   /**
    * Mengambil daftar jadwal kegiatan beberapa hari ke depan (mendatang)
    */
-  public async getJadwalMendatang(limit: number = 10): Promise<NormalizedJadwal[]> {
+  public async getJadwalMendatang(limit: number = 10, scope: ProtocolScope = 'MENAKER'): Promise<NormalizedJadwal[]> {
+    const client = this.getClient(scope);
     const { startOfDay } = this.getWibDayRange(0);
 
-    let events = await prisma.events.findMany({
+    let events = await client.events.findMany({
       where: {
         deleted_at: null,
         event_time_start: {
@@ -825,7 +838,7 @@ export class JadwalService {
 
     // Jika database tidak memiliki agenda mendatang dari hari ini, tampilkan agenda terbaru
     if (events.length === 0) {
-      events = await prisma.events.findMany({
+      events = await client.events.findMany({
         where: {
           deleted_at: null,
           event_time_start: { not: null },
@@ -838,7 +851,7 @@ export class JadwalService {
       });
     }
 
-    return this.enrichAndMapEvents(events);
+    return this.enrichAndMapEvents(events, scope);
   }
 
   /**
@@ -881,11 +894,13 @@ export class JadwalService {
    */
   public async searchJadwal(
     keyword: string,
-    limitOrOptions: number | JadwalSearchOptions = 10
+    limitOrOptions: number | JadwalSearchOptions = 10,
+    scope: ProtocolScope = 'MENAKER'
   ): Promise<NormalizedJadwal[]> {
     const clean = keyword.trim().toLowerCase();
     if (!clean) return [];
 
+    const client = this.getClient(scope);
     const options: JadwalSearchOptions =
       typeof limitOrOptions === 'number' ? { limit: limitOrOptions } : limitOrOptions;
     const limit = options.limit || 10;
@@ -911,7 +926,7 @@ export class JadwalService {
     const qMode: Prisma.QueryMode = 'insensitive';
     let letterEventIds: bigint[] = [];
     try {
-      const matchingLetters = await prisma.letters.findMany({
+      const matchingLetters = await client.letters.findMany({
         where: {
           deleted_at: null,
           OR: searchTermsArray.flatMap((term) => [
@@ -927,7 +942,7 @@ export class JadwalService {
 
       const letterIds = matchingLetters.map((l) => l.id);
       if (letterIds.length > 0) {
-        const linkedEvents = await prisma.events.findMany({
+        const linkedEvents = await client.events.findMany({
           where: {
             deleted_at: null,
             letter_id: { in: letterIds },
@@ -946,7 +961,7 @@ export class JadwalService {
 
     // Jika query terdiri dari 2 kata atau lebih, coba cari dengan klausa AND terlebih dahulu
     if (expansion.meaningfulTokens.length >= 2) {
-      candidates = await prisma.events.findMany({
+      candidates = await client.events.findMany({
         where: {
           deleted_at: null,
           ...dateFilter,
@@ -970,7 +985,7 @@ export class JadwalService {
 
     // Jika tidak ditemukan dengan AND atau query hanya 1 kata, cari dengan klausa OR
     if (candidates.length === 0) {
-      candidates = await prisma.events.findMany({
+      candidates = await client.events.findMany({
         where: {
           deleted_at: null,
           ...dateFilter,
@@ -997,7 +1012,7 @@ export class JadwalService {
     }
 
     // 3. Hitung Relevansi Skor Presisi Tinggi (Spesifisitas Teks + Kedekatan Waktu dengan Hari Ini)
-    const enrichedCandidates = await this.enrichAndMapEvents(candidates);
+    const enrichedCandidates = await this.enrichAndMapEvents(candidates, scope);
 
     const scored = candidates.map((e, idx) => {
       const item = enrichedCandidates[idx] || this.mapEventToJadwal(e);
@@ -1068,7 +1083,8 @@ export class JadwalService {
   public async saveJadwalArahanLangsung(
     draft: JadwalArahanDraftData,
     userId?: number | string,
-    userName?: string
+    userName?: string,
+    scope: ProtocolScope = 'MENAKER'
   ): Promise<{
     success: boolean;
     event?: any;
@@ -1076,6 +1092,7 @@ export class JadwalService {
     hasTimeConflict?: boolean;
     conflictingEvents?: any[];
   }> {
+    const client = this.getClient(scope);
     try {
       // 1. Ekstrak tanggal kegiatan
       let eventDate: Date | null = null;
@@ -1164,7 +1181,7 @@ export class JadwalService {
       let hasTimeConflict = false;
       let conflictingEvents: any[] = [];
       try {
-        conflictingEvents = await prisma.events.findMany({
+        conflictingEvents = await client.events.findMany({
           where: {
             deleted_at: null,
             event_time_start: eventTimeStart,
@@ -1181,7 +1198,7 @@ export class JadwalService {
           hasTimeConflict = true;
         }
       } catch (confErr) {
-        console.warn('[JadwalService] Gagal memeriksa bentrok waktu:', confErr);
+        console.warn(`[JadwalService ${scope}] Gagal memeriksa bentrok waktu:`, confErr);
       }
 
       // 6. Buat payload events
@@ -1208,14 +1225,14 @@ export class JadwalService {
 
       let createdEvent: any = null;
       try {
-        createdEvent = await prisma.events.create({
+        createdEvent = await client.events.create({
           data: eventDataPayload,
         });
       } catch (evErr: any) {
         if (isDuplicateKeyError(evErr)) {
-          console.warn('[JadwalService] Terdeteksi bentrok sequence events. Menjalankan auto-sync dan me-retry insert...');
-          await syncTableSequence('events');
-          createdEvent = await prisma.events.create({
+          console.warn(`[JadwalService ${scope}] Terdeteksi bentrok sequence events. Menjalankan auto-sync dan me-retry insert...`);
+          await syncTableSequence('events', 'id', client);
+          createdEvent = await client.events.create({
             data: eventDataPayload,
           });
         } else {
@@ -1226,7 +1243,7 @@ export class JadwalService {
       // 7. Catat ke activity_log (sinkron dengan web Laravel)
       if (createdEvent && userId) {
         try {
-          await prisma.activity_log.create({
+          await client.activity_log.create({
             data: {
               log_name: 'default',
               description: `Menambah Jadwal Arahan Langsung: "${draft.namaKegiatan}" oleh ${creatorName}`,
@@ -1249,9 +1266,9 @@ export class JadwalService {
           });
         } catch (logErr: any) {
           if (isDuplicateKeyError(logErr)) {
-            await syncTableSequence('activity_log');
+            await syncTableSequence('activity_log', 'id', client);
             try {
-              await prisma.activity_log.create({
+              await client.activity_log.create({
                 data: {
                   log_name: 'default',
                   description: `Menambah Jadwal Arahan Langsung: "${draft.namaKegiatan}" oleh ${creatorName}`,

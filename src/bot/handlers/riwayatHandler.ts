@@ -19,7 +19,7 @@ export class RiwayatHandler {
     session.riwayatPage = page;
     sessionService.setState(session.whatsappNumber, BotState.RIWAYAT_LIST);
 
-    const result = await suratService.getRiwayatSurat(page, 5);
+    const result = await suratService.getRiwayatSurat(page, 5, session.scope);
 
     if (result.items.length === 0) {
       return {
@@ -37,7 +37,7 @@ export class RiwayatHandler {
     const currentPageDisplay = page + 1;
 
     const listText = result.items
-      .map((s, idx) => formatSuratListItem(s, page * 5 + idx + 1))
+      .map((s, idx) => formatSuratListItem(s, page * 5 + idx + 1, session.scope))
       .join('\n\n');
 
     let navHelp = `Silakan sebutkan nomor surat (contoh: *1* atau *surat 1*), atau sebutkan *perihal surat* jika ingin melihat rincian lengkapnya ya. 😊`;
@@ -80,7 +80,7 @@ export class RiwayatHandler {
 
     if (clean === 'N') {
       const nextPage = currentPage + 1;
-      const check = await suratService.getRiwayatSurat(nextPage, 5);
+      const check = await suratService.getRiwayatSurat(nextPage, 5, session.scope);
       if (check.items.length > 0) {
         return this.showRiwayatList(session, nextPage);
       } else {
@@ -98,7 +98,7 @@ export class RiwayatHandler {
       }
     }
 
-    const result = await suratService.getRiwayatSurat(currentPage, 5);
+    const result = await suratService.getRiwayatSurat(currentPage, 5, session.scope);
 
     // 1. Cek pemilihan nomor surat eksplisit (contoh: "surat 1", "surat ke 2")
     const suratMatch = raw.match(/^surat\s*(?:ke\s*)?(\d+)$/i);
@@ -145,7 +145,7 @@ export class RiwayatHandler {
    * Menampilkan detail lengkap satu surat
    */
   public async showDetailSurat(session: UserSession, suratId: number): Promise<BotResponse> {
-    const surat = await suratService.getDetailSurat(suratId);
+    const surat = await suratService.getDetailSurat(suratId, session.scope);
     if (!surat) {
       return {
         text: `⚠️ Surat tidak ditemukan dalam arsip. Silakan beri tahu jika ingin memeriksa surat lainnya.`,
@@ -156,7 +156,7 @@ export class RiwayatHandler {
     sessionService.setState(session.whatsappNumber, BotState.RIWAYAT_DETAIL);
 
     const waktuInputStr = formatWaktuInputIndo(surat.createdAt);
-    const text = formatSuratDetail(surat, waktuInputStr);
+    const text = formatSuratDetail(surat, waktuInputStr, session.scope);
 
     return {
       text,
@@ -176,11 +176,12 @@ export class RiwayatHandler {
     const lower = clean.toLowerCase();
 
     if ((clean === '1' || lower.includes('disposisi') || lower.includes('rincian')) && session.selectedSuratId) {
-      const surat = await suratService.getDetailSurat(session.selectedSuratId);
+      const surat = await suratService.getDetailSurat(session.selectedSuratId, session.scope);
       if (!surat || !surat.disposisi) {
         return {
           text: `⚠️ Rincian disposisi belum tersedia untuk surat ini. Silakan tanyakan hal lain jika ada yang ingin dibantu.`,
           buttons: [
+            { id: 'UPLOAD_DISPOSISI', text: '📤 Upload Disposisi' },
             { id: '0', text: '◀️ Kembali' },
             { id: 'MENU', text: '📋 Menu Utama' },
           ],
@@ -215,6 +216,7 @@ export class RiwayatHandler {
           `${statusInfo}\n\n` +
           `Ada lagi yang ingin Anda periksa terkait surat ini?`,
         buttons: [
+          { id: 'UPLOAD_DISPOSISI', text: '📤 Upload Disposisi' },
           { id: '0', text: '◀️ Kembali' },
           { id: 'MENU', text: '📋 Menu Utama' },
         ],

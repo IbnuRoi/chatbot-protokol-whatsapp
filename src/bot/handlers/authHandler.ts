@@ -1,4 +1,5 @@
 import { prisma } from '../../database/prisma';
+import { dbManager, ProtocolScope } from '../../database/dbManager';
 import { ENV } from '../../config/env';
 
 export interface NormalizedUser {
@@ -7,6 +8,8 @@ export interface NormalizedUser {
   whatsappNumber: string;
   role: string;
   isActive: boolean;
+  scope: ProtocolScope;
+  allowedScopes: ProtocolScope[];
 }
 
 export class AuthHandler {
@@ -33,17 +36,73 @@ export class AuthHandler {
   }
 
   /**
-   * Validasi apakah nomor pengguna terdaftar dan memiliki akses aktif di tabel users (PostgreSQL DB)
+   * Mencari kecocokan user di database scope tertentu
    */
-  public async authenticate(rawPhone: string, pushName?: string): Promise<{
+  private async findUserInScope(
+    scope: ProtocolScope,
+    orConditions: any[],
+    rawPhone: string,
+    normalized: string,
+    pushName?: string
+  ): Promise<any | null> {
+    try {
+      const client = dbManager.getClient(scope);
+      let dbUser = await client.users.findFirst({
+        where: { OR: orConditions },
+      });
+
+      // Fitur Auto-Link jika nama profil WhatsApp cocok dengan nama user yang terdaftar di database
+      if (!dbUser && pushName && pushName.trim().length >= 2) {
+        const pName = pushName.trim().toLowerCase();
+        const allDbUsers = await client.users.findMany();
+
+        const stopWords = new Set(['pak', 'ibu', 'mas', 'mba', 'bpk', 'admin', 'staf', 'protokol', 'dr', 'drs']);
+
+        const candidate = allDbUsers.find((u) => {
+          const cleanUName = (u.name || '').toLowerCase().replace(/\(.*?\)/g, '').trim();
+          if (cleanUName.length >= 3 && (pName.includes(cleanUName) || cleanUName.includes(pName))) {
+            return true;
+          }
+          const uTokens = cleanUName.split(/[\s_-]+/).filter((t) => t.length >= 3 && !stopWords.has(t));
+          const pTokens = pName.split(/[\s_-]+/).filter((t) => t.length >= 3 && !stopWords.has(t));
+          return uTokens.some((ut) => pTokens.some((pt) => ut.includes(pt) || pt.includes(ut)));
+        });
+
+        if (candidate) {
+          const isLid = rawPhone.includes('@lid') || (normalized.length >= 14 && !normalized.startsWith('628') && !normalized.startsWith('08'));
+          console.log(`[Auth Auto-Link ${scope}] Menautkan WhatsApp ${isLid ? 'LID' : 'Nomor'} ${normalized} secara otomatis ke pengguna database: "${candidate.name}" (PushName: "${pushName}")`);
+          dbUser = await client.users.update({
+            where: { id: candidate.id },
+            data: isLid ? { device_id: normalized } : { phone_number: normalized },
+          });
+        }
+      }
+
+      return dbUser;
+    } catch (err: any) {
+      console.warn(`⚠️ [Auth] Gagal memeriksa tabel users pada scope [${scope}]: ${err?.message || err}`);
+      return null;
+    }
+  }
+
+  /**
+   * Validasi otomatis hak akses nomor pengguna.
+   * Mendeteksi secara mandiri apakah nomor terdaftar di Database Menteri, Database Wamen, atau Keduanya.
+   */
+  public async authenticate(
+    rawPhone: string,
+    pushName?: string,
+    preferredScope?: ProtocolScope
+  ): Promise<{
     isAuthenticated: boolean;
     user: NormalizedUser | null;
     message: string | null;
+    scope: ProtocolScope;
   }> {
     const normalized = this.normalizePhoneNumber(rawPhone);
     const lastDigits = normalized.length >= 9 ? normalized.slice(-9) : normalized;
 
-    console.log(`[Auth] Memeriksa akses nomor: "${rawPhone}" -> Normalisasi: "${normalized}" (PushName: "${pushName || '-'}")`);
+    console.log(`[Auth] Memeriksa akses nomor: "${rawPhone}" -> Normalisasi: "${normalized}" (PushName: "${pushName || '-'}", PreferredScope: ${preferredScope || 'AUTO'})`);
 
     const orConditions: any[] = [
       { phone_number: normalized },
@@ -56,69 +115,67 @@ export class AuthHandler {
       orConditions.push({ phone_number: { contains: lastDigits } });
     }
 
-    let dbUser = await prisma.users.findFirst({
-      where: {
-        OR: orConditions,
-      },
-    });
+    // 1. Periksa keberadaan akun di Database Menaker
+    const userMenaker = await this.findUserInScope('MENAKER', orConditions, rawPhone, normalized, pushName);
 
-    // Fitur Auto-Link jika nama profil WhatsApp cocok dengan nama user yang terdaftar di database
-    if (!dbUser && pushName && pushName.trim().length >= 2) {
-      const pName = pushName.trim().toLowerCase();
-      const allDbUsers = await prisma.users.findMany();
-
-      const stopWords = new Set(['pak', 'ibu', 'mas', 'mba', 'bpk', 'admin', 'staf', 'protokol', 'dr', 'drs']);
-
-      // Filter nama bersih (menghilangkan keterangan dalam kurung seperti "(Admin Protokol)")
-      const candidate = allDbUsers.find((u) => {
-        const cleanUName = (u.name || '').toLowerCase().replace(/\(.*?\)/g, '').trim();
-        if (cleanUName.length >= 3 && (pName.includes(cleanUName) || cleanUName.includes(pName))) {
-          return true;
-        }
-        // Pencocokan berbasis kata kunci (misal: "Acho" cocok dengan "Pak Acho", "Cinta" cocok dengan "Cintaquu")
-        const uTokens = cleanUName.split(/[\s_-]+/).filter((t) => t.length >= 3 && !stopWords.has(t));
-        const pTokens = pName.split(/[\s_-]+/).filter((t) => t.length >= 3 && !stopWords.has(t));
-        return uTokens.some((ut) => pTokens.some((pt) => ut.includes(pt) || pt.includes(ut)));
-      });
-
-      if (candidate) {
-        const isLid = rawPhone.includes('@lid') || (normalized.length >= 14 && !normalized.startsWith('628') && !normalized.startsWith('08'));
-        console.log(`[Auth Auto-Link] Menautkan WhatsApp ${isLid ? 'LID' : 'Nomor'} ${normalized} secara otomatis ke pengguna database: "${candidate.name}" (PushName: "${pushName}")`);
-        dbUser = await prisma.users.update({
-          where: { id: candidate.id },
-          data: isLid ? { device_id: normalized } : { phone_number: normalized },
-        });
-      }
+    // 2. Periksa keberadaan akun di Database Wamen
+    let userWamen: any = null;
+    if (ENV.DB_NAME_WAMEN || ENV.DATABASE_URL_WAMEN) {
+      userWamen = await this.findUserInScope('WAMEN', orConditions, rawPhone, normalized, pushName);
     }
 
-    if (!dbUser) {
-      console.warn(`[Auth] Akses ditolak: Nomor "${rawPhone}" (Normalisasi: "${normalized}") tidak ditemukan di database.`);
+    const allowedScopes: ProtocolScope[] = [];
+    if (userMenaker) allowedScopes.push('MENAKER');
+    if (userWamen) allowedScopes.push('WAMEN');
+
+    // 3. Jika nomor tidak ditemukan di kedua database -> Tolak akses
+    if (allowedScopes.length === 0) {
+      console.warn(`[Auth] Akses ditolak: Nomor "${rawPhone}" (Normalisasi: "${normalized}") tidak terdaftar di database Menaker maupun Wamen.`);
       return {
         isAuthenticated: false,
         user: null,
         message:
           `⛔ *AKSES DITOLAK*\n\n` +
           `Nomor / ID WhatsApp Anda (*${normalized || rawPhone}*) tidak terdaftar dalam basis data sistem Administrasi Protokol Kemnaker.\n\n` +
-          `Akses chatbot hanya diberikan kepada pengguna yang telah terdaftar di dalam basis data resmi.\n\n` +
+          `Akses chatbot hanya diberikan kepada staf dan pejabat yang telah terdaftar di dalam basis data resmi.\n\n` +
           `Silakan hubungi administrator jika Anda memerlukan hak akses:\n` +
           `📞 *Administrator:* ${ENV.ADMIN_CONTACT}`,
+        scope: preferredScope || 'MENAKER',
       };
     }
 
+    // 4. Tentukan ruang lingkup aktif secara otomatis
+    let activeScope: ProtocolScope;
+    let activeDbUser: any;
+
+    if (allowedScopes.length === 1) {
+      // Kasus Ideal: Pengguna hanya terdaftar di salah satu database (Menteri saja atau Wamen saja)
+      activeScope = allowedScopes[0];
+      activeDbUser = activeScope === 'WAMEN' ? userWamen : userMenaker;
+      console.log(`[Auth Otomatis] Pengguna terdeteksi eksklusif pada ruang lingkup [${activeScope}]`);
+    } else {
+      // Kasus Khusus: Pengguna terdaftar di kedua database (Administrator / Pimpinan Bersama)
+      activeScope = (preferredScope && allowedScopes.includes(preferredScope)) ? preferredScope : 'MENAKER';
+      activeDbUser = activeScope === 'WAMEN' ? userWamen : userMenaker;
+      console.log(`[Auth Otomatis] Pengguna terdaftar di KEDUA database (Menaker & Wamen). Menggunakan [${activeScope}]`);
+    }
+
     const normalizedUser: NormalizedUser = {
-      id: Number(dbUser.id),
-      nama: dbUser.name,
-      whatsappNumber: dbUser.phone_number,
-      role: (dbUser.role || 'PROTOKOL').trim().toUpperCase(),
+      id: Number(activeDbUser.id),
+      nama: activeDbUser.name,
+      whatsappNumber: activeDbUser.phone_number || normalized,
+      role: (activeDbUser.role || 'PROTOKOL').trim().toUpperCase(),
       isActive: true,
+      scope: activeScope,
+      allowedScopes,
     };
 
-    console.log(`[Auth] Akses diberikan: "${normalizedUser.nama}" (Role: ${normalizedUser.role})`);
-
+    console.log(`[Auth] Akses diberikan [${activeScope}]: "${normalizedUser.nama}" (Role: ${normalizedUser.role}, Allowed: [${allowedScopes.join(',')}])`);
     return {
       isAuthenticated: true,
       user: normalizedUser,
       message: null,
+      scope: activeScope,
     };
   }
 }

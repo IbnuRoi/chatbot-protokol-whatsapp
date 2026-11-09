@@ -15,6 +15,7 @@ import { nluService, NluResult } from '../services/nluService';
 import { jadwalService } from '../services/jadwalService';
 import { extractDateRangeFromText, formatTanggalIndo } from '../utils/dateHelper';
 import { isPureGreeting, isFormConfirmationInput, normalizeUserInput } from '../utils/textHelper';
+import { ProtocolScope } from '../database/dbManager';
 import { BotResponse } from './types';
 
 export interface IncomingMessagePayload {
@@ -23,6 +24,8 @@ export interface IncomingMessagePayload {
   text?: string;
   buttonId?: string;
   listRowId?: string;
+  phoneNumberId?: string;
+  scope?: ProtocolScope;
   media?: {
     filePath: string;
     fileName: string;
@@ -57,7 +60,8 @@ export class MessageRouter {
     const textInput = (payload.text || '').trim();
 
     // 1. Autentikasi & Otorisasi Pengguna
-    const authResult = await authHandler.authenticate(rawNumber, payload.pushName);
+    const preferredScope = payload.scope;
+    const authResult = await authHandler.authenticate(rawNumber, payload.pushName, preferredScope);
     if (!authResult.isAuthenticated || !authResult.user) {
       return authResult.message!;
     }
@@ -72,8 +76,16 @@ export class MessageRouter {
         user.id,
         user.nama,
         user.role,
-        BotState.MAIN_MENU
+        BotState.MAIN_MENU,
+        user.scope || 'MENAKER',
+        user.allowedScopes
       );
+    } else {
+      // Sinkronkan otorisasi scope dari hasil autentikasi database terkini
+      session.allowedScopes = user.allowedScopes;
+      if (user.allowedScopes && !user.allowedScopes.includes(session.scope)) {
+        session.scope = user.scope;
+      }
     }
 
     // 3. Perintah Cepat Khusus (/cancel, /reset, /start, menu, sapaan murni)
@@ -128,6 +140,87 @@ export class MessageRouter {
       sessionService.clearJadwalArahanDraft(session.whatsappNumber);
       sessionService.resetSession(session.whatsappNumber);
       return menuHandler.getMainGreeting(session);
+    }
+
+    // Perintah Khusus Upload Lembar Disposisi (Tombol atau Perintah Langsung)
+    const isUploadDisposisi =
+      payload.buttonId === 'UPLOAD_DISPOSISI' ||
+      payload.listRowId === 'UPLOAD_DISPOSISI' ||
+      payload.buttonId === 'DISPOSISI_UPLOAD' ||
+      payload.listRowId === 'DISPOSISI_UPLOAD' ||
+      lower === 'upload disposisi' ||
+      normLower === 'upload disposisi' ||
+      lower === 'unggah disposisi' ||
+      normLower === 'unggah disposisi' ||
+      lower === 'kirim disposisi' ||
+      normLower === 'kirim disposisi' ||
+      lower === '/upload_disposisi' ||
+      lower === '/disposisi' ||
+      lower === 'upload_disposisi' ||
+      (session.state === BotState.DISPOSISI_INPUT_NOMOR && (lower === 'upload' || lower === 'unggah'));
+
+    if (isUploadDisposisi) {
+      if (session.draftSurat) {
+        await suratMasukHandler.handleFinalConfirm(session, '2');
+      }
+      return disposisiHandler.promptUpload(session);
+    }
+
+    // Perintah Ganti Ruang Lingkup (Hanya diizinkan jika user memiliki otorisasi ganda)
+    const isSwitchScope =
+      payload.buttonId === 'SWITCH_SCOPE' ||
+      payload.listRowId === 'SWITCH_SCOPE' ||
+      lower === '/wamen' ||
+      lower === '/menaker' ||
+      lower === 'switch_scope' ||
+      lower === 'ganti agenda' ||
+      lower === 'ganti wamen' ||
+      lower === 'ganti menaker';
+
+    if (isSwitchScope) {
+      const allowed = session.allowedScopes || [session.scope];
+      if (allowed.length <= 1) {
+        const currentName = session.scope === 'WAMEN' ? 'Wakil Menteri' : 'Menteri';
+        const otherName = session.scope === 'WAMEN' ? 'Menteri' : 'Wakil Menteri';
+        return {
+          text:
+            `ℹ️ *INFORMASI OTORISASI AKSES*\n\n` +
+            `Nomor WhatsApp Anda terdaftar pada sistem *Protokol ${currentName}*.\n\n` +
+            `Sistem secara otomatis mengisolasi akses informasi dan administrasi persuratan khusus untuk ${currentName}. Anda tidak memiliki otorisasi untuk mengakses basis data ${otherName}.\n\n` +
+            `Silakan hubungi Administrator IT jika nomor Anda memerlukan akses ganda.`,
+        };
+      }
+
+      if (session.draftSurat) {
+        await suratMasukHandler.handleFinalConfirm(session, '2');
+      }
+      if (session.draftDisposisi?.tempFilePath) {
+        pdfService.deleteTempPdf(session.draftDisposisi.tempFilePath);
+      }
+      sessionService.clearDisposisiDraft(session.whatsappNumber);
+      sessionService.clearJadwalArahanDraft(session.whatsappNumber);
+
+      let targetScope: ProtocolScope;
+      if (lower === '/wamen' || lower === 'ganti wamen') {
+        targetScope = 'WAMEN';
+      } else if (lower === '/menaker' || lower === 'ganti menaker') {
+        targetScope = 'MENAKER';
+      } else {
+        targetScope = session.scope === 'MENAKER' ? 'WAMEN' : 'MENAKER';
+      }
+
+      sessionService.setScope(session.whatsappNumber, targetScope);
+      sessionService.resetSession(session.whatsappNumber);
+
+      const targetTitle =
+        targetScope === 'WAMEN'
+          ? '🏛️ *AGENDA PROTOKOL WAKIL MENTERI*'
+          : '🏛️ *AGENDA PROTOKOL MENTERI*';
+
+      return menuHandler.getMainGreeting(
+        session,
+        `✅ Ruang lingkup berhasil dialihkan ke:\n${targetTitle}\n\nSeluruh arsip surat, disposisi, dan jadwal sekarang mengacu pada database ini.`
+      );
     }
 
     if (isPureGreeting(textInput) || isPureGreeting(normalizedInput)) {

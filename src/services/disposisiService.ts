@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { Prisma } from '@prisma/client';
-import { prisma } from '../database/prisma';
+import { dbManager, ProtocolScope } from '../database/dbManager';
 import { ENV } from '../config/env';
 import { syncTableSequence, isDuplicateKeyError } from '../database/sequenceSync';
 import { suratService, NormalizedSurat } from './suratService';
@@ -37,15 +37,20 @@ export interface SaveDisposisiResult {
 }
 
 export class DisposisiService {
+  private getClient(scope: ProtocolScope = 'MENAKER') {
+    return dbManager.getClient(scope);
+  }
+
   /**
    * Mencari status disposisi berdasarkan nomor agenda atau nomor surat di database PostgreSQL
    */
-  public async findDisposisiByKeyword(keyword: string): Promise<NormalizedSurat | null> {
+  public async findDisposisiByKeyword(keyword: string, scope: ProtocolScope = 'MENAKER'): Promise<NormalizedSurat | null> {
     const clean = keyword.trim();
     if (!clean) return null;
 
+    const client = this.getClient(scope);
     // Cari exact match atau insensitive match pada agenda_number atau number_or_date
-    const letter = await prisma.letters.findFirst({
+    const letter = await client.letters.findFirst({
       where: {
         deleted_at: null,
         OR: [
@@ -60,18 +65,19 @@ export class DisposisiService {
 
     if (!letter) return null;
 
-    return suratService.getDetailSurat(Number(letter.id));
+    return suratService.getDetailSurat(Number(letter.id), scope);
   }
 
   /**
    * Mencari surat induk di tabel letters berdasarkan Nomor Agenda atau Nomor Surat
    */
-  public async findLetterByAgenda(agendaOrNumber: string): Promise<any | null> {
+  public async findLetterByAgenda(agendaOrNumber: string, scope: ProtocolScope = 'MENAKER'): Promise<any | null> {
     const clean = agendaOrNumber.trim();
     if (!clean || clean === '-') return null;
 
+    const client = this.getClient(scope);
     // 1. Coba exact match dulu
-    let letter = await prisma.letters.findFirst({
+    let letter = await client.letters.findFirst({
       where: {
         deleted_at: null,
         OR: [
@@ -85,7 +91,7 @@ export class DisposisiService {
     if (letter) return letter;
 
     // 2. Coba contains match
-    letter = await prisma.letters.findFirst({
+    letter = await client.letters.findFirst({
       where: {
         deleted_at: null,
         OR: [
@@ -102,9 +108,10 @@ export class DisposisiService {
   /**
    * Mencari data disposisi yang sudah ada untuk letter_id tertentu
    */
-  public async findExistingDispositionByLetterId(letterId: number | bigint): Promise<any | null> {
+  public async findExistingDispositionByLetterId(letterId: number | bigint, scope: ProtocolScope = 'MENAKER'): Promise<any | null> {
     try {
-      return await prisma.dispositions.findFirst({
+      const client = this.getClient(scope);
+      return await client.dispositions.findFirst({
         where: {
           letter_id: BigInt(letterId),
           deleted_at: null,
@@ -112,7 +119,7 @@ export class DisposisiService {
         orderBy: { id: 'desc' },
       });
     } catch (err) {
-      console.warn('[DisposisiService] Gagal memeriksa data disposisi eksisting:', err);
+      console.warn(`[DisposisiService ${scope}] Gagal memeriksa data disposisi eksisting:`, err);
       return null;
     }
   }
@@ -123,8 +130,10 @@ export class DisposisiService {
   public async saveDisposisiDraft(
     draft: DisposisiDraftData,
     _userId: number,
-    userName?: string
+    userName?: string,
+    scope: ProtocolScope = 'MENAKER'
   ): Promise<SaveDisposisiResult> {
+    const client = this.getClient(scope);
     if (!draft.extractedData || !draft.matchedLetter || !draft.tempFilePath) {
       return {
         success: false,
@@ -137,7 +146,7 @@ export class DisposisiService {
       let letterFileName = draft.matchedLetter.file;
       let letterRecord: any = null;
       try {
-        letterRecord = await prisma.letters.findUnique({
+        letterRecord = await client.letters.findUnique({
           where: { id: BigInt(draft.matchedLetter.id) },
           select: { id: true, file: true, date_letter: true },
         });
@@ -145,7 +154,7 @@ export class DisposisiService {
           letterFileName = letterRecord.file;
         }
       } catch (fetchErr) {
-        console.warn('[DisposisiService] Gagal mengambil kolom file/date_letter dari surat induk:', fetchErr);
+        console.warn(`[DisposisiService ${scope}] Gagal mengambil kolom file/date_letter dari surat induk:`, fetchErr);
       }
 
       // 2. Tentukan nama berkas final sesuai standar Laravel / database: {timestamp}_{uniqid}.pdf
@@ -157,7 +166,8 @@ export class DisposisiService {
       const mergeResult = await pdfService.mergeDispositionWithLetterPdf(
         draft.tempFilePath,
         letterFileName,
-        targetPdfName
+        targetPdfName,
+        scope
       );
 
       const finalFileName = mergeResult.finalFileName;
@@ -190,7 +200,7 @@ export class DisposisiService {
             }
           }
         } catch (extractErr) {
-          console.warn('[DisposisiService] Gagal ekstraksi teks dari berkas disposisi untuk tanggal:', extractErr);
+          console.warn(`[DisposisiService ${scope}] Gagal ekstraksi teks dari berkas disposisi untuk tanggal:`, extractErr);
         }
       }
 
@@ -217,63 +227,63 @@ export class DisposisiService {
       // 4. Periksa apakah surat ini sudah memiliki disposisi di database (nomor agenda yang sama)
       const existingDisp =
         (draft.existingDispositionId
-          ? await prisma.dispositions.findUnique({ where: { id: BigInt(draft.existingDispositionId) } })
+          ? await client.dispositions.findUnique({ where: { id: BigInt(draft.existingDispositionId) } })
           : null) ||
-        (await this.findExistingDispositionByLetterId(draft.matchedLetter.id));
+        (await this.findExistingDispositionByLetterId(draft.matchedLetter.id, scope));
 
       let disp: any;
       let isUpdate = false;
 
       if (existingDisp) {
         // UPDATE record disposisi yang sudah ada
-        disp = await prisma.dispositions.update({
+        disp = await client.dispositions.update({
           where: { id: existingDisp.id },
           data: {
             date: parsedDate,
             note: cleanNote,
             file: finalFileName,
-            send_by: draft.extractedData.pemberiDisposisi || 'Menteri Ketenagakerjaan',
+            send_by: draft.extractedData.pemberiDisposisi || (scope === 'WAMEN' ? 'Wakil Menteri Ketenagakerjaan' : 'Menteri Ketenagakerjaan'),
             updated_by: userName || 'Petugas Protokol',
             updated_at: new Date(),
           },
         });
         isUpdate = true;
-        console.log(`[DisposisiService] Berhasil memperbarui data disposisi ID: ${disp.id} untuk nomor agenda: ${draft.matchedLetter.agendaNumber || draft.extractedData.nomorAgenda}`);
+        console.log(`[DisposisiService ${scope}] Berhasil memperbarui data disposisi ID: ${disp.id} untuk nomor agenda: ${draft.matchedLetter.agendaNumber || draft.extractedData.nomorAgenda}`);
 
         // Bersihkan berkas fisik disposisi lama jika berbeda nama
         if (existingDisp.file && existingDisp.file !== finalFileName) {
           try {
-            const oldFilePath = path.join(ENV.DISPOSITION_STORAGE_PATH, existingDisp.file);
+            const oldFilePath = path.join(dbManager.getDispositionStoragePath(scope), existingDisp.file);
             if (fs.existsSync(oldFilePath)) {
               fs.unlinkSync(oldFilePath);
-              console.log(`[DisposisiService] Berkas disposisi lama (${existingDisp.file}) berhasil dibersihkan dari storage.`);
+              console.log(`[DisposisiService ${scope}] Berkas disposisi lama (${existingDisp.file}) berhasil dibersihkan dari storage.`);
             }
           } catch (cleanErr) {
-            console.warn('[DisposisiService] Gagal membersihkan berkas disposisi lama:', cleanErr);
+            console.warn(`[DisposisiService ${scope}] Gagal membersihkan berkas disposisi lama:`, cleanErr);
           }
         }
 
         // Hapus relasi posisi & tindakan lama agar disinkronkan dengan data terbaru
         try {
-          await prisma.disposition_positions.deleteMany({
+          await client.disposition_positions.deleteMany({
             where: { disposition_id: disp.id },
           });
-          await prisma.disposition_actions.deleteMany({
+          await client.disposition_actions.deleteMany({
             where: { disposition_id: disp.id },
           });
         } catch (delRelErr) {
-          console.warn('[DisposisiService] Gagal mereset relasi lama posisi/tindakan:', delRelErr);
+          console.warn(`[DisposisiService ${scope}] Gagal mereset relasi lama posisi/tindakan:`, delRelErr);
         }
       } else {
         // INSERT disposisi baru jika belum pernah ada (dengan auto-healing sequence sync)
         try {
-          disp = await prisma.dispositions.create({
+          disp = await client.dispositions.create({
             data: {
               letter_id: BigInt(draft.matchedLetter.id),
               date: parsedDate,
               note: cleanNote,
               file: finalFileName,
-              send_by: draft.extractedData.pemberiDisposisi || 'Menteri Ketenagakerjaan',
+              send_by: draft.extractedData.pemberiDisposisi || (scope === 'WAMEN' ? 'Wakil Menteri Ketenagakerjaan' : 'Menteri Ketenagakerjaan'),
               created_by: userName || 'Petugas Protokol',
               created_at: new Date(),
               updated_at: new Date(),
@@ -281,15 +291,15 @@ export class DisposisiService {
           });
         } catch (dispErr: any) {
           if (isDuplicateKeyError(dispErr)) {
-            console.warn('[DisposisiService] Terdeteksi bentrok sequence pada tabel dispositions. Menjalankan auto-sync sequence...');
-            await syncTableSequence('dispositions');
-            disp = await prisma.dispositions.create({
+            console.warn(`[DisposisiService ${scope}] Terdeteksi bentrok sequence pada tabel dispositions. Menjalankan auto-sync sequence...`);
+            await syncTableSequence('dispositions', client);
+            disp = await client.dispositions.create({
               data: {
                 letter_id: BigInt(draft.matchedLetter.id),
                 date: parsedDate,
                 note: cleanNote,
                 file: finalFileName,
-                send_by: draft.extractedData.pemberiDisposisi || 'Menteri Ketenagakerjaan',
+                send_by: draft.extractedData.pemberiDisposisi || (scope === 'WAMEN' ? 'Wakil Menteri Ketenagakerjaan' : 'Menteri Ketenagakerjaan'),
                 created_by: userName || 'Petugas Protokol',
                 created_at: new Date(),
                 updated_at: new Date(),
@@ -299,13 +309,13 @@ export class DisposisiService {
             throw dispErr;
           }
         }
-        console.log(`[DisposisiService] Berhasil membuat data disposisi baru ID: ${disp.id} untuk nomor agenda: ${draft.matchedLetter.agendaNumber || draft.extractedData.nomorAgenda}`);
+        console.log(`[DisposisiService ${scope}] Berhasil membuat data disposisi baru ID: ${disp.id} untuk nomor agenda: ${draft.matchedLetter.agendaNumber || draft.extractedData.nomorAgenda}`);
       }
 
       // 5. Hubungkan ke disposition_positions jika ada jabatan yang cocok
       if (draft.extractedData.diteruskanKepada && draft.extractedData.diteruskanKepada.length > 0) {
         try {
-          const allPositions = await prisma.positions.findMany({
+          const allPositions = await client.positions.findMany({
             where: { deleted_at: null },
             select: { id: true, name: true, alias: true },
           });
@@ -314,7 +324,7 @@ export class DisposisiService {
 
           for (const pos of matchedPositions) {
             try {
-              await prisma.disposition_positions.create({
+              await client.disposition_positions.create({
                 data: {
                   disposition_id: disp.id,
                   position_id: BigInt(pos.id),
@@ -326,8 +336,8 @@ export class DisposisiService {
               });
             } catch (dpErr: any) {
               if (isDuplicateKeyError(dpErr)) {
-                await syncTableSequence('disposition_positions');
-                await prisma.disposition_positions.create({
+                await syncTableSequence('disposition_positions', client);
+                await client.disposition_positions.create({
                   data: {
                     disposition_id: disp.id,
                     position_id: BigInt(pos.id),
@@ -341,10 +351,10 @@ export class DisposisiService {
                 throw dpErr;
               }
             }
-            console.log(`[DisposisiService] Berhasil menautkan jabatan: "${pos.name}" (ID: ${pos.id}) ke disposisi ID: ${disp.id}`);
+            console.log(`[DisposisiService ${scope}] Berhasil menautkan jabatan: "${pos.name}" (ID: ${pos.id}) ke disposisi ID: ${disp.id}`);
           }
         } catch (posErr) {
-          console.warn('[DisposisiService] Gagal memetakan disposition_positions:', posErr);
+          console.warn(`[DisposisiService ${scope}] Gagal memetakan disposition_positions:`, posErr);
         }
       }
 
@@ -352,7 +362,7 @@ export class DisposisiService {
       let matchedActions: ActionCandidate[] = [];
       if (draft.extractedData.arahanDisposisi && draft.extractedData.arahanDisposisi.length > 0) {
         try {
-          const allActions = await prisma.actions.findMany({
+          const allActions = await client.actions.findMany({
             where: { deleted_at: null },
             select: { id: true, name: true },
           });
@@ -361,7 +371,7 @@ export class DisposisiService {
 
           for (const act of matchedActions) {
             try {
-              await prisma.disposition_actions.create({
+              await client.disposition_actions.create({
                 data: {
                   disposition_id: disp.id,
                   action_id: BigInt(act.id),
@@ -373,8 +383,8 @@ export class DisposisiService {
               });
             } catch (daErr: any) {
               if (isDuplicateKeyError(daErr)) {
-                await syncTableSequence('disposition_actions');
-                await prisma.disposition_actions.create({
+                await syncTableSequence('disposition_actions', client);
+                await client.disposition_actions.create({
                   data: {
                     disposition_id: disp.id,
                     action_id: BigInt(act.id),
@@ -388,10 +398,10 @@ export class DisposisiService {
                 throw daErr;
               }
             }
-            console.log(`[DisposisiService] Berhasil menautkan arahan: "${act.name}" (ID: ${act.id}) ke disposisi ID: ${disp.id}`);
+            console.log(`[DisposisiService ${scope}] Berhasil menautkan arahan: "${act.name}" (ID: ${act.id}) ke disposisi ID: ${disp.id}`);
           }
         } catch (actErr) {
-          console.warn('[DisposisiService] Gagal memetakan disposition_actions:', actErr);
+          console.warn(`[DisposisiService ${scope}] Gagal memetakan disposition_actions:`, actErr);
         }
       }
 
@@ -423,7 +433,7 @@ export class DisposisiService {
         letterUpdatePayload.status = 1; // 1: normal
       }
 
-      await prisma.letters.update({
+      await client.letters.update({
         where: { id: BigInt(draft.matchedLetter.id) },
         data: letterUpdatePayload,
       });
@@ -435,14 +445,14 @@ export class DisposisiService {
       let eventTitleText: string | undefined = undefined;
 
       try {
-        const linkedEvents = await prisma.events.findMany({
+        const linkedEvents = await client.events.findMany({
           where: {
             letter_id: BigInt(draft.matchedLetter.id),
             deleted_at: null,
           },
         });
 
-        const pivotEntries = await prisma.event_letters.findMany({
+        const pivotEntries = await client.event_letters.findMany({
           where: {
             letter_id: draft.matchedLetter.id.toString(),
             deleted_at: null,
@@ -465,13 +475,13 @@ export class DisposisiService {
 
         const targetOfficial = resolvePejabatDitunjuk(draft.extractedData.diteruskanKepada);
 
-        const letterPicData = await prisma.letters.findUnique({
+        const letterPicData = await client.letters.findUnique({
           where: { id: BigInt(draft.matchedLetter.id) },
           select: { pic_name: true, pic_phone_number: true, pic_json: true },
         });
 
         for (const evId of allEventIds) {
-          const ev = await prisma.events.findUnique({ where: { id: evId } });
+          const ev = await client.events.findUnique({ where: { id: evId } });
           if (!ev || ev.deleted_at !== null) continue;
 
           const baseTitle =
@@ -507,7 +517,7 @@ export class DisposisiService {
             eventStatusText = 'Diwakilkan';
             eventTitleText = eventPayload.title as string;
             console.log(
-              `[DisposisiService] Berhasil memperbarui event ID ${ev.id}: status -> 3 (Diwakilkan), title -> "${eventPayload.title}"`
+              `[DisposisiService ${scope}] Berhasil memperbarui event ID ${ev.id}: status -> 3 (Diwakilkan), title -> "${eventPayload.title}"`
             );
           } else if (isAgendakan) {
             eventPayload.status = 1n; // 1: onschedule (Diagendakan)
@@ -516,17 +526,17 @@ export class DisposisiService {
             eventStatusText = 'onschedule';
             eventTitleText = eventPayload.title as string;
             console.log(
-              `[DisposisiService] Berhasil memperbarui event ID ${ev.id}: status -> 1 (onschedule), title -> "${eventPayload.title}"`
+              `[DisposisiService ${scope}] Berhasil memperbarui event ID ${ev.id}: status -> 1 (onschedule), title -> "${eventPayload.title}"`
             );
           }
 
-          await prisma.events.update({
+          await client.events.update({
             where: { id: ev.id },
             data: eventPayload,
           });
         }
 
-        await prisma.event_letters.updateMany({
+        await client.event_letters.updateMany({
           where: {
             letter_id: draft.matchedLetter.id.toString(),
             deleted_at: null,
@@ -538,7 +548,7 @@ export class DisposisiService {
           },
         });
       } catch (evLinkErr) {
-        console.warn('[DisposisiService] Peringatan saat memperbarui events/event_letters:', evLinkErr);
+        console.warn(`[DisposisiService ${scope}] Peringatan saat memperbarui events/event_letters:`, evLinkErr);
       }
 
       const formattedTanggalDisposisi = parsedDate
@@ -551,7 +561,7 @@ export class DisposisiService {
         success: true,
         dispositionId: Number(disp.id),
         fileName: finalFileName,
-        fileUrl: getDispositionFileUrl(finalFileName),
+        fileUrl: getDispositionFileUrl(finalFileName, scope),
         nomorAgenda: draft.matchedLetter.agendaNumber || draft.extractedData.nomorAgenda,
         perihal: draft.matchedLetter.subject || draft.matchedLetter.perihal || draft.extractedData.perihal,
         tanggalDisposisi: formattedTanggalDisposisi,

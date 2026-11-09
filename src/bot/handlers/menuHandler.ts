@@ -1,41 +1,48 @@
 import { UserSession } from '../../services/sessionService';
+import { ProtocolScope } from '../../database/dbManager';
 import { BotResponse, BotReplyList } from '../types';
 
 export class MenuHandler {
   /**
    * Menu list interaktif standar untuk navigasi layanan protokol Meta WhatsApp Cloud API
    */
-  public getMainMenuInteractiveList(): BotReplyList {
+  public getMainMenuInteractiveList(scope: ProtocolScope = 'MENAKER'): BotReplyList {
+    const isWamen = scope === 'WAMEN';
     return {
       buttonTitle: '📋 Buka Menu Layanan',
       sections: [
         {
-          title: 'Pelayanan & Administrasi',
+          title: `Pelayanan & Administrasi (${isWamen ? 'Wamen' : 'Menaker'})`,
           rows: [
             {
               id: '1',
               title: '1. Registrasi Surat',
-              description: 'Unggah berkas naskah dinas baru (PDF/Foto)',
+              description: `Unggah berkas naskah dinas baru (${isWamen ? 'Wamen' : 'Menaker'})`,
             },
             {
               id: '2',
               title: '2. Agenda Jadwal',
-              description: 'Cek agenda kegiatan protokol pimpinan',
+              description: `Cek agenda kegiatan protokol ${isWamen ? 'Wamen' : 'Menaker'}`,
             },
             {
               id: '3',
               title: '3. Disposisi Surat',
-              description: 'Catat arahan atau cek status disposisi',
+              description: `Lacak status & arahan disposisi ${isWamen ? 'Wamen' : 'Menaker'}`,
+            },
+            {
+              id: 'UPLOAD_DISPOSISI',
+              title: '📤 Upload Disposisi',
+              description: `Unggah foto / scan PDF lembar disposisi pimpinan`,
             },
           ],
         },
         {
-          title: 'Informasi & Riwayat',
+          title: 'Informasi & Arsip',
           rows: [
             {
               id: '4',
               title: '4. Riwayat Surat',
-              description: 'Daftar surat masuk yang baru didaftarkan',
+              description: `Daftar surat masuk ${isWamen ? 'Wamen' : 'Menaker'} terkini`,
             },
             {
               id: '5',
@@ -57,19 +64,23 @@ export class MenuHandler {
    * Tampilan bubble percakapan AI utama saat pengguna menyapa atau membuka menu
    */
   public getMainGreeting(session: UserSession, customIntro?: string): BotResponse {
-    const list = this.getMainMenuInteractiveList();
+    const scope = session.scope || 'MENAKER';
+    const isWamen = scope === 'WAMEN';
+    const scopeBadge = isWamen ? '🏛️ *[AGENDA PROTOKOL WAKIL MENTERI]*' : '🏛️ *[AGENDA PROTOKOL MENTERI]*';
+    const list = this.getMainMenuInteractiveList(scope);
 
     if (customIntro) {
       return {
-        text: `${customIntro}\n\nAda hal lain yang bisa saya bantu terkait persuratan atau agenda kegiatan protokol hari ini? Silakan sentuh tombol *Buka Menu Layanan* di bawah atau sampaikan langsung kebutuhan Anda. 😊`,
+        text: `${scopeBadge}\n\n${customIntro}\n\nAda hal lain yang bisa saya bantu terkait persuratan atau agenda kegiatan protokol hari ini? Silakan sentuh tombol *Buka Menu Layanan* di bawah atau sampaikan langsung kebutuhan Anda. 😊`,
         list,
       };
     }
 
     const text =
+      `${scopeBadge}\n\n` +
       `Halo *${session.userName}*! 👋\n\n` +
-      `Saya asisten AI Protokol Kementerian Ketenagakerjaan RI. Saya siap membantu Anda mengurus registrasi *Surat Masuk*, mencatat *Jadwal Arahan Langsung*, mencatat & melacak *Disposisi Surat*, mengecek agenda *Jadwal Kegiatan*, maupun mencari arsip persuratan dinas.\n\n` +
-      `Silakan sentuh tombol *Buka Menu Layanan* di bawah atau langsung ketik kebutuhan Anda (contoh: _"jadwal hari ini"_ atau angka _1-6_). 😊`;
+      `Saya asisten AI Protokol Kementerian Ketenagakerjaan RI (${isWamen ? 'Ruang Lingkup: *Wakil Menteri*' : 'Ruang Lingkup: *Menteri*'}). Saya siap membantu Anda mengurus registrasi *Surat Masuk*, mencatat & mengunggah *Disposisi Surat*, mencatat *Jadwal Arahan Langsung*, mengecek agenda *Jadwal Kegiatan*, maupun mencari arsip persuratan dinas.\n\n` +
+      `Silakan sentuh tombol *Buka Menu Layanan* di bawah atau langsung ketik kebutuhan Anda (contoh: _"jadwal hari ini"_, _"upload disposisi"_, atau angka _1-6_). 😊`;
 
     return {
       text,

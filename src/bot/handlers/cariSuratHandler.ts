@@ -86,7 +86,7 @@ export class CariSuratHandler {
       };
     }
 
-    const results = await suratService.searchSuratByPerihal(clean, options);
+    const results = await suratService.searchSuratByPerihal(clean, options, session.scope);
 
     session.searchKeyword = clean;
     session.searchResults = results;
@@ -127,7 +127,7 @@ export class CariSuratHandler {
     const keyword = session.searchKeyword || '';
 
     const listText = results
-      .map((s, idx) => formatSuratListItem(s, idx + 1))
+      .map((s, idx) => formatSuratListItem(s, idx + 1, session.scope))
       .join('\n\n');
 
     const text =
@@ -248,7 +248,7 @@ export class CariSuratHandler {
    * Menampilkan detail lengkap satu surat hasil pencarian
    */
   public async showDetailSurat(session: UserSession, suratId: number): Promise<BotResponse> {
-    const surat = await suratService.getDetailSurat(suratId);
+    const surat = await suratService.getDetailSurat(suratId, session.scope);
     if (!surat) {
       return {
         text: `Surat yang Anda cari tidak ditemukan di sistem.`,
@@ -259,7 +259,7 @@ export class CariSuratHandler {
     sessionService.setState(session.whatsappNumber, BotState.CARI_SURAT_DETAIL);
 
     const waktuInputStr = formatWaktuInputIndo(surat.createdAt);
-    const text = formatSuratDetail(surat, waktuInputStr);
+    const text = formatSuratDetail(surat, waktuInputStr, session.scope);
 
     return {
       text,
@@ -280,7 +280,7 @@ export class CariSuratHandler {
     const lower = clean.toLowerCase();
 
     if ((clean === '1' || lower.includes('disposisi')) && session.selectedSuratId) {
-      const surat = await suratService.getDetailSurat(session.selectedSuratId);
+      const surat = await suratService.getDetailSurat(session.selectedSuratId, session.scope);
       if (!surat || !surat.disposisi) {
         return {
           text: `Rincian disposisi untuk surat ini belum tersedia di sistem.`,
@@ -315,6 +315,7 @@ export class CariSuratHandler {
           `${statusInfo}\n\n` +
           `Ada lagi yang ingin Anda periksa terkait surat ini?`,
         buttons: [
+          { id: 'UPLOAD_DISPOSISI', text: '📤 Upload Disposisi' },
           { id: '2', text: '◀️ Kembali' },
           { id: 'MENU', text: '📋 Menu Utama' },
         ],

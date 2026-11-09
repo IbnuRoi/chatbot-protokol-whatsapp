@@ -1,5 +1,6 @@
 import { sessionService, BotState, UserSession } from '../../services/sessionService';
 import { jadwalService, formatTanggalIndo, NormalizedJadwal } from '../../services/jadwalService';
+import { ProtocolScope } from '../../database/dbManager';
 import { nluService, NluResult } from '../../services/nluService';
 import { menuHandler } from './menuHandler';
 import { cariSuratHandler } from './cariSuratHandler';
@@ -23,7 +24,7 @@ export class JadwalHandler {
   /**
    * Merender format kartu satu agenda kegiatan dalam daftar sesuai standar resmi protokol
    */
-  private formatJadwalItem(j: NormalizedJadwal, index: number, showTanggal: boolean = false): string {
+  private formatJadwalItem(j: NormalizedJadwal, index: number, showTanggal: boolean = false, scope: ProtocolScope = 'MENAKER'): string {
     const waktuStr = formatWaktuProtokol(j.waktuMulai, j.waktuSelesai);
 
     let headerItem = `*${index}. Pukul ${waktuStr}*`;
@@ -83,7 +84,7 @@ export class JadwalHandler {
 
     // Baris Berkas Surat Tertaut
     let fileLine = '';
-    const fileUrl = getLetterShortUrl(j.surat?.id, j.surat?.fileName);
+    const fileUrl = getLetterShortUrl(j.surat?.id, j.surat?.fileName, scope);
     if (fileUrl) {
       fileLine = `\n*Berkas Surat:* ${fileUrl}`;
     }
@@ -103,7 +104,7 @@ export class JadwalHandler {
     const greeting = getGreetingWib();
 
     // Ambil seluruh agenda kegiatan hari ini
-    const jadwalsHariIni = await jadwalService.getJadwalHariIni(false, false);
+    const jadwalsHariIni = await jadwalService.getJadwalHariIni(false, false, session.scope);
 
     if (jadwalsHariIni.length === 0) {
       const text =
@@ -120,7 +121,7 @@ export class JadwalHandler {
     sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
 
     const listText = jadwalsHariIni
-      .map((j, idx) => this.formatJadwalItem(j, idx + 1, false))
+      .map((j, idx) => this.formatJadwalItem(j, idx + 1, false, session.scope))
       .join('\n\n');
 
     const text =
@@ -145,10 +146,10 @@ export class JadwalHandler {
     const tomorrowUpper = tomorrowFormatted.toUpperCase();
     const greeting = getGreetingWib();
 
-    const jadwalsBesok = await jadwalService.getJadwalBesok();
+    const jadwalsBesok = await jadwalService.getJadwalBesok(session.scope);
 
     if (jadwalsBesok.length === 0) {
-      const nextResult = await jadwalService.getJadwalBerikutnyaTerdekat();
+      const nextResult = await jadwalService.getJadwalBerikutnyaTerdekat(session.scope);
       const nextInfo = nextResult
         ? `\n\n💡 *Agenda terdekat berikutnya:* ${nextResult.item.namaKegiatan} pada hari *${formatTanggalIndo(nextResult.item.tanggalKegiatan)}* pukul ${formatWaktuProtokol(nextResult.item.waktuMulai, nextResult.item.waktuSelesai)}.`
         : '';
@@ -166,7 +167,7 @@ export class JadwalHandler {
     sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
 
     const listText = jadwalsBesok
-      .map((j, idx) => this.formatJadwalItem(j, idx + 1, false))
+      .map((j, idx) => this.formatJadwalItem(j, idx + 1, false, session.scope))
       .join('\n\n');
 
     const text =
@@ -187,7 +188,7 @@ export class JadwalHandler {
     const parsed = extractDateFromText(dateInput);
     const targetDateStr = parsed ? parsed.dateStr : dateInput;
 
-    const result = await jadwalService.getJadwalByDate(targetDateStr);
+    const result = await jadwalService.getJadwalByDate(targetDateStr, undefined, session.scope);
     const { items, formattedDate } = result;
     const greeting = getGreetingWib();
     const formattedDateUpper = formattedDate.toUpperCase();
@@ -208,7 +209,7 @@ export class JadwalHandler {
     sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
 
     const listText = items
-      .map((j, idx) => this.formatJadwalItem(j, idx + 1, false))
+      .map((j, idx) => this.formatJadwalItem(j, idx + 1, false, session.scope))
       .join('\n\n');
 
     const text =
@@ -230,7 +231,7 @@ export class JadwalHandler {
     daysCount: number,
     labelText?: string
   ): Promise<BotResponse> {
-    const result = await jadwalService.getJadwalRentangHari(daysCount, labelText);
+    const result = await jadwalService.getJadwalRentangHari(daysCount, labelText, session.scope);
     const { items, formattedRange, label } = result;
     const greeting = getGreetingWib();
     const labelUpper = label.toUpperCase();
@@ -251,7 +252,7 @@ export class JadwalHandler {
     sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
 
     const listText = items
-      .map((j, idx) => this.formatJadwalItem(j, idx + 1, true))
+      .map((j, idx) => this.formatJadwalItem(j, idx + 1, true, session.scope))
       .join('\n\n');
 
     const text =
@@ -325,10 +326,14 @@ export class JadwalHandler {
     // Kasus 1: Ada tanggal DAN ada kata kunci topik (contoh: "rakor tanggal 18 september")
     if (dateMatch && keywordOnly && keywordOnly.length >= 2) {
       const dateRange = jadwalService.getWibRangeForDate(dateMatch.dateStr);
-      const results = await jadwalService.searchJadwal(keywordOnly, {
-        startDate: dateRange.startOfDay,
-        endDate: dateRange.endOfDay,
-      });
+      const results = await jadwalService.searchJadwal(
+        keywordOnly,
+        {
+          startDate: dateRange.startOfDay,
+          endDate: dateRange.endOfDay,
+        },
+        session.scope
+      );
 
       session.jadwalSearchKeyword = keywordOnly;
       session.jadwalSearchResults = results;
@@ -361,7 +366,7 @@ export class JadwalHandler {
     }
 
     const searchTarget = keywordOnly && keywordOnly.length >= 2 ? keywordOnly : clean;
-    const results = await jadwalService.searchJadwal(searchTarget);
+    const results = await jadwalService.searchJadwal(searchTarget, undefined, session.scope);
 
     session.jadwalSearchKeyword = searchTarget;
     session.jadwalSearchResults = results;
@@ -383,9 +388,9 @@ export class JadwalHandler {
   /**
    * Merender format teks daftar hasil pencarian jadwal
    */
-  private renderSearchResultList(_session: UserSession, results: NormalizedJadwal[], keyword: string): BotResponse {
+  private renderSearchResultList(session: UserSession, results: NormalizedJadwal[], keyword: string): BotResponse {
     const listText = results
-      .map((j, idx) => this.formatJadwalItem(j, idx + 1, true))
+      .map((j, idx) => this.formatJadwalItem(j, idx + 1, true, session.scope))
       .join('\n\n');
     const greeting = getGreetingWib();
     const keywordUpper = keyword.toUpperCase();
@@ -404,12 +409,12 @@ export class JadwalHandler {
   /**
    * Merender rincian detail satu agenda kegiatan
    */
-  public renderDetailJadwal(item: NormalizedJadwal): BotResponse {
+  public renderDetailJadwal(item: NormalizedJadwal, session?: UserSession): BotResponse {
     const waktu = formatWaktuDisplay(item.waktuMulai, item.waktuSelesai);
     const formattedDate = formatTanggalIndo(item.tanggalKegiatan);
 
     let suratNote = '';
-    const fileUrl = getLetterShortUrl(item.surat?.id, item.surat?.fileName);
+    const fileUrl = getLetterShortUrl(item.surat?.id, item.surat?.fileName, session?.scope);
     if (item.surat?.nomorAgenda && item.surat.nomorAgenda !== '-') {
       const noSurat = item.surat.nomorSurat && item.surat.nomorSurat !== '-' ? ` (No: ${item.surat.nomorSurat})` : '';
       suratNote = `\n• *Surat Terkait*    : ${item.surat.nomorAgenda}${noSurat}`;
@@ -535,14 +540,14 @@ export class JadwalHandler {
     if (jadwalMatch) {
       const jIdx = parseInt(jadwalMatch[1], 10);
       if (jIdx >= 1 && jIdx <= results.length) {
-        return this.renderDetailJadwal(results[jIdx - 1]);
+        return this.renderDetailJadwal(results[jIdx - 1], session);
       }
     }
 
     // 2. Cek angka tunggal (contoh: "1", "2")
     const numericIndex = parseInt(clean, 10);
     if (!isNaN(numericIndex) && numericIndex >= 1 && numericIndex <= results.length && clean === String(numericIndex)) {
-      return this.renderDetailJadwal(results[numericIndex - 1]);
+      return this.renderDetailJadwal(results[numericIndex - 1], session);
     }
 
     // 3. Pencocokan Fluid Teks Berdasarkan Nama Kegiatan yang Sedang Tampil
@@ -562,7 +567,7 @@ export class JadwalHandler {
       }
 
       if (bestSchedule && bestSchedule.score >= 25) {
-        return this.renderDetailJadwal(bestSchedule.item);
+        return this.renderDetailJadwal(bestSchedule.item, session);
       }
     }
 
@@ -584,7 +589,7 @@ export class JadwalHandler {
         }
 
         if (bestSchedule && bestSchedule.score >= 25) {
-          return this.renderDetailJadwal(bestSchedule.item);
+          return this.renderDetailJadwal(bestSchedule.item, session);
         }
       }
 
@@ -656,7 +661,7 @@ export class JadwalHandler {
       lower.includes('terdekat') ||
       lower.includes('setelah')
     ) {
-      const nextResult = await jadwalService.getJadwalBerikutnyaTerdekat();
+      const nextResult = await jadwalService.getJadwalBerikutnyaTerdekat(session.scope);
 
       if (!nextResult) {
         return {
@@ -688,7 +693,7 @@ export class JadwalHandler {
       const picText = cleanPicContact(item.pic);
 
       let fileLine = '';
-      const fileUrl = getLetterShortUrl(item.surat?.id, item.surat?.fileName);
+      const fileUrl = getLetterShortUrl(item.surat?.id, item.surat?.fileName, session.scope);
       if (fileUrl) {
         fileLine = `\n📎 *Berkas Surat*     : ${fileUrl}`;
       }
@@ -713,7 +718,7 @@ export class JadwalHandler {
       lower.includes('minggu') ||
       lower.includes('depan')
     ) {
-      const mendatang = await jadwalService.getJadwalMendatang(10);
+      const mendatang = await jadwalService.getJadwalMendatang(10, session.scope);
 
       if (mendatang.length === 0) {
         return {
@@ -727,7 +732,7 @@ export class JadwalHandler {
       sessionService.setState(session.whatsappNumber, BotState.JADWAL_CARI_HASIL);
 
       const listText = mendatang
-        .map((j, idx) => this.formatJadwalItem(j, idx + 1, true))
+        .map((j, idx) => this.formatJadwalItem(j, idx + 1, true, session.scope))
         .join('\n\n');
       const greeting = getGreetingWib();
 

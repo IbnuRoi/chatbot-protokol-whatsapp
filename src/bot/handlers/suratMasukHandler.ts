@@ -118,7 +118,7 @@ export class SuratMasukHandler {
     }
 
     // Generate Nomor Agenda otomatis
-    const generatedAgenda = await suratService.generateNomorAgenda(selectedJenis);
+    const generatedAgenda = await suratService.generateNomorAgenda(selectedJenis, session.scope);
 
     sessionService.updateDraft(session.whatsappNumber, {
       jenisSurat: selectedJenis,
@@ -182,7 +182,7 @@ export class SuratMasukHandler {
       return `⚠️ Nomor Agenda terlalu pendek. Silakan masukkan nomor agenda yang valid:`;
     }
 
-    const isExists = await suratService.isNomorAgendaExists(cleanAgenda);
+    const isExists = await suratService.isNomorAgendaExists(cleanAgenda, session.scope);
     if (isExists) {
       return (
         `⚠️ Nomor Agenda *${cleanAgenda}* sudah digunakan oleh surat lain di database!\n` +
@@ -281,7 +281,7 @@ export class SuratMasukHandler {
     // Validasi Anti-Duplikasi: Batalkan proses jika nomor surat sudah ada di database
     const extractedNomorSurat = (extractedData.nomorSurat || '').trim();
     if (extractedNomorSurat && extractedNomorSurat !== '-' && extractedNomorSurat.length >= 3) {
-      const duplicate = await suratService.findExistingLetterByNomorSurat(extractedNomorSurat);
+      const duplicate = await suratService.findExistingLetterByNomorSurat(extractedNomorSurat, session.scope);
       if (duplicate) {
         console.warn(`[SuratMasukHandler] Menolak upload PDF: Nomor surat "${extractedNomorSurat}" sudah terdaftar di database (Agenda: ${duplicate.agenda_number}).`);
         pdfService.deleteTempPdf(tempFilePath);
@@ -295,7 +295,7 @@ export class SuratMasukHandler {
     const defaultTipe = 'Biasa';
 
     // Generate Nomor Agenda otomatis berdasarkan kategori surat yang dihasilkan chatbot
-    const generatedAgenda = await suratService.generateNomorAgenda(detectedJenis);
+    const generatedAgenda = await suratService.generateNomorAgenda(detectedJenis, session.scope);
     const finalFileName = generateLetterFileName(originalFileName);
 
     const finalPerihal = extractedData.perihal || '-';
@@ -345,7 +345,7 @@ export class SuratMasukHandler {
     // Validasi Anti-Duplikasi: Batalkan proses jika nomor surat sudah ada di database
     const extractedNomorSurat = (extractedData.nomorSurat || '').trim();
     if (extractedNomorSurat && extractedNomorSurat !== '-' && extractedNomorSurat.length >= 3) {
-      const duplicate = await suratService.findExistingLetterByNomorSurat(extractedNomorSurat);
+      const duplicate = await suratService.findExistingLetterByNomorSurat(extractedNomorSurat, session.scope);
       if (duplicate) {
         console.warn(`[SuratMasukHandler] Menolak upload Gambar: Nomor surat "${extractedNomorSurat}" sudah terdaftar di database (Agenda: ${duplicate.agenda_number}).`);
         pdfService.deleteTempPdf(tempFilePath);
@@ -359,7 +359,7 @@ export class SuratMasukHandler {
     const defaultTipe = 'Biasa';
 
     // Generate Nomor Agenda otomatis berdasarkan kategori surat yang dihasilkan chatbot
-    const generatedAgenda = await suratService.generateNomorAgenda(detectedJenis);
+    const generatedAgenda = await suratService.generateNomorAgenda(detectedJenis, session.scope);
     const finalFileName = generateLetterFileName(originalFileName);
 
     const finalPerihal = extractedData.perihal || '-';
@@ -511,14 +511,14 @@ export class SuratMasukHandler {
       session.draftSurat.jenisSurat = session.draftSurat.jenisSurat || 'UND';
       session.draftSurat.tipeSurat = session.draftSurat.tipeSurat || 'Biasa';
 
-      const result = await suratService.saveSuratDraft(session.draftSurat, session.userId, session.userName);
+      const result = await suratService.saveSuratDraft(session.draftSurat, session.userId, session.userName, session.scope);
 
       if (result.success) {
         const savedFileName = result.fileName || session.draftSurat.finalFileName || session.draftSurat.tempPdfName;
         const savedData = session.draftSurat.extractedData;
         const finalPerihal = session.draftSurat.finalPerihal || savedData?.perihal || '-';
         const finalSubject = (session.draftSurat.finalSubject || savedData?.subject || generateSubjectSummary(finalPerihal, savedData)).slice(0, 200);
-        const fileUrl = getLetterFileUrl(savedFileName);
+        const fileUrl = getLetterFileUrl(savedFileName, session.scope);
         const fileLine = fileUrl ? `• 📎 *Link Berkas*    : ${fileUrl}\n` : '';
         const jenisCode = (session.draftSurat?.jenisSurat || 'UND').toUpperCase();
         const userPenginput = result.createdBy || session.userName || 'Petugas Protokol';
@@ -623,7 +623,7 @@ export class SuratMasukHandler {
 
     // 3. Pembatalan
     if (clean === '3' || lower === 'batal' || lower.includes('cancel')) {
-      await suratService.cancelDraft(session.draftSurat, session.userId);
+      await suratService.cancelDraft(session.draftSurat, session.userId, session.scope);
       sessionService.resetSession(session.whatsappNumber);
       return menuHandler.getMainGreeting(
         session,
@@ -721,7 +721,7 @@ export class SuratMasukHandler {
     const lower = clean.toLowerCase();
 
     if (lower === 'batal' || lower.includes('cancel')) {
-      await suratService.cancelDraft(session.draftSurat, session.userId);
+      await suratService.cancelDraft(session.draftSurat, session.userId, session.scope);
       sessionService.resetSession(session.whatsappNumber);
       return {
         text: `🚫 *REGISTRASI DIBATALKAN*\n\nDraft registrasi surat telah dibatalkan.`,
@@ -752,7 +752,7 @@ export class SuratMasukHandler {
     if (parsed.kategori && parsed.kategori !== session.draftSurat.jenisSurat) {
       session.draftSurat.jenisSurat = parsed.kategori;
       session.draftSurat.extractedData.kategoriSurat = parsed.kategori as any;
-      const newAgenda = await suratService.generateNomorAgenda(parsed.kategori);
+      const newAgenda = await suratService.generateNomorAgenda(parsed.kategori, session.scope);
       session.draftSurat.nomorAgenda = newAgenda;
       updatedKeys.push(`Kategori (${parsed.kategori}) & Nomor Agenda (${newAgenda})`);
 
@@ -773,7 +773,7 @@ export class SuratMasukHandler {
     if (parsed.nomorSurat) {
       const candidateNomor = parsed.nomorSurat.trim().slice(0, 100);
       if (candidateNomor && candidateNomor !== '-' && candidateNomor.length >= 3) {
-        const duplicate = await suratService.findExistingLetterByNomorSurat(candidateNomor);
+        const duplicate = await suratService.findExistingLetterByNomorSurat(candidateNomor, session.scope);
         if (duplicate) {
           console.warn(`[SuratMasukHandler] Menolak koreksi template: Nomor surat "${candidateNomor}" sudah terdaftar di database.`);
           if (session.draftSurat?.tempPdfPath) {
@@ -1744,7 +1744,7 @@ export class SuratMasukHandler {
       } else if (cleanJenis.includes('UCAPAN') || cleanJenis.includes('VIDEO') || cleanJenis.includes('TAP')) {
         chosen = 'TAP';
       }
-      const generatedAgenda = await suratService.generateNomorAgenda(chosen);
+      const generatedAgenda = await suratService.generateNomorAgenda(chosen, session.scope);
       session.draftSurat.jenisSurat = chosen;
       session.draftSurat.nomorAgenda = generatedAgenda;
       if (session.draftSurat.extractedData) {
@@ -1846,7 +1846,7 @@ export class SuratMasukHandler {
       } else if (field === 'nomorSurat') {
         const candidateNomor = val.trim().slice(0, 100);
         if (candidateNomor && candidateNomor !== '-' && candidateNomor.length >= 3) {
-          const duplicate = await suratService.findExistingLetterByNomorSurat(candidateNomor);
+          const duplicate = await suratService.findExistingLetterByNomorSurat(candidateNomor, session.scope);
           if (duplicate) {
             console.warn(`[SuratMasukHandler] Menolak koreksi nomor surat: Nomor surat "${candidateNomor}" sudah terdaftar di database.`);
             if (session.draftSurat?.tempPdfPath) {
@@ -2073,11 +2073,11 @@ export class SuratMasukHandler {
       clean.includes('oke') ||
       clean.includes('selesai')
     ) {
-      const result = await suratService.saveSuratDraft(session.draftSurat!, session.userId, session.userName);
+      const result = await suratService.saveSuratDraft(session.draftSurat!, session.userId, session.userName, session.scope);
 
       if (result.success) {
         sessionService.resetSession(session.whatsappNumber);
-        const fileUrl = getLetterFileUrl(result.fileName);
+        const fileUrl = getLetterFileUrl(result.fileName, session.scope);
         const fileLine = fileUrl ? `• 📎 *Link Berkas*     : ${fileUrl}\n` : '';
         const userPenginput = result.createdBy || session.userName || 'Petugas Protokol';
         const waktuInputStr = formatWaktuInputIndo(result.createdAt || new Date());
@@ -2144,7 +2144,7 @@ export class SuratMasukHandler {
       clean.includes('gajadi') ||
       clean.includes('cancel')
     ) {
-      await suratService.cancelDraft(session.draftSurat, session.userId);
+      await suratService.cancelDraft(session.draftSurat, session.userId, session.scope);
       sessionService.resetSession(session.whatsappNumber);
       return menuHandler.getMainGreeting(
         session,

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { sessionService, BotState, UserSession, DisposisiDraftData, ExtractedDisposisiData } from '../../services/sessionService';
 import { disposisiService } from '../../services/disposisiService';
+import { dbManager } from '../../database/dbManager';
 import { aiService } from '../../services/aiService';
 import { pdfService } from '../../services/pdfService';
 import { menuHandler } from './menuHandler';
@@ -15,17 +16,20 @@ import { formatWaktuInputIndo, formatTanggalIndo } from '../../utils/dateHelper'
 
 export class DisposisiHandler {
   /**
-   * Menampilkan permintaan input nomor surat / nomor agenda untuk pelacakan status
+   * Menampilkan permintaan input nomor surat / nomor agenda atau tombol upload lembar disposisi
    */
   public async promptNomor(session: UserSession): Promise<BotResponse> {
     sessionService.setState(session.whatsappNumber, BotState.DISPOSISI_INPUT_NOMOR);
 
     return {
       text:
-        `🔍 *PELACAKAN STATUS DISPOSISI*\n\n` +
-        `Boleh sebutkan atau ketikkan *Nomor Agenda* atau *Nomor Surat* yang ingin Anda cek statusnya (misalnya: _UND/2026/09/0001_ atau _B-104/MENKO/MARVES_).\n\n` +
+        `📬 *LAYANAN DISPOSISI SURAT*\n\n` +
+        `Silakan pilih layanan disposisi yang Anda perlukan:\n\n` +
+        `• *Unggah Lembar Disposisi*:\n  Sentuh tombol *📤 Upload Disposisi* di bawah untuk merekam arahan/status disposisi baru dari foto atau PDF scan.\n\n` +
+        `• *Lacak Status Disposisi*:\n  Ketikkan langsung *Nomor Agenda* atau *Nomor Surat* (contoh: _UND/2026/09/0001_ atau _B-104/MENKO/MARVES_).\n\n` +
         `_(Sentuh tombol di bawah atau ketik *Batal* untuk kembali ke menu utama)_`,
       buttons: [
+        { id: 'UPLOAD_DISPOSISI', text: '📤 Upload Disposisi' },
         { id: 'MENU', text: '📋 Menu Utama' },
       ],
     };
@@ -37,12 +41,30 @@ export class DisposisiHandler {
   public async promptUpload(session: UserSession): Promise<BotResponse> {
     sessionService.setState(session.whatsappNumber, BotState.DISPOSISI_UPLOAD_BERKAS);
 
+    let prefixTarget = '';
+    if (session.selectedSuratId) {
+      try {
+        const client = dbManager.getClient(session.scope);
+        const l = await client.letters.findUnique({
+          where: { id: BigInt(session.selectedSuratId) },
+          select: { agenda_number: true, subject: true },
+        });
+        if (l) {
+          prefixTarget = `📌 *Target Surat Terpilih:* ${l.agenda_number} (${l.subject || '-'})\n\n`;
+        }
+      } catch {}
+    }
+
     return {
       text:
         `📥 *PENCATATAN DISPOSISI SURAT*\n\n` +
+        prefixTarget +
         `Silakan kirimkan dokumen atau foto *Lembar Disposisi* (berupa file PDF scan atau foto/gambar formulir disposisi).\n\n` +
         `Sistem akan mengekstrak otomatis Nomor Agenda, Pejabat Penerima, Arahan Pimpinan, dan Catatan Khusus dari lembar disposisi.\n\n` +
-        `_(Ketik *Batal* untuk membatalkan)_`,
+        `_(Ketik *Batal* atau sentuh tombol di bawah untuk kembali ke menu utama)_`,
+      buttons: [
+        { id: 'MENU', text: '📋 Menu Utama' },
+      ],
     };
   }
 
@@ -83,18 +105,32 @@ export class DisposisiHandler {
     let existingDisposition: any = null;
 
     if (cleanAgenda && cleanAgenda !== '-') {
-      matchedLetter = await disposisiService.findLetterByAgenda(cleanAgenda);
+      matchedLetter = await disposisiService.findLetterByAgenda(cleanAgenda, session.scope);
       if (matchedLetter) {
-        existingDisposition = await disposisiService.findExistingDispositionByLetterId(matchedLetter.id);
+        existingDisposition = await disposisiService.findExistingDispositionByLetterId(matchedLetter.id, session.scope);
       }
     }
 
     // Fallback: Jika belum cocok dari nomor agenda, coba cari dari nomor surat pengirim
     if (!matchedLetter && extracted.nomorSurat && extracted.nomorSurat !== '-' && extracted.nomorSurat.length >= 3) {
-      matchedLetter = await disposisiService.findLetterByAgenda(extracted.nomorSurat);
+      matchedLetter = await disposisiService.findLetterByAgenda(extracted.nomorSurat, session.scope);
       if (matchedLetter) {
-        existingDisposition = await disposisiService.findExistingDispositionByLetterId(matchedLetter.id);
+        existingDisposition = await disposisiService.findExistingDispositionByLetterId(matchedLetter.id, session.scope);
       }
+    }
+
+    // Fallback 2: Jika belum cocok dari hasil ekstraksi, tapi ada session.selectedSuratId
+    if (!matchedLetter && session.selectedSuratId) {
+      try {
+        const client = dbManager.getClient(session.scope);
+        const l = await client.letters.findUnique({
+          where: { id: BigInt(session.selectedSuratId) },
+        });
+        if (l) {
+          matchedLetter = l;
+          existingDisposition = await disposisiService.findExistingDispositionByLetterId(matchedLetter.id, session.scope);
+        }
+      } catch {}
     }
 
     // Jika tanggal disposisi belum ditemukan dari berkas disposisi, gunakan tanggal surat masuk
@@ -251,7 +287,8 @@ export class DisposisiHandler {
       const saveResult = await disposisiService.saveDisposisiDraft(
         draft,
         session.userId,
-        session.userName
+        session.userName,
+        session.scope
       );
 
       sessionService.clearDisposisiDraft(session.whatsappNumber);
@@ -425,7 +462,7 @@ export class DisposisiHandler {
       updatedKeys.push('Nomor Agenda');
 
       if (cleanAgenda && cleanAgenda !== '-') {
-        const matched = await disposisiService.findLetterByAgenda(cleanAgenda);
+        const matched = await disposisiService.findLetterByAgenda(cleanAgenda, session.scope);
         if (matched) {
           draft.matchedLetter = {
             id: Number(matched.id),
@@ -436,7 +473,7 @@ export class DisposisiHandler {
             dateLetter: matched.date_letter ? String(matched.date_letter) : undefined,
             file: matched.file || undefined,
           };
-          const existingDisp = await disposisiService.findExistingDispositionByLetterId(matched.id);
+          const existingDisp = await disposisiService.findExistingDispositionByLetterId(matched.id, session.scope);
           draft.existingDispositionId = existingDisp ? Number(existingDisp.id) : undefined;
           if ((!draft.extractedData.tanggalDisposisi || draft.extractedData.tanggalDisposisi === '-') && matched.date_letter) {
             draft.extractedData.tanggalDisposisi = formatTanggalIndo(matched.date_letter, false);
@@ -731,7 +768,7 @@ export class DisposisiHandler {
     switch (field) {
       case 'nomorAgenda': {
         draft.extractedData.nomorAgenda = value;
-        const matched = await disposisiService.findLetterByAgenda(value);
+        const matched = await disposisiService.findLetterByAgenda(value, session.scope);
         if (matched) {
           draft.matchedLetter = {
             id: Number(matched.id),
@@ -742,7 +779,7 @@ export class DisposisiHandler {
             dateLetter: matched.date_letter ? String(matched.date_letter) : undefined,
             file: matched.file || undefined,
           };
-          const existingDisp = await disposisiService.findExistingDispositionByLetterId(matched.id);
+          const existingDisp = await disposisiService.findExistingDispositionByLetterId(matched.id, session.scope);
           draft.existingDispositionId = existingDisp ? Number(existingDisp.id) : undefined;
           if ((!draft.extractedData.tanggalDisposisi || draft.extractedData.tanggalDisposisi === '-') && matched.date_letter) {
             draft.extractedData.tanggalDisposisi = formatTanggalIndo(matched.date_letter, false);
@@ -812,7 +849,7 @@ export class DisposisiHandler {
       );
     }
 
-    const matched = await disposisiService.findLetterByAgenda(clean);
+    const matched = await disposisiService.findLetterByAgenda(clean, session.scope);
 
     if (!matched) {
       return {
@@ -822,7 +859,7 @@ export class DisposisiHandler {
       };
     }
 
-    const existingDisp = await disposisiService.findExistingDispositionByLetterId(matched.id);
+    const existingDisp = await disposisiService.findExistingDispositionByLetterId(matched.id, session.scope);
 
     const draft = session.draftDisposisi || {};
     draft.extractedData = draft.extractedData || {
@@ -861,7 +898,7 @@ export class DisposisiHandler {
       return menuHandler.getMainGreeting(session);
     }
 
-    const surat = await disposisiService.findDisposisiByKeyword(clean);
+    const surat = await disposisiService.findDisposisiByKeyword(clean, session.scope);
 
     sessionService.resetSession(session.whatsappNumber);
 

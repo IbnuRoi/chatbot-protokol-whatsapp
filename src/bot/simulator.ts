@@ -8,6 +8,8 @@ import { prisma } from '../database/prisma';
 import { BotResponse } from './types';
 
 import { generateValidTestPdf } from '../tools/generateSamplePdf';
+import { dbManager } from '../database/dbManager';
+import { sessionService } from '../services/sessionService';
 
 export async function createSampleInvitationPdf(): Promise<string> {
   // Membuat berkas PDF dummy resmi untuk pengujian simulasi
@@ -27,8 +29,9 @@ export async function runInteractiveSimulator() {
   console.log('Perintah Tambahan Simulator:');
   console.log('  /upload              -> Simulasi mengirim file PDF surat resmi');
   console.log('  /upload <path_file>  -> Mengirimkan berkas PDF atau Gambar (JPG/PNG) dari komputer');
-  console.log('  /user <nomor_wa>     -> Ganti nomor WhatsApp pengirim');
-  console.log('  /users               -> Tampilkan daftar nomor whitelist');
+  console.log('  /upload_disposisi    -> Buka alur unggah lembar disposisi');
+  console.log('  /user <nomor_wa>     -> Ganti nomor pengirim (otomatis mendeteksi Menteri vs Wamen)');
+  console.log('  /users [wamen]       -> Tampilkan daftar user terdaftar (Menaker atau Wamen)');
   console.log('  /exit                -> Keluar dari simulator');
   console.log('================================================================\n');
 
@@ -85,27 +88,39 @@ export async function runInteractiveSimulator() {
   printBotReply(initialGreeting);
 
   const promptUser = () => {
-    rl.question(`👤 [${currentPhone}] > `, async (input) => {
+    const session = sessionService.getSession(currentPhone);
+    const scopeLabel = session?.scope || 'MENAKER';
+    rl.question(`👤 [${currentPhone} | ${scopeLabel}] > `, async (input) => {
       const trimmed = input.trim();
 
       if (trimmed === '/exit') {
         console.log('Keluar dari simulator.');
         rl.close();
-        await prisma.$disconnect();
+        await dbManager.disconnectAll();
         process.exit(0);
       }
 
-      if (trimmed === '/users') {
-        const users = await prisma.users.findMany({
-          where: { deleted_at: null },
-          select: { id: true, name: true, phone_number: true, device_id: true, role: true },
-          orderBy: { id: 'asc' },
-        });
-        console.log('\n📋 Daftar User Terdaftar:');
-        users.forEach((u) => {
-          const identifier = u.phone_number && u.phone_number !== '-' ? u.phone_number : (u.device_id || '-');
-          console.log(`- ${identifier} | ${u.name} | Role: ${u.role || 'PROTOKOL'}`);
-        });
+      if (trimmed.startsWith('/users')) {
+        const targetScope = trimmed.includes('wamen') ? 'WAMEN' : 'MENAKER';
+        try {
+          const client = dbManager.getClient(targetScope);
+          const users = await client.users.findMany({
+            where: { deleted_at: null },
+            select: { id: true, name: true, phone_number: true, device_id: true, role: true },
+            orderBy: { id: 'asc' },
+          });
+          console.log(`\n📋 Daftar User Terdaftar [Scope: ${targetScope}]:`);
+          if (users.length === 0) {
+            console.log('   (Belum ada user yang terdaftar di database ini)');
+          } else {
+            users.forEach((u) => {
+              const identifier = u.phone_number && u.phone_number !== '-' ? u.phone_number : (u.device_id || '-');
+              console.log(`- ${identifier} | ${u.name} | Role: ${u.role || 'PROTOKOL'}`);
+            });
+          }
+        } catch (err: any) {
+          console.error(`❌ Gagal mengambil daftar user ${targetScope}:`, err?.message || err);
+        }
         console.log('');
         promptUser();
         return;
