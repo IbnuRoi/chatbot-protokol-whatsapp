@@ -311,11 +311,18 @@ class SessionService {
 export const sessionService = new SessionService();
 
 /**
- * Memeriksa apakah sesi atau nomor WhatsApp pengguna adalah milik user Gufronation (Akses Ganda Menteri & Wamen)
+ * Memeriksa apakah sesi atau nomor WhatsApp pengguna memiliki otorisasi Akses Ganda (Menteri & Wamen)
+ * Mencakup user Gufronation (082299294269), Ibnu (082124985997), atau user dengan allowedScopes > 1
  */
-export function isGufronation(sessionOrPhone?: UserSession | string | null): boolean {
+export function isDualScopeUser(sessionOrPhone?: UserSession | string | null): boolean {
   if (!sessionOrPhone) return false;
+  if (typeof sessionOrPhone !== 'string' && sessionOrPhone.allowedScopes && sessionOrPhone.allowedScopes.length > 1) {
+    return true;
+  }
   const phone = typeof sessionOrPhone === 'string' ? sessionOrPhone : sessionOrPhone.whatsappNumber;
   const clean = (phone || '').replace(/\D/g, '');
-  return clean.endsWith('82299294269');
+  return clean.endsWith('82299294269') || clean.endsWith('82124985997');
 }
+
+// Alias kompatibilitas untuk kemudahan integrasi
+export const isGufronation = isDualScopeUser;
