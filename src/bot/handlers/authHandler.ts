@@ -70,11 +70,16 @@ export class AuthHandler {
 
         if (candidate) {
           const isLid = rawPhone.includes('@lid') || (normalized.length >= 14 && !normalized.startsWith('628') && !normalized.startsWith('08'));
-          console.log(`[Auth Auto-Link ${scope}] Menautkan WhatsApp ${isLid ? 'LID' : 'Nomor'} ${normalized} secara otomatis ke pengguna database: "${candidate.name}" (PushName: "${pushName}")`);
-          dbUser = await client.users.update({
-            where: { id: candidate.id },
-            data: isLid ? { device_id: normalized } : { phone_number: normalized },
-          });
+          const hasExistingPhone = candidate.phone_number && candidate.phone_number.trim() !== '';
+
+          // Hanya tautkan jika kandidat belum memiliki nomor HP atau jika ini adalah ID privasi WhatsApp (LID)
+          if (isLid || !hasExistingPhone) {
+            console.log(`[Auth Auto-Link ${scope}] Menautkan WhatsApp ${isLid ? 'LID' : 'Nomor'} ${normalized} secara otomatis ke pengguna database: "${candidate.name}" (PushName: "${pushName}")`);
+            dbUser = await client.users.update({
+              where: { id: candidate.id },
+              data: isLid ? { device_id: normalized } : { phone_number: normalized },
+            });
+          }
         }
       }
 

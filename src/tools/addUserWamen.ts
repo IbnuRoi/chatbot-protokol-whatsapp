@@ -72,8 +72,8 @@ async function main() {
     console.log('   ✅ Data user berhasil diperbarui.');
   } else {
     console.log('   ℹ️ User belum terdaftar. Menambahkan user baru...');
-    // Password bcrypt standar website: "password"
-    const defaultPasswordHash = '$2y$10$wK1k6s9JmFm00q7qY.0g6eT9EHz3U2FvYv6eWvYk4F4yR8gR7q9i.';
+    // Password bcrypt standar website (12345678)
+    const defaultPasswordHash = '$2y$10$P9ac.Y8UDwrwlPk085Edm.ETiPwdyeIkPsCFBZxRmD7fKSV/JIALm';
 
     savedUser = await client.users.create({
       data: {
