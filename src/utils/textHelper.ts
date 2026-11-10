@@ -1210,22 +1210,73 @@ export function resolvePejabatDitunjuk(diteruskanKepada: string | string[] | und
 }
 
 /**
- * Memformat judul event di database sesuai arahan disposisi pimpinan (Agendakan vs Mewakili Menteri)
+ * Memeriksa apakah suatu lembar disposisi berstatus 'Tidak Ada Disposisi'
+ * Kriteria:
+ * 1. Lajur disposisi tidak diisi sama sekali (arahanDisposisi kosong / [] / '-' / null / undefined)
+ * 2. ATAU terdapat tulisan 'di pamitkan' / 'dipamitkan' / 'pamit' / 'pamitkan' pada bagian catatan
+ * 3. ATAU arahan secara eksplisit menyatakan 'tidak ada disposisi' / 'pamit'
+ */
+export function isTidakAdaDisposisiCheck(extractedData?: {
+  arahanDisposisi?: string[] | string | null;
+  catatan?: string | null;
+} | null): boolean {
+  if (!extractedData) return false;
+
+  const rawArahan = extractedData.arahanDisposisi;
+  let arahanList: string[] = [];
+  if (Array.isArray(rawArahan)) {
+    arahanList = rawArahan
+      .filter((a): a is string => typeof a === 'string')
+      .map((a) => a.trim())
+      .filter((a) => a !== '' && a !== '-');
+  } else if (typeof rawArahan === 'string' && rawArahan.trim() !== '' && rawArahan.trim() !== '-') {
+    arahanList = [rawArahan.trim()];
+  }
+
+  // 1. Lajur disposisi tidak diisi sama sekali
+  const hasNoLajur = arahanList.length === 0;
+
+  // 2. Tulisan "di pamitkan" / "dipamitkan" / "pamit" pada bagian catatan
+  const catatanText = (extractedData.catatan || '').toLowerCase();
+  const isDipamitkan = /\b(di\s*pamitkan|dipamitkan|pamit|pamitkan)\b/i.test(catatanText);
+
+  // 3. Arahan eksplisit menyatakan tidak ada disposisi atau pamit
+  const hasExplicitTidakAdaDisposisi = arahanList.some((a) =>
+    /\b(tidak\s*ada\s*disposisi|pamit|pamitkan|dipamitkan|di\s*pamitkan)\b/i.test(a)
+  );
+
+  return hasNoLajur || isDipamitkan || hasExplicitTidakAdaDisposisi;
+}
+
+/**
+ * Memformat judul event di database sesuai arahan disposisi pimpinan (Agendakan vs Mewakili Menteri vs Tidak Ada Disposisi/Pamitkan)
  * dengan template bold di akhir kalimat:
  * - Agendakan: <p>Judul Acara<br />\r\n<strong>(Arahan Menaker: Agendakan)</strong></p>
  * - Mewakili Menteri: <p>Judul Acara<br />\r\n<strong>(Arahan Menaker: PEJABAT_DITUNJUK)</strong></p>
+ * - Tidak Ada Disposisi / Pamitkan: <p>Judul Acara<br />\r\n<strong>(Arahan Menaker: Pamitkan / Tidak Ada Disposisi)</strong></p>
  */
 export function formatEventTitleFromDisposition(
   originalTitle: string | null | undefined,
-  arahanType: 'agendakan' | 'diwakilkan',
-  pejabatDitunjuk?: string | string[] | null
+  arahanType: 'agendakan' | 'diwakilkan' | 'tidak_ada_disposisi',
+  pejabatDitunjuk?: string | string[] | null,
+  pemberiDisposisi?: string,
+  suffixText?: string
 ): string {
   const cleanedTitle = cleanTemplatePrefix(originalTitle) || 'Agenda Kegiatan Protokol';
   const resolvedOfficial = resolvePejabatDitunjuk(pejabatDitunjuk);
 
-  const suffix = arahanType === 'agendakan' ? 'Agendakan' : resolvedOfficial;
+  const leaderLabel = /wamen|wakil/i.test(pemberiDisposisi || '') ? 'Arahan Wamen' : 'Arahan Menaker';
 
-  return `<p>${cleanedTitle}<br />\r\n<strong>(Arahan Menaker: ${suffix})</strong></p>`;
+  let suffix = '';
+  if (arahanType === 'agendakan') {
+    suffix = 'Agendakan';
+  } else if (arahanType === 'diwakilkan') {
+    suffix = resolvedOfficial;
+  } else {
+    suffix = suffixText || 'Tidak Ada Disposisi';
+  }
+
+  return `<p>${cleanedTitle}<br />\r\n<strong>(${leaderLabel}: ${suffix})</strong></p>`;
 }
 
 /**
@@ -1565,9 +1616,14 @@ export function formatFriendlyCategory(categoryCode?: string | null, typeName?: 
  * Format satu kartu ringkasan surat masuk untuk tampilan daftar hasil pencarian di WhatsApp
  */
 export function formatSuratListItem(s: SuratCardData, index: number, scope: 'MENAKER' | 'WAMEN' = 'MENAKER'): string {
+  const isTidakAda = s.disposisi?.status === 'TIDAK_ADA_DISPOSISI';
   const isSudah = s.disposisi?.status === 'SUDAH_DISPOSISI';
-  let statusBadge = isSudah ? '🟢 Sudah Disposisi' : '🟡 Belum Disposisi';
-  if (isSudah && s.disposisi?.tujuanDisposisi && s.disposisi.tujuanDisposisi !== '-') {
+  let statusBadge = isTidakAda
+    ? '⚪ Tidak Ada Disposisi'
+    : isSudah
+      ? '🟢 Sudah Disposisi'
+      : '🟡 Belum Disposisi';
+  if ((isSudah || isTidakAda) && s.disposisi?.tujuanDisposisi && s.disposisi.tujuanDisposisi !== '-') {
     statusBadge += ` (Kepada: ${s.disposisi.tujuanDisposisi})`;
   }
 
@@ -1652,7 +1708,22 @@ export function formatSuratDetail(surat: SuratCardData, waktuInputStr: string, s
   }
 
   let disposisiSection = '';
-  if (isSudah && disposisi) {
+  if (disposisi?.status === 'TIDAK_ADA_DISPOSISI') {
+    const tgl = disposisi.tanggalDisposisi
+      ? new Date(disposisi.tanggalDisposisi).toLocaleDateString('id-ID', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+        })
+      : '-';
+    disposisiSection =
+      `\n📬 *LEMBAR DISPOSISI PIMPINAN:*\n` +
+      `⚪ *Status: Tidak Ada Disposisi*\n` +
+      `_Surat ini telah diproses dengan status Tidak Ada Disposisi (lajur kosong / dipamitkan)._\n` +
+      `• *Tanggal Disposisi*: ${tgl}\n` +
+      (disposisi.tujuanDisposisi && disposisi.tujuanDisposisi !== '-' ? `• *Diteruskan Kepada*: ${disposisi.tujuanDisposisi}\n` : '') +
+      `• *Catatan Pimpinan* : ${cleanHtml(disposisi.catatan) || '-'}\n`;
+  } else if (isSudah && disposisi) {
     const tgl = disposisi.tanggalDisposisi
       ? new Date(disposisi.tanggalDisposisi).toLocaleDateString('id-ID', {
           day: 'numeric',

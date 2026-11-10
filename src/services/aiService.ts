@@ -2186,8 +2186,8 @@ PANDUAN EKSTRAKSI FORMULIR LEMBAR DISPOSISI KEMNAKER:
 10. "pemberiDisposisi": pejabat pemberi disposisi (default: "Menteri Ketenagakerjaan RI").
 11. "namaPemberiDisposisi": nama pimpinan jika tertera (misal: "Yassierli").
 12. "diteruskanKepada": array string nama-nama pejabat yang dituju/dicentang. HANYA masukkan yang benar-benar dipilih/dicentang. Kembalikan [] jika tidak ada yang dicentang.
-13. "arahanDisposisi": array string instruksi tindakan pada lajur disposisi (misal: ["Agendakan / Acarakan"]).
-14. "catatan": catatan teks tertulis instruksi khusus pimpinan (kembalikan "-" jika tidak ada catatan teks khusus).
+13. "arahanDisposisi": array string instruksi tindakan pada lajur disposisi (misal: ["Agendakan / Acarakan"]). Kembalikan [] jika lajur disposisi tidak dicentang sama sekali.
+14. "catatan": catatan teks tertulis instruksi khusus pimpinan (misal: "Dipamitkan", "Di pamitkan", dsb). Kembalikan "-" jika tidak ada catatan teks khusus.
 
 KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN TANPA PENJELASAN LAIN:
 `;
@@ -2318,9 +2318,11 @@ PANDUAN EKSTRAKSI FORMULIR LEMBAR DISPOSISI KEMNAKER (FOKUS UTAMA HALAMAN 1):
    ATURAN KRUSIAL LAJUR DISPOSISI:
    - Periksa posisi kotak yang dicentang secara presisi dan lurus horizontal dengan teksnya.
    - Misalnya: jika tanda centang tinta [✔] berada pada kotak baris ke-14 "Agendakan / Acarakan", maka hasilnya adalah ["Agendakan / Acarakan"]. JANGAN tertukar dengan baris di atasnya ("File / Simpan / Arsip")!
+   - JIKA TIDAK ADA KOTAK YANG DICENTANG sama sekali pada lajur disposisi, WAJIB kembalikan array kosong []. JANGAN PERNAH mengarang arahan jika lajur disposisi kosong!
 5. CATATAN & TANDA TANGAN:
-   - Kolom "Catatan:" di sebelah kanan lajur disposisi memuat tanda tangan Menteri Ketenagakerjaan RI (misal nama "Yassierli").
-   - "catatan" diisi HANYA jika ada tulisan tangan arahan/catatan instruksi khusus dari pimpinan.
+   - Kolom "Catatan:" di sebelah kanan lajur disposisi memuat tanda tangan pimpinan (misal Menteri Ketenagakerjaan RI).
+   - "catatan" diisi HANYA jika ada tulisan tangan arahan/catatan instruksi khusus dari pimpinan (misal: "Dipamitkan", "Di pamitkan", "Pamit", dsb).
+   - Jika tertulis "di pamitkan" / "dipamitkan" / "pamit", WAJIB tuliskan persis kata tersebut pada field "catatan".
    - Jika hanya ada tanda tangan, nama jabatan/pejabat, stempel, atau coretan paraf tanggal (seperti "8/9" atau "28/9"), maka "catatan" isi dengan "-". JANGAN pernah membaca coretan paraf tanggal atau tanda tangan sebagai teks catatan (misal jangan membaca paraf tanggal menjadi karakter acak seperti "g%2")!
 6. PEMBERI DISPOSISI:
    - Pejabat pimpinan yang menandatangani (misal: "Menteri Ketenagakerjaan RI" atau "Menteri Ketenagakerjaan").

@@ -13,6 +13,7 @@ import {
   getDispositionFileUrl,
   formatEventTitleFromDisposition,
   resolvePejabatDitunjuk,
+  isTidakAdaDisposisiCheck,
 } from '../utils/textHelper';
 import { parseIndonesianDateToDate, formatTanggalIndo } from '../utils/dateHelper';
 import {
@@ -31,6 +32,8 @@ export interface SaveDisposisiResult {
   perihal?: string;
   tanggalDisposisi?: string;
   isUpdate?: boolean;
+  isTidakAdaDisposisi?: boolean;
+  statusDisposisiText?: string;
   eventUpdated?: boolean;
   eventStatusText?: string;
   eventTitleText?: string;
@@ -216,13 +219,20 @@ export class DisposisiService {
       // CATATAN PENTING: Jika tidak tercantum tanggal pada lembar disposisi maupun di database surat,
       // jangan pernah fallback ke new Date() (tanggal saat upload). Tetap biarkan null sesuai skema PostgreSQL.
 
+      const isTidakAdaDisposisi = isTidakAdaDisposisiCheck(draft.extractedData);
+      const isDipamitkan = /\b(di\s*pamitkan|dipamitkan|pamit|pamitkan)\b/i.test(draft.extractedData.catatan || '');
+
       // Catatan disposisi gabungan dari instruksi dan catatan khusus
-      const cleanNote =
+      let cleanNote =
         draft.extractedData.catatan && draft.extractedData.catatan !== '-'
           ? draft.extractedData.catatan
           : (draft.extractedData.arahanDisposisi && draft.extractedData.arahanDisposisi.length > 0
               ? draft.extractedData.arahanDisposisi.join(', ')
-              : 'Disposisi Pimpinan');
+              : 'Tidak Ada Disposisi');
+
+      if (isTidakAdaDisposisi && (!cleanNote || cleanNote === 'Disposisi Pimpinan' || cleanNote === '-')) {
+        cleanNote = isDipamitkan ? 'Pamitkan' : 'Tidak Ada Disposisi';
+      }
 
       // 4. Periksa apakah surat ini sudah memiliki disposisi di database (nomor agenda yang sama)
       const existingDisp =
@@ -360,7 +370,57 @@ export class DisposisiService {
 
       // 6. Hubungkan ke disposition_actions jika ada tindakan yang cocok
       let matchedActions: ActionCandidate[] = [];
-      if (draft.extractedData.arahanDisposisi && draft.extractedData.arahanDisposisi.length > 0) {
+      if (isTidakAdaDisposisi) {
+        // Cari tindakan 'Tidak Ada Disposisi' / 'Pamitkan' di tabel actions
+        try {
+          const tidakAdaAction = await client.actions.findFirst({
+            where: {
+              deleted_at: null,
+              OR: [
+                { name: { contains: 'Tidak Ada Disposisi', mode: 'insensitive' } },
+                { name: { contains: 'Tidak ada disposisi', mode: 'insensitive' } },
+                { name: { contains: 'Pamitkan', mode: 'insensitive' } },
+              ],
+            },
+            orderBy: { id: 'desc' },
+          });
+
+          if (tidakAdaAction) {
+            matchedActions = [{ id: Number(tidakAdaAction.id), name: tidakAdaAction.name }];
+            try {
+              await client.disposition_actions.create({
+                data: {
+                  disposition_id: disp.id,
+                  action_id: BigInt(tidakAdaAction.id),
+                  note: '',
+                  created_by: userName || 'Petugas Protokol',
+                  created_at: new Date(),
+                  updated_at: new Date(),
+                },
+              });
+            } catch (daErr: any) {
+              if (isDuplicateKeyError(daErr)) {
+                await syncTableSequence('disposition_actions', client);
+                await client.disposition_actions.create({
+                  data: {
+                    disposition_id: disp.id,
+                    action_id: BigInt(tidakAdaAction.id),
+                    note: '',
+                    created_by: userName || 'Petugas Protokol',
+                    created_at: new Date(),
+                    updated_at: new Date(),
+                  },
+                });
+              } else {
+                throw daErr;
+              }
+            }
+            console.log(`[DisposisiService ${scope}] Berhasil menautkan status tindakan: "${tidakAdaAction.name}" (ID: ${tidakAdaAction.id}) ke disposisi ID: ${disp.id}`);
+          }
+        } catch (actErr) {
+          console.warn(`[DisposisiService ${scope}] Gagal memetakan disposition_actions untuk Tidak Ada Disposisi:`, actErr);
+        }
+      } else if (draft.extractedData.arahanDisposisi && draft.extractedData.arahanDisposisi.length > 0) {
         try {
           const allActions = await client.actions.findMany({
             where: { deleted_at: null },
@@ -413,10 +473,12 @@ export class DisposisiService {
       ).toLowerCase();
 
       const isMewakili =
-        matchedActions.some((a) => Number(a.id) === 18 || /mewakili|wakili/i.test(a.name)) ||
-        /\b(mewakili|wakili|perwakilan)\b/i.test(rawArahanText);
+        !isTidakAdaDisposisi &&
+        (matchedActions.some((a) => Number(a.id) === 18 || /mewakili|wakili/i.test(a.name)) ||
+        /\b(mewakili|wakili|perwakilan)\b/i.test(rawArahanText));
 
       const isAgendakan =
+        !isTidakAdaDisposisi &&
         !isMewakili &&
         (matchedActions.some((a) => Number(a.id) === 16 || Number(a.id) === 10 || /agendakan|acarakan/i.test(a.name)) ||
          /\b(agendakan|acarakan|jadwalkan|acara)\b/i.test(rawArahanText));
@@ -427,7 +489,9 @@ export class DisposisiService {
         updated_at: new Date(),
         updated_by: userName || 'Petugas Protokol',
       };
-      if (isMewakili) {
+      if (isTidakAdaDisposisi) {
+        letterUpdatePayload.status = null; // Status Tidak Ada Disposisi pada letters adalah null
+      } else if (isMewakili) {
         letterUpdatePayload.status = 2; // 2: diwakilkan
       } else if (isAgendakan) {
         letterUpdatePayload.status = 1; // 1: normal
@@ -510,9 +574,25 @@ export class DisposisiService {
             }
           }
 
-          if (isMewakili) {
+          if (isTidakAdaDisposisi) {
+            const suffixText = isDipamitkan ? 'Pamitkan' : 'Tidak Ada Disposisi';
+            eventPayload.status = 4n; // 4: cancel (Dibatalkan / Pamitkan / Tidak Ada Disposisi)
+            eventPayload.title = formatEventTitleFromDisposition(
+              baseTitle,
+              'tidak_ada_disposisi',
+              undefined,
+              draft.extractedData.pemberiDisposisi,
+              suffixText
+            );
+            eventUpdated = true;
+            eventStatusText = 'Tidak Ada Disposisi';
+            eventTitleText = eventPayload.title as string;
+            console.log(
+              `[DisposisiService ${scope}] Berhasil memperbarui event ID ${ev.id}: status -> 4 (Tidak Ada Disposisi / Pamitkan), title -> "${eventPayload.title}"`
+            );
+          } else if (isMewakili) {
             eventPayload.status = 3n; // 3: Diwakilkan
-            eventPayload.title = formatEventTitleFromDisposition(baseTitle, 'diwakilkan', targetOfficial);
+            eventPayload.title = formatEventTitleFromDisposition(baseTitle, 'diwakilkan', targetOfficial, draft.extractedData.pemberiDisposisi);
             eventUpdated = true;
             eventStatusText = 'Diwakilkan';
             eventTitleText = eventPayload.title as string;
@@ -521,7 +601,7 @@ export class DisposisiService {
             );
           } else if (isAgendakan) {
             eventPayload.status = 1n; // 1: onschedule (Diagendakan)
-            eventPayload.title = formatEventTitleFromDisposition(baseTitle, 'agendakan');
+            eventPayload.title = formatEventTitleFromDisposition(baseTitle, 'agendakan', undefined, draft.extractedData.pemberiDisposisi);
             eventUpdated = true;
             eventStatusText = 'onschedule';
             eventTitleText = eventPayload.title as string;
@@ -566,6 +646,8 @@ export class DisposisiService {
         perihal: draft.matchedLetter.subject || draft.matchedLetter.perihal || draft.extractedData.perihal,
         tanggalDisposisi: formattedTanggalDisposisi,
         isUpdate,
+        isTidakAdaDisposisi,
+        statusDisposisiText: isTidakAdaDisposisi ? 'Tidak Ada Disposisi' : undefined,
         eventUpdated,
         eventStatusText,
         eventTitleText,

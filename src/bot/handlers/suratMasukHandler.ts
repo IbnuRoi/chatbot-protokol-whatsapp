@@ -430,6 +430,7 @@ export class SuratMasukHandler {
     const title = isUpdated ? `📄 *DATA SURAT BERHASIL DIPERBARUI*` : `📄 *HASIL ANALISIS & EKSTRAKSI DOKUMEN*`;
 
     const isTap = jenisCode === 'TAP' || (agendaDisplay || '').toUpperCase().includes('/TAP/');
+    const isLp = jenisCode === 'LP' || (agendaDisplay || '').toUpperCase().includes('/LP/');
     const narasiTayang = isTap
       ? buildNarasiPenayanganTap({
           dateEvent: data?.dateEvent,
@@ -453,6 +454,7 @@ export class SuratMasukHandler {
       (data?.timeEvent && data.timeEvent !== '-' ? `• ⏰ *Jam Acara*       : ${data.timeEvent}\n` : '') +
       (data?.placeEvent && data.placeEvent !== '-' ? `• 📍 *Tempat Acara*    : ${data.placeEvent}\n` : '') +
       (isTap ? `• 🎬 *Rencana Tayang*: ${narasiTayang}\n` : '') +
+      (isLp ? `• 📅 *Jadwal Acara*  : ⚪ Tidak Masuk Kalender Kegiatan (Kategori LP / Laporan)\n` : '') +
       `• 👤 *Nama PIC*      : ${picName}\n` +
       `• 📞 *Nomor PIC*     : ${picPhone}\n` +
       `• 👤 *Petugas Input* : ${session.userName || 'Petugas Protokol'}\n\n` +
@@ -549,19 +551,23 @@ export class SuratMasukHandler {
         }
 
         const isTap = result.isTapCategory || jenisCode === 'TAP' || (result.nomorAgenda || '').toUpperCase().includes('/TAP/');
+        const isLp = result.isLpCategory || jenisCode === 'LP' || (result.nomorAgenda || '').toUpperCase().includes('/LP/');
         const narasiTayang = result.narasiPenayangan || buildNarasiPenayanganTap({
           dateEvent: savedData?.dateEvent,
           timeEvent: savedData?.timeEvent,
           placeEvent: savedData?.placeEvent,
         });
 
-        const jadwalLine = isTap
-          ? `• 🎬 *Rencana Tayang*: ${narasiTayang}\n• 📅 *Jadwal Acara*  : ⚪ Tidak Masuk Kalender Kegiatan (Kategori TAP / Video Ucapan)\n`
-          : `• 📅 *Jadwal Acara*  : 🟢 Otomatis Terjadwal (Diagendakan)\n`;
+        let jadwalLine = `• 📅 *Jadwal Acara*  : 🟢 Otomatis Terjadwal (Diagendakan)\n`;
+        let noteFooter = `\n_Catatan: Surat telah tersimpan di database dan otomatis langsung masuk ke agenda jadwal kegiatan protokol._\n\n`;
 
-        const noteFooter = isTap
-          ? `\n_Catatan: Khusus surat kategori TAP (Video Ucapan / Taping), jadwal tidak langsung dimasukkan ke kalender kegiatan dan ${narasiTayang}._\n\n`
-          : `\n_Catatan: Surat telah tersimpan di database dan otomatis langsung masuk ke agenda jadwal kegiatan protokol._\n\n`;
+        if (isLp) {
+          jadwalLine = `• 📅 *Jadwal Acara*  : ⚪ Tidak Masuk Kalender Kegiatan (Kategori LP / Laporan)\n`;
+          noteFooter = `\n_Catatan: Khusus surat kategori LP (Laporan), berkas hanya diarsipkan ke dalam sistem dan tidak dimasukkan ke kalender jadwal kegiatan._\n\n`;
+        } else if (isTap) {
+          jadwalLine = `• 🎬 *Rencana Tayang*: ${narasiTayang}\n• 📅 *Jadwal Acara*  : ⚪ Tidak Masuk Kalender Kegiatan (Kategori TAP / Video Ucapan)\n`;
+          noteFooter = `\n_Catatan: Khusus surat kategori TAP (Video Ucapan / Taping), jadwal tidak langsung dimasukkan ke kalender kegiatan dan ${narasiTayang}._\n\n`;
+        }
 
         return {
           text:
@@ -2095,19 +2101,23 @@ export class SuratMasukHandler {
         }
 
         const isTap = result.isTapCategory || (result.nomorAgenda || '').toUpperCase().includes('/TAP/');
+        const isLp = result.isLpCategory || (result.nomorAgenda || '').toUpperCase().includes('/LP/');
         const narasiTayang = result.narasiPenayangan || buildNarasiPenayanganTap({
           dateEvent: session.draftSurat?.extractedData?.dateEvent,
           timeEvent: session.draftSurat?.extractedData?.timeEvent,
           placeEvent: session.draftSurat?.extractedData?.placeEvent,
         });
 
-        const jadwalLine = isTap
-          ? `• 🎬 *Rencana Tayang*: ${narasiTayang}\n• 📅 *Jadwal Acara*    : ⚪ Tidak Masuk Kalender Kegiatan (Kategori TAP / Video Ucapan)\n`
-          : `• 📅 *Jadwal Acara*    : 🟢 Otomatis Terjadwal (Diagendakan)\n`;
+        let jadwalLine = `• 📅 *Jadwal Acara*    : 🟢 Otomatis Terjadwal (Diagendakan)\n`;
+        let noteFooter = `\nBerkas PDF telah disimpan dan otomatis diagendakan pada jadwal kegiatan protokol. Silakan beri tahu saya jika ada hal lain yang bisa dibantu.`;
 
-        const noteFooter = isTap
-          ? `\nBerkas PDF telah disimpan di sistem. Khusus surat kategori TAP (Video Ucapan / Taping), jadwal tidak langsung dimasukkan ke kalender kegiatan dan ${narasiTayang}. Silakan beri tahu saya jika ada hal lain yang bisa dibantu.`
-          : `\nBerkas PDF telah disimpan dan otomatis diagendakan pada jadwal kegiatan protokol. Silakan beri tahu saya jika ada hal lain yang bisa dibantu.`;
+        if (isLp) {
+          jadwalLine = `• 📅 *Jadwal Acara*    : ⚪ Tidak Masuk Kalender Kegiatan (Kategori LP / Laporan)\n`;
+          noteFooter = `\nBerkas PDF telah disimpan di sistem. Khusus surat kategori LP (Laporan), berkas hanya diarsipkan ke sistem dan tidak dimasukkan ke kalender kegiatan protokol. Silakan beri tahu saya jika ada hal lain yang bisa dibantu.`;
+        } else if (isTap) {
+          jadwalLine = `• 🎬 *Rencana Tayang*: ${narasiTayang}\n• 📅 *Jadwal Acara*    : ⚪ Tidak Masuk Kalender Kegiatan (Kategori TAP / Video Ucapan)\n`;
+          noteFooter = `\nBerkas PDF telah disimpan di sistem. Khusus surat kategori TAP (Video Ucapan / Taping), jadwal tidak langsung dimasukkan ke kalender kegiatan dan ${narasiTayang}. Silakan beri tahu saya jika ada hal lain yang bisa dibantu.`;
+        }
 
         return {
           text:

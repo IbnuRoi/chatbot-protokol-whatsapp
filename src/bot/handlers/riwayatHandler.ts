@@ -189,6 +189,7 @@ export class RiwayatHandler {
       }
 
       const d = surat.disposisi;
+      const isTidakAda = d.status === 'TIDAK_ADA_DISPOSISI';
       const isSudah = d.status === 'SUDAH_DISPOSISI';
       const tgl = d.tanggalDisposisi
         ? new Date(d.tanggalDisposisi).toLocaleDateString('id-ID', {
@@ -199,7 +200,14 @@ export class RiwayatHandler {
         : '-';
 
       let statusInfo = '';
-      if (isSudah) {
+      if (isTidakAda) {
+        statusInfo =
+          `⚪ *STATUS: TIDAK ADA DISPOSISI*\n` +
+          `Surat ini telah diproses dengan status *Tidak Ada Disposisi* (lajur kosong / dipamitkan).\n\n` +
+          `📅 *Tanggal Disposisi :* ${tgl}\n` +
+          (d.tujuanDisposisi && d.tujuanDisposisi !== '-' ? `🎯 *Tujuan Disposisi  :* ${d.tujuanDisposisi}\n` : '') +
+          `📝 *Catatan Khusus    :* ${d.catatan || '-'}`;
+      } else if (isSudah) {
         statusInfo =
           `🟢 *STATUS: SUDAH DISPOSISI*\n` +
           `📅 *Tanggal Disposisi :* ${tgl}\n` +

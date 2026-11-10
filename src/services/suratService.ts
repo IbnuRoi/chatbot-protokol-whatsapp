@@ -28,6 +28,7 @@ export interface SuratRegistrationResult {
     location?: string | null;
   }>;
   isTapCategory?: boolean;
+  isLpCategory?: boolean;
   narasiPenayangan?: string;
 }
 
@@ -94,7 +95,7 @@ export interface NormalizedSurat {
   };
   disposisi?: {
     id: number;
-    status: 'SUDAH_DISPOSISI' | 'BELUM_DISPOSISI';
+    status: 'SUDAH_DISPOSISI' | 'BELUM_DISPOSISI' | 'TIDAK_ADA_DISPOSISI';
     tanggalDisposisi?: Date | string | null;
     tujuanDisposisi?: string | null;
     instruksi?: string | null;
@@ -143,13 +144,22 @@ export class SuratService {
 
     if (disp) {
       const cleanNote = cleanHtml(disp.note);
+      const isPamitOrNoDisp =
+        /\b(di\s*pamitkan|dipamitkan|pamit|pamitkan|tidak\s*ada\s*disposisi)\b/i.test(cleanNote || '') ||
+        /\b(di\s*pamitkan|dipamitkan|pamit|pamitkan|tidak\s*ada\s*disposisi)\b/i.test(cleanHtml(disp.send_by) || '') ||
+        /\b(di\s*pamitkan|dipamitkan|pamit|pamitkan|tidak\s*ada\s*disposisi)\b/i.test(cleanHtml(disp.actionName) || '');
+
+      const status: NonNullable<NormalizedSurat['disposisi']>['status'] = isPamitOrNoDisp
+        ? 'TIDAK_ADA_DISPOSISI'
+        : 'SUDAH_DISPOSISI';
+
       disposisiObj = {
         id: Number(disp.id),
-        status: 'SUDAH_DISPOSISI',
+        status,
         tanggalDisposisi: disp.date || disp.created_at,
         tujuanDisposisi: disp.send_by || '-',
-        instruksi: cleanNote || '-',
-        catatan: cleanNote || '-',
+        instruksi: cleanNote || (isPamitOrNoDisp ? 'Tidak Ada Disposisi' : '-'),
+        catatan: cleanNote || (isPamitOrNoDisp ? 'Tidak Ada Disposisi' : '-'),
       };
     }
 
@@ -538,6 +548,7 @@ export class SuratService {
         ''
       ).toUpperCase().trim();
       const isTapCategory = rawKategori === 'TAP' || (draft.nomorAgenda || '').toUpperCase().includes('/TAP/');
+      const isLpCategory = rawKategori === 'LP' || (draft.nomorAgenda || '').toUpperCase().includes('/LP/');
 
       // Khusus kategori TAP, pastikan narasi penayangan ("akan ditayangkan pada ...") disertakan pada perihal jika ada info tanggal
       if (isTapCategory && finalPerihal !== '-' && !finalPerihal.toLowerCase().includes('ditayangkan')) {
@@ -776,12 +787,14 @@ export class SuratService {
       }
 
       // Otomatis masukkan ke jadwal kegiatan (tabel events) walaupun belum ada lembar disposisi
-      // Khusus surat kategori TAP: JANGAN langsung masukkan ke tabel events (hanya diarsipkan, belum masuk jadwal)
+      // Khusus surat kategori LP dan TAP: JANGAN langsung masukkan ke tabel events (hanya diarsipkan ke tabel letters)
       let createdEvent: any = null;
       let eventTimeStart: Date | null = null;
       let eventTimeFinish: Date | null = null;
 
-      if (!isTapCategory) {
+      const shouldCreateEvent = !isLpCategory && !isTapCategory;
+
+      if (shouldCreateEvent) {
         try {
           // 1. Waktu kegiatan (hanya diisi jika memang ada tanggal kegiatan pada surat/hasil ekstraksi)
           let untilFinish = 0;
@@ -995,12 +1008,16 @@ export class SuratService {
         console.error('[SuratService] Gagal membuat jadwal kegiatan otomatis dari surat:', eventErr);
       }
     } else {
-      console.log(`[SuratService] Surat ${surat.agenda_number} adalah kategori TAP (Video Ucapan). Tidak dibuatkan jadwal di tabel events.`);
+      if (isLpCategory) {
+        console.log(`[SuratService] Surat ${surat.agenda_number} adalah kategori LP (Laporan). Hanya dimasukkan ke tabel letters, tidak dibuatkan jadwal di tabel events.`);
+      } else if (isTapCategory) {
+        console.log(`[SuratService] Surat ${surat.agenda_number} adalah kategori TAP (Video Ucapan). Tidak dibuatkan jadwal di tabel events.`);
+      }
     }
 
       // Cek apakah ada jadwal lain yang bentrok / bersamaan waktunya (bersifat informatif, tidak membatalkan)
       let conflictingEvents: any[] = [];
-      if (!isTapCategory && eventTimeStart && isValidDate(eventTimeStart)) {
+      if (shouldCreateEvent && eventTimeStart && isValidDate(eventTimeStart)) {
         conflictingEvents = await this.findConflictingEvents(
           eventTimeStart,
           eventTimeFinish,
@@ -1010,7 +1027,9 @@ export class SuratService {
 
       return {
         success: true,
-        message: isTapCategory
+        message: isLpCategory
+          ? 'Dokumen Laporan (LP) berhasil disimpan ke arsip surat (tidak dijadwalkan otomatis ke kalender kegiatan).'
+          : isTapCategory
           ? 'Surat kategori TAP berhasil disimpan ke sistem (tidak dijadwalkan otomatis ke kalender kegiatan).'
           : 'Surat berhasil disimpan ke sistem.',
         nomorAgenda: surat.agenda_number,
@@ -1022,6 +1041,7 @@ export class SuratService {
         hasTimeConflict: conflictingEvents.length > 0,
         conflictingEvents,
         isTapCategory,
+        isLpCategory,
         narasiPenayangan: isTapCategory
           ? buildNarasiPenayanganTap({
               dateEvent: draft.extractedData.dateEvent,
@@ -1115,6 +1135,20 @@ export class SuratService {
       },
       orderBy: { id: 'desc' },
     });
+
+    if (disp) {
+      try {
+        const firstAction = await client.disposition_actions.findFirst({
+          where: { disposition_id: disp.id, deleted_at: null },
+        });
+        if (firstAction) {
+          const act = await client.actions.findUnique({ where: { id: firstAction.action_id } });
+          if (act) {
+            (disp as any).actionName = act.name;
+          }
+        }
+      } catch {}
+    }
 
     return this.mapLetterToNormalized(letter, disp);
   }

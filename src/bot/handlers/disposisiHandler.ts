@@ -11,6 +11,7 @@ import {
   generateDispositionFileName,
   isPureGreeting,
   cleanHtml,
+  isTidakAdaDisposisiCheck,
 } from '../../utils/textHelper';
 import { formatWaktuInputIndo, formatTanggalIndo } from '../../utils/dateHelper';
 
@@ -204,10 +205,17 @@ export class DisposisiHandler {
         ? ext.diteruskanKepada.join(', ')
         : '- (Tidak ada / Belum ditentukan)';
 
+    const isTidakAda = isTidakAdaDisposisiCheck(ext);
+    const isDipamitkan = /\b(di\s*pamitkan|dipamitkan|pamit|pamitkan)\b/i.test(ext.catatan || '');
+
     const arahanStr =
       ext.arahanDisposisi && ext.arahanDisposisi.length > 0
         ? ext.arahanDisposisi.join(', ')
-        : '-';
+        : (isDipamitkan ? 'Tidak Ada Disposisi (Dipamitkan)' : 'Tidak Ada Disposisi (Lajur Kosong)');
+
+    const statusBadge = isTidakAda
+      ? (isDipamitkan ? '⚪ Tidak Ada Disposisi (Dipamitkan)' : '⚪ Tidak Ada Disposisi (Lajur Kosong)')
+      : '🟢 Sudah Disposisi';
 
     const agendaDisplay = letter ? letter.agendaNumber : (ext.nomorAgenda || '-');
     const pengirimDisplay = letter ? letter.from : (ext.asalSurat || '-');
@@ -238,6 +246,7 @@ export class DisposisiHandler {
       `• *Diteruskan Kepada* : ${diteruskanStr}\n` +
       `• *Arahan Pimpinan*   : ${arahanStr}\n` +
       `• *Catatan Khusus*    : ${ext.catatan || '-'}\n` +
+      `• *Status Disposisi*  : ${statusBadge}\n` +
       `• *Tanggal Disposisi* : ${ext.tanggalDisposisi || '-'}\n` +
       (ext.tanggalAcara && ext.tanggalAcara !== '-' ? `• *Tanggal Acara*     : ${ext.tanggalAcara}\n` : '') +
       `• *Nama Berkas*       : ${draft.finalFileName || draft.tempFileName}\n\n` +
@@ -303,22 +312,28 @@ export class DisposisiHandler {
       sessionService.setState(session.whatsappNumber, BotState.DISPOSISI_SELESAI);
       session.state = BotState.DISPOSISI_SELESAI;
 
+      const isTidakAda = saveResult.isTidakAdaDisposisi;
+
       const fileLinkLine = saveResult.fileUrl
         ? `• *Link Berkas Disposisi* : ${saveResult.fileUrl}\n`
         : '';
 
       const eventStatusLine =
         saveResult.eventUpdated && saveResult.eventStatusText
-          ? `• *Status Jadwal* : *${saveResult.eventStatusText}* (Judul & arahan diperbarui)\n`
+          ? `• *Status Jadwal* : *${saveResult.eventStatusText}* (Agenda diperbarui sesuai arahan)\n`
           : '';
 
       const successTitle = saveResult.isUpdate
         ? `✅ *DATA DISPOSISI BERHASIL DIPERBARUI!*`
         : `✅ *DISPOSISI SURAT BERHASIL DISIMPAN!*`;
 
-      const statusNote = saveResult.isUpdate
-        ? `• *Status Surat* : Sudah Disposisi 🟢 (Diperbarui)\n\nDetail data disposisi dan berkas fisik telah berhasil diperbarui di database sistem.`
-        : `• *Status Surat* : Sudah Disposisi 🟢\n\nLembar disposisi telah digabungkan pada halaman pertama berkas surat dan berhasil diarsipkan ke database sistem.`;
+      const statusNote = isTidakAda
+        ? (saveResult.isUpdate
+            ? `• *Status Surat* : Tidak Ada Disposisi ⚪ (Diperbarui)\n\nDetail data lembar disposisi telah diperbarui dengan status *Tidak Ada Disposisi* di database sistem.`
+            : `• *Status Surat* : Tidak Ada Disposisi ⚪\n\nLembar disposisi telah dicatat dengan status *Tidak Ada Disposisi* (lajur kosong / dipamitkan) dan berhasil diarsipkan ke database sistem.`)
+        : (saveResult.isUpdate
+            ? `• *Status Surat* : Sudah Disposisi 🟢 (Diperbarui)\n\nDetail data disposisi dan berkas fisik telah berhasil diperbarui di database sistem.`
+            : `• *Status Surat* : Sudah Disposisi 🟢\n\nLembar disposisi telah digabungkan pada halaman pertama berkas surat dan berhasil diarsipkan ke database sistem.`);
 
       const tanggalDispDisplay =
         saveResult.tanggalDisposisi ||
@@ -872,8 +887,13 @@ export class DisposisiHandler {
       }
 
       case 'arahanDisposisi': {
-        const list = value.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean);
-        draft.extractedData.arahanDisposisi = list;
+        const trimmed = value.trim();
+        if (!trimmed || trimmed === '-' || /^(?:tidak\s+ada|belum\s+ada|kosong|-)$/i.test(trimmed)) {
+          draft.extractedData.arahanDisposisi = [];
+        } else {
+          const list = trimmed.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean);
+          draft.extractedData.arahanDisposisi = list;
+        }
         break;
       }
 
@@ -989,18 +1009,26 @@ export class DisposisiHandler {
     }
 
     const disposisi = surat.disposisi;
+    const isTidakAda = disposisi?.status === 'TIDAK_ADA_DISPOSISI';
     const isSudah = disposisi?.status === 'SUDAH_DISPOSISI';
 
     let statusText = '';
-    if (isSudah) {
-      const tgl = disposisi?.tanggalDisposisi
-        ? new Date(disposisi.tanggalDisposisi).toLocaleDateString('id-ID', {
-            day: 'numeric',
-            month: 'long',
-            year: 'numeric',
-          })
-        : '-';
+    const tgl = disposisi?.tanggalDisposisi
+      ? new Date(disposisi.tanggalDisposisi).toLocaleDateString('id-ID', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+        })
+      : '-';
 
+    if (isTidakAda) {
+      statusText =
+        `⚪ *STATUS: TIDAK ADA DISPOSISI*\n` +
+        `Surat ini telah diproses dengan status *Tidak Ada Disposisi* (lajur kosong / dipamitkan).\n\n` +
+        `📅 *Tanggal Disposisi :* ${tgl}\n` +
+        (disposisi?.tujuanDisposisi && disposisi.tujuanDisposisi !== '-' ? `🎯 *Tujuan Disposisi  :* ${disposisi.tujuanDisposisi}\n` : '') +
+        `📝 *Catatan Khusus    :* ${disposisi?.catatan || '-'}`;
+    } else if (isSudah) {
       statusText =
         `🟢 *STATUS: SUDAH DISPOSISI*\n` +
         `📅 *Tanggal Disposisi :* ${tgl}\n` +
