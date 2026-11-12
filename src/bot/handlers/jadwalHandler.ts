@@ -103,8 +103,8 @@ export class JadwalHandler {
     const todayUpper = todayFormatted.toUpperCase();
     const greeting = getGreetingWib();
 
-    // Ambil seluruh agenda kegiatan hari ini
-    const jadwalsHariIni = await jadwalService.getJadwalHariIni(false, false, session.scope);
+    // Ambil agenda kegiatan hari ini yang berstatus Diagendakan (status = 1)
+    const jadwalsHariIni = await jadwalService.getJadwalHariIni(false, true, session.scope);
 
     if (jadwalsHariIni.length === 0) {
       const text =
@@ -188,7 +188,7 @@ export class JadwalHandler {
     const parsed = extractDateFromText(dateInput);
     const targetDateStr = parsed ? parsed.dateStr : dateInput;
 
-    const result = await jadwalService.getJadwalByDate(targetDateStr, undefined, session.scope);
+    const result = await jadwalService.getJadwalByDate(targetDateStr, { onlyDiagendakan: true }, session.scope);
     const { items, formattedDate } = result;
     const greeting = getGreetingWib();
     const formattedDateUpper = formattedDate.toUpperCase();

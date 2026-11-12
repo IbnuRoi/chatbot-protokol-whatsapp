@@ -178,31 +178,37 @@ export class JadwalService {
   }
 
   /**
-   * Mengambil jadwal kegiatan pada tanggal tertentu (WIB)
-   * Menggabungkan kegiatan dari:
-   * 1. Tabel events dengan event_time_start dalam rentang waktu yang sesuai (safe UTC + local boundary)
-   * 2. Tabel events yang terhubung dengan surat di mana letters.date_event jatuh pada tanggal ini
-   * 3. Tabel letters yang memiliki date_event pada tanggal ini (termasuk yang berstatus belum disposisi / belum dibuatkan event row)
+   * Menggabungkan kegiatan tervalidasi dari tabel events dan letters pada rentang waktu target.
+   * Secara default (onlyDiagendakan = true) hanya mengembalikan kegiatan berstatus Diagendakan (status = 1).
    */
-  public async getJadwalByDate(
-    dateInput: string | Date,
-    options?: { onlyDiagendakan?: boolean },
-    scope: ProtocolScope = 'MENAKER'
-  ): Promise<{ items: NormalizedJadwal[]; formattedDate: string; dateStr: string }> {
-    const client = this.getClient(scope);
-    const { dateStr, year: y, month: m, day: d } = this.getWibRangeForDate(dateInput);
-    const formattedDate = formatTanggalIndo(dateStr, true);
+  private async fetchMergedJadwalInRange(params: {
+    client: ReturnType<JadwalService['getClient']>;
+    scope: ProtocolScope;
+    safeStart: Date;
+    safeEnd: Date;
+    letterDateStart: Date;
+    letterDateEnd: Date;
+    defaultDateStr: string;
+    takeLimit: number;
+    onlyDiagendakan: boolean;
+    datePredicate: (tanggalKegiatan: string) => boolean;
+    sortByDateFirst: boolean;
+  }): Promise<NormalizedJadwal[]> {
+    const {
+      client,
+      scope,
+      safeStart,
+      safeEnd,
+      letterDateStart,
+      letterDateEnd,
+      defaultDateStr,
+      takeLimit,
+      onlyDiagendakan,
+      datePredicate,
+      sortByDateFirst,
+    } = params;
 
-    // Rentang safe window UTC + Local:
-    // Waktu WIB 00:00 - 23:59 adalah UTC (d-1) 17:00 s.d. (d) 16:59.
-    // Jika disimpan tanpa konversi UTC: UTC (d) 00:00 s.d. (d) 23:59.
-    // Safe range mencakup (d-1) 17:00:00.000Z s.d. (d) 23:59:59.999Z.
-    const safeStart = new Date(Date.UTC(y, m - 1, d - 1, 17, 0, 0, 0));
-    const safeEnd = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
-
-    // Rentang tanggal murni untuk kolom letters.date_event (@db.Date)
-    const letterDateStart = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
-    const letterDateEnd = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
+    const eventStatusFilter: Prisma.eventsWhereInput = onlyDiagendakan ? { status: 1n } : {};
 
     // 1. Ambil events berdasarkan event_time_start
     const eventsByTime = await client.events.findMany({
@@ -212,16 +218,16 @@ export class JadwalService {
           gte: safeStart,
           lte: safeEnd,
         },
-        ...(options?.onlyDiagendakan ? { status: 1n } : {}),
+        ...eventStatusFilter,
       },
       orderBy: [
         { event_time_start: 'asc' },
         { id: 'asc' },
       ],
-      take: 50,
+      take: takeLimit,
     });
 
-    // 2. Ambil letters pada tanggal target
+    // 2. Ambil letters pada rentang tanggal target
     const lettersOnDate = await client.letters.findMany({
       where: {
         deleted_at: null,
@@ -246,60 +252,116 @@ export class JadwalService {
         pic_json: true,
         status: true,
       },
-      take: 50,
+      take: takeLimit,
     });
 
     const letterIdsOnDate = lettersOnDate.map((l) => l.id);
 
-    // 3. Ambil events yang berelasi dengan letters pada tanggal tersebut
-    let eventsByLetter: any[] = [];
+    // 3. Ambil seluruh events non-deleted yang berelasi dengan letters tersebut.
+    // Penting: catat letter_id SEMUA status event sebelum menyaring status = 1n,
+    // agar surat yang event-nya dibatalkan/diwakilkan/selesai tidak masuk kembali sebagai unlinkedLetters.
+    let allEventsByLetter: any[] = [];
     if (letterIdsOnDate.length > 0) {
-      eventsByLetter = await client.events.findMany({
+      allEventsByLetter = await client.events.findMany({
         where: {
           deleted_at: null,
           letter_id: { in: letterIdsOnDate },
-          ...(options?.onlyDiagendakan ? { status: 1n } : {}),
         },
-        take: 50,
+        take: takeLimit * 2,
       });
     }
 
-    // Gabungkan events dan deduplikasi berdasarkan ID event
+    const eventLetterIds = new Set<string>();
     const eventMap = new Map<string, any>();
+
     for (const e of eventsByTime) {
+      if (e.letter_id) eventLetterIds.add(e.letter_id.toString());
       eventMap.set(e.id.toString(), e);
     }
-    for (const e of eventsByLetter) {
+
+    for (const e of allEventsByLetter) {
+      if (e.letter_id) eventLetterIds.add(e.letter_id.toString());
+      if (onlyDiagendakan && e.status !== 1n) continue;
       if (!eventMap.has(e.id.toString())) {
         eventMap.set(e.id.toString(), e);
       }
     }
 
     const mergedEvents = Array.from(eventMap.values());
-    const eventLetterIds = new Set<string>();
-    mergedEvents.forEach((e) => {
-      if (e.letter_id) eventLetterIds.add(e.letter_id.toString());
-    });
-
-    // Map events ke NormalizedJadwal
     const normalizedEventItems = await this.enrichAndMapEvents(mergedEvents, scope);
 
-    // 4. Cari surat pada tanggal tersebut yang belum dibuatkan row di tabel events (kecuali surat TAP / video ucapan yang belum ada event)
-    const unlinkedLetters = lettersOnDate.filter(
-      (l) => !eventLetterIds.has(l.id.toString()) && !(l.agenda_number || '').toUpperCase().includes('/TAP/')
+    // 4. Cari surat yang belum dibuatkan row di tabel events (kecuali surat TAP & LP saat filter Diagendakan aktif)
+    const unlinkedLetters = lettersOnDate.filter((l) => {
+      if (eventLetterIds.has(l.id.toString())) return false;
+      const upperAgenda = (l.agenda_number || '').toUpperCase();
+      if (upperAgenda.includes('/TAP/')) return false;
+      if (onlyDiagendakan) {
+        if (upperAgenda.includes('/LP/')) return false;
+        if (l.status === null || l.status === undefined || Number(l.status) !== 1) return false;
+      }
+      return true;
+    });
+    const unlinkedLetterItems: NormalizedJadwal[] = unlinkedLetters.map((l) =>
+      this.mapLetterToJadwal(l, defaultDateStr, scope)
     );
-    const unlinkedLetterItems: NormalizedJadwal[] = unlinkedLetters.map((l) => this.mapLetterToJadwal(l, dateStr, scope));
 
-    // 5. Gabungkan dan filter tanggal agar sesuai dateStr
+    // 5. Gabungkan, saring tanggal & status, lalu urutkan
     const allItems = [...normalizedEventItems, ...unlinkedLetterItems].filter((item) => {
-      return item.tanggalKegiatan === dateStr;
+      if (!datePredicate(item.tanggalKegiatan)) return false;
+      if (onlyDiagendakan && item.statusDisposisiCode !== 1) return false;
+      return true;
     });
 
-    // 6. Urutkan berdasarkan waktuMulai (asc) lalu id (asc)
     allItems.sort((a, b) => {
+      if (sortByDateFirst) {
+        const dateCompare = a.tanggalKegiatan.localeCompare(b.tanggalKegiatan);
+        if (dateCompare !== 0) return dateCompare;
+      }
       const timeCompare = a.waktuMulai.localeCompare(b.waktuMulai);
       if (timeCompare !== 0) return timeCompare;
       return a.id - b.id;
+    });
+
+    return allItems;
+  }
+
+  /**
+   * Mengambil jadwal kegiatan pada tanggal tertentu (WIB)
+   * Menggabungkan kegiatan dari tabel events dan letters (default: hanya status Diagendakan / status = 1).
+   */
+  public async getJadwalByDate(
+    dateInput: string | Date,
+    options?: { onlyDiagendakan?: boolean },
+    scope: ProtocolScope = 'MENAKER'
+  ): Promise<{ items: NormalizedJadwal[]; formattedDate: string; dateStr: string }> {
+    const client = this.getClient(scope);
+    const { dateStr, year: y, month: m, day: d } = this.getWibRangeForDate(dateInput);
+    const formattedDate = formatTanggalIndo(dateStr, true);
+    const onlyDiagendakan = options?.onlyDiagendakan !== false;
+
+    // Rentang safe window UTC + Local:
+    // Waktu WIB 00:00 - 23:59 adalah UTC (d-1) 17:00 s.d. (d) 16:59.
+    // Jika disimpan tanpa konversi UTC: UTC (d) 00:00 s.d. (d) 23:59.
+    // Safe range mencakup (d-1) 17:00:00.000Z s.d. (d) 23:59:59.999Z.
+    const safeStart = new Date(Date.UTC(y, m - 1, d - 1, 17, 0, 0, 0));
+    const safeEnd = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
+
+    // Rentang tanggal murni untuk kolom letters.date_event (@db.Date)
+    const letterDateStart = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+    const letterDateEnd = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
+
+    const allItems = await this.fetchMergedJadwalInRange({
+      client,
+      scope,
+      safeStart,
+      safeEnd,
+      letterDateStart,
+      letterDateEnd,
+      defaultDateStr: dateStr,
+      takeLimit: 50,
+      onlyDiagendakan,
+      datePredicate: (tgl) => tgl === dateStr,
+      sortByDateFirst: false,
     });
 
     return {
@@ -315,7 +377,8 @@ export class JadwalService {
   public async getJadwalRentangHari(
     daysCount: number,
     labelText?: string,
-    scope: ProtocolScope = 'MENAKER'
+    scope: ProtocolScope = 'MENAKER',
+    onlyDiagendakan: boolean = true
   ): Promise<{
     items: NormalizedJadwal[];
     formattedRange: string;
@@ -339,97 +402,21 @@ export class JadwalService {
     // Rentang safe window UTC + Local
     const safeStart = new Date(Date.UTC(todayRange.year, todayRange.month - 1, todayRange.day - 1, 17, 0, 0, 0));
     const safeEnd = new Date(Date.UTC(endRange.year, endRange.month - 1, endRange.day, 23, 59, 59, 999));
+    const letterDateStart = new Date(Date.UTC(todayRange.year, todayRange.month - 1, todayRange.day, 0, 0, 0, 0));
+    const letterDateEnd = new Date(Date.UTC(endRange.year, endRange.month - 1, endRange.day, 23, 59, 59, 999));
 
-    const eventsByTime = await client.events.findMany({
-      where: {
-        deleted_at: null,
-        event_time_start: {
-          gte: safeStart,
-          lte: safeEnd,
-        },
-      },
-      orderBy: [
-        { event_time_start: 'asc' },
-        { id: 'asc' },
-      ],
-      take: 100,
-    });
-
-    const lettersInRange = await client.letters.findMany({
-      where: {
-        deleted_at: null,
-        date_event: {
-          gte: new Date(Date.UTC(todayRange.year, todayRange.month - 1, todayRange.day, 0, 0, 0, 0)),
-          lte: new Date(Date.UTC(endRange.year, endRange.month - 1, endRange.day, 23, 59, 59, 999)),
-        },
-      },
-      select: {
-        id: true,
-        agenda_number: true,
-        number_or_date: true,
-        file: true,
-        date_event: true,
-        time_event: true,
-        time_event_finish: true,
-        place_event: true,
-        subject: true,
-        from: true,
-        pic_name: true,
-        pic_phone_number: true,
-        pic_json: true,
-        status: true,
-      },
-      take: 100,
-    });
-
-    const letterIdsInRange = lettersInRange.map((l) => l.id);
-    let eventsByLetter: any[] = [];
-    if (letterIdsInRange.length > 0) {
-      eventsByLetter = await client.events.findMany({
-        where: {
-          deleted_at: null,
-          letter_id: { in: letterIdsInRange },
-        },
-        take: 100,
-      });
-    }
-
-    const eventMap = new Map<string, any>();
-    for (const e of eventsByTime) {
-      eventMap.set(e.id.toString(), e);
-    }
-    for (const e of eventsByLetter) {
-      if (!eventMap.has(e.id.toString())) {
-        eventMap.set(e.id.toString(), e);
-      }
-    }
-
-    const mergedEvents = Array.from(eventMap.values());
-    const eventLetterIds = new Set<string>();
-    mergedEvents.forEach((e) => {
-      if (e.letter_id) eventLetterIds.add(e.letter_id.toString());
-    });
-
-    const normalizedEvents = await this.enrichAndMapEvents(mergedEvents, scope);
-
-    // Cari surat yang belum dibuatkan row di tabel events (kecuali surat TAP / video ucapan yang belum ada event)
-    const unlinkedLetters = lettersInRange.filter(
-      (l) => !eventLetterIds.has(l.id.toString()) && !(l.agenda_number || '').toUpperCase().includes('/TAP/')
-    );
-    const unlinkedLetterItems: NormalizedJadwal[] = unlinkedLetters.map((l) =>
-      this.mapLetterToJadwal(l, startDateStr, scope)
-    );
-
-    const allItems = [...normalizedEvents, ...unlinkedLetterItems].filter((item) => {
-      return item.tanggalKegiatan >= startDateStr && item.tanggalKegiatan <= endDateStr;
-    });
-
-    allItems.sort((a, b) => {
-      const dateCompare = a.tanggalKegiatan.localeCompare(b.tanggalKegiatan);
-      if (dateCompare !== 0) return dateCompare;
-      const timeCompare = a.waktuMulai.localeCompare(b.waktuMulai);
-      if (timeCompare !== 0) return timeCompare;
-      return a.id - b.id;
+    const allItems = await this.fetchMergedJadwalInRange({
+      client,
+      scope,
+      safeStart,
+      safeEnd,
+      letterDateStart,
+      letterDateEnd,
+      defaultDateStr: startDateStr,
+      takeLimit: 100,
+      onlyDiagendakan,
+      datePredicate: (tgl) => tgl >= startDateStr && tgl <= endDateStr,
+      sortByDateFirst: true,
     });
 
     return {
@@ -711,21 +698,25 @@ export class JadwalService {
 
   /**
    * Mengambil jadwal kegiatan besok (H+1) dari basis data
+   * @param onlyDiagendakan jika true (default), hanya ambil kegiatan dengan status 'Diagendakan' (status = 1)
    */
-  public async getJadwalBesok(scope: ProtocolScope = 'MENAKER'): Promise<NormalizedJadwal[]> {
+  public async getJadwalBesok(
+    scope: ProtocolScope = 'MENAKER',
+    onlyDiagendakan: boolean = true
+  ): Promise<NormalizedJadwal[]> {
     const tomorrowStr = this.getTomorrowString();
-    const result = await this.getJadwalByDate(tomorrowStr, undefined, scope);
+    const result = await this.getJadwalByDate(tomorrowStr, { onlyDiagendakan }, scope);
     return result.items;
   }
 
   /**
    * Mengambil jadwal kegiatan hari ini dari basis data
    * @param onlyUpcoming jika true, hanya ambil kegiatan yang waktu mulainya belum lewat hari ini
-   * @param onlyDiagendakan jika true, hanya ambil kegiatan dengan status disposisi 'Diagendakan' (status = 1)
+   * @param onlyDiagendakan jika true (default), hanya ambil kegiatan dengan status disposisi 'Diagendakan' (status = 1)
    */
   public async getJadwalHariIni(
     onlyUpcoming: boolean = false,
-    onlyDiagendakan: boolean = false,
+    onlyDiagendakan: boolean = true,
     scope: ProtocolScope = 'MENAKER'
   ): Promise<NormalizedJadwal[]> {
     const todayStr = this.getTodayString();
@@ -745,8 +736,12 @@ export class JadwalService {
   /**
    * Mengambil 1 kegiatan terdekat berikutnya hari ini atau di hari-hari mendatang
    */
-  public async getJadwalBerikutnyaTerdekat(scope: ProtocolScope = 'MENAKER'): Promise<{ item: NormalizedJadwal; isToday: boolean } | null> {
+  public async getJadwalBerikutnyaTerdekat(
+    scope: ProtocolScope = 'MENAKER',
+    onlyDiagendakan: boolean = true
+  ): Promise<{ item: NormalizedJadwal; isToday: boolean } | null> {
     const client = this.getClient(scope);
+    const statusFilter: Prisma.eventsWhereInput = onlyDiagendakan ? { status: 1n } : {};
     const nowWibMs = Date.now() + 7 * 3600000;
     const nowWib = new Date(nowWibMs);
     const dbNow = new Date(Date.UTC(
@@ -763,6 +758,7 @@ export class JadwalService {
     const todayUpcoming = await client.events.findFirst({
       where: {
         deleted_at: null,
+        ...statusFilter,
         event_time_start: {
           gte: dbNow,
           lte: endOfDay,
@@ -782,6 +778,7 @@ export class JadwalService {
     const nextEvent = await client.events.findFirst({
       where: {
         deleted_at: null,
+        ...statusFilter,
         event_time_start: {
           gt: endOfDay,
         },
@@ -800,6 +797,7 @@ export class JadwalService {
     const fallbackEvent = await client.events.findFirst({
       where: {
         deleted_at: null,
+        ...statusFilter,
         event_time_start: { not: null },
       },
       orderBy: {
@@ -818,13 +816,19 @@ export class JadwalService {
   /**
    * Mengambil daftar jadwal kegiatan beberapa hari ke depan (mendatang)
    */
-  public async getJadwalMendatang(limit: number = 10, scope: ProtocolScope = 'MENAKER'): Promise<NormalizedJadwal[]> {
+  public async getJadwalMendatang(
+    limit: number = 10,
+    scope: ProtocolScope = 'MENAKER',
+    onlyDiagendakan: boolean = true
+  ): Promise<NormalizedJadwal[]> {
     const client = this.getClient(scope);
+    const statusFilter: Prisma.eventsWhereInput = onlyDiagendakan ? { status: 1n } : {};
     const { startOfDay } = this.getWibDayRange(0);
 
     let events = await client.events.findMany({
       where: {
         deleted_at: null,
+        ...statusFilter,
         event_time_start: {
           gte: startOfDay,
         },
@@ -841,6 +845,7 @@ export class JadwalService {
       events = await client.events.findMany({
         where: {
           deleted_at: null,
+          ...statusFilter,
           event_time_start: { not: null },
         },
         orderBy: [
@@ -916,7 +921,8 @@ export class JadwalService {
           }
         : {};
 
-    const statusFilter: Prisma.eventsWhereInput = options.onlyDiagendakan ? { status: 1n } : {};
+    const onlyDiagendakan = options.onlyDiagendakan !== false;
+    const statusFilter: Prisma.eventsWhereInput = onlyDiagendakan ? { status: 1n } : {};
 
     // 1. Ekspansi cerdas kata kunci dengan akronim & kepanjangannya
     const expansion = expandSearchTermsWithAcronyms(clean);
@@ -946,6 +952,7 @@ export class JadwalService {
           where: {
             deleted_at: null,
             letter_id: { in: letterIds },
+            ...statusFilter,
           },
           select: { id: true },
           take: 40,
@@ -1072,7 +1079,7 @@ export class JadwalService {
     const threshold = Math.max(30, maxScore * 0.35);
 
     return filtered
-      .filter((s) => s.totalScore >= threshold)
+      .filter((s) => s.totalScore >= threshold && (!onlyDiagendakan || s.item.statusDisposisiCode === 1))
       .slice(0, limit)
       .map((s) => s.item);
   }

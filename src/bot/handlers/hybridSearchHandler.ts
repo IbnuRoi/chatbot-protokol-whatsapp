@@ -76,7 +76,7 @@ export class HybridSearchHandler {
           startDate: context?.startDate,
           endDate: context?.endDate,
           location: context?.location,
-          onlyDiagendakan: context?.onlyDiagendakan,
+          onlyDiagendakan: context?.onlyDiagendakan ?? true,
         },
         session.scope
       ),
