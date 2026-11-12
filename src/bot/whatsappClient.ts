@@ -14,6 +14,7 @@ import { messageRouter } from './messageRouter';
 import { pdfService } from '../services/pdfService';
 import { imageService } from '../services/imageService';
 import { prisma } from '../database/prisma';
+import { authHandler } from './handlers/authHandler';
 import { BotResponse } from './types';
 
 // Filter noise console.error dari pustaka internal libsignal yang memicu "Bad MAC" atau "MessageCounterError"
@@ -446,18 +447,18 @@ export class WhatsAppClient {
    */
   public async linkContactLid(phoneJid: string, lidJid: string): Promise<void> {
     try {
-      const cleanPhone = phoneJid.split('@')[0].split(':')[0].replace(/\D/g, '');
+      const normalizedPhone = authHandler.normalizePhoneNumber(phoneJid);
       const cleanLid = lidJid.split('@')[0].split(':')[0].replace(/\D/g, '');
-      if (cleanPhone.length < 8 || !cleanLid || cleanLid.length < 10) return;
+      if (normalizedPhone.length < 10 || !cleanLid || cleanLid.length < 10) return;
 
-      const user = await prisma.users.findFirst({
-        where: {
-          OR: [
-            { phone_number: cleanPhone },
-            { phone_number: { contains: cleanPhone.slice(-9) } },
-          ],
-        },
+      const activeUsers = await prisma.users.findMany({
+        where: { deleted_at: null },
+        orderBy: { id: 'asc' },
       });
+
+      const user = activeUsers.find(
+        (u) => authHandler.normalizePhoneNumber(u.phone_number || '') === normalizedPhone
+      );
 
       if (user && user.device_id !== cleanLid) {
         await prisma.users.update({
@@ -475,7 +476,7 @@ export class WhatsAppClient {
   }
 
   /**
-   * Sinkronisasi WhatsApp LID untuk semua pengguna yang belum memiliki LID terdaftar
+   * Sinkronisasi WhatsApp LID untuk semua pengguna aktif yang belum memiliki LID terdaftar
    */
   public async syncUserLids(): Promise<void> {
     if (!this.sock) return;
@@ -483,6 +484,7 @@ export class WhatsAppClient {
     try {
       const usersToSync = await prisma.users.findMany({
         where: {
+          deleted_at: null,
           phone_number: { not: '-' },
           device_id: null,
         },
