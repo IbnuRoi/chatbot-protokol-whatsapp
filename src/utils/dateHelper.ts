@@ -99,13 +99,21 @@ export function formatTanggalIndo(dateInput: string | Date, withDay: boolean = t
  * Memformat jam mulai dan jam selesai ke string tampilan waktu yang rapi
  * Contoh:
  * - ("08:00", "12:00") -> "08:00 - 12:00 WIB"
+ * - ("08:00", null, true) -> "08:00 - Selesai WIB"
  * - ("11:39", "11:39") -> "11:39 WIB"
  * - ("00:00", "00:00") -> "Sepanjang Hari (All Day)"
  * - ("09:00", null) -> "09:00 WIB"
  */
-export function formatWaktuDisplay(waktuMulai: string, waktuSelesai?: string | null): string {
-  if (!waktuMulai || (waktuMulai === '00:00' && (!waktuSelesai || waktuSelesai === '00:00'))) {
+export function formatWaktuDisplay(
+  waktuMulai: string,
+  waktuSelesai?: string | null,
+  sampaiSelesai: boolean = false
+): string {
+  if (!waktuMulai || (waktuMulai === '00:00' && !sampaiSelesai && (!waktuSelesai || waktuSelesai === '00:00'))) {
     return 'Sepanjang Hari (All Day)';
+  }
+  if (sampaiSelesai) {
+    return `${waktuMulai} - Selesai WIB`;
   }
   if (waktuSelesai && waktuSelesai !== waktuMulai && waktuSelesai !== '00:00') {
     return `${waktuMulai} - ${waktuSelesai} WIB`;
@@ -133,9 +141,13 @@ export function getGreetingWib(): string {
 }
 
 /**
- * Format waktu standar protokol kegiatan (contoh: "08.30–11.00 WIB" atau "09.00 WIB")
+ * Format waktu standar protokol kegiatan (contoh: "08.30–11.00 WIB", "08.00 - Selesai WIB", atau "09.00 WIB")
  */
-export function formatWaktuProtokol(waktuMulai: string, waktuSelesai?: string | null): string {
+export function formatWaktuProtokol(
+  waktuMulai: string,
+  waktuSelesai?: string | null,
+  sampaiSelesai: boolean = false
+): string {
   const clean = (t: string | null | undefined): string => {
     if (!t) return '';
     return t.replace(':', '.').replace(/\s*wib/i, '').trim();
@@ -144,8 +156,12 @@ export function formatWaktuProtokol(waktuMulai: string, waktuSelesai?: string | 
   const start = clean(waktuMulai);
   const finish = clean(waktuSelesai);
 
-  if (!start || (start === '00.00' && (!finish || finish === '00.00'))) {
+  if (!start || (start === '00.00' && !sampaiSelesai && (!finish || finish === '00.00'))) {
     return 'Sepanjang Hari';
+  }
+
+  if (sampaiSelesai) {
+    return `${start} - Selesai WIB`;
   }
 
   if (finish && finish !== start && finish !== '00.00') {

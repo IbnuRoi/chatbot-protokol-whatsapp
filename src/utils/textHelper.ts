@@ -416,10 +416,9 @@ export function getPublicBaseUrl(): string | null {
 }
 
 /**
- * Menghasilkan tautan pendek (Short URL Redirect) untuk berkas surat.
- * Jika public base URL (atau Cloudflared tunnel) aktif dan ID surat tersedia,
- * mengembalikan URL pendek (contoh: https://<domain>/s/45).
- * Jika tidak, fallback ke URL berkas langsung (getLetterFileUrl).
+ * Menghasilkan tautan pendek (Short URL Redirect) untuk berkas surat dengan penanda scope tenant.
+ * Contoh: https://<domain>/s/m/45 (Menaker) atau https://<domain>/s/w/45 (Wamen).
+ * Jika base URL publik tidak aktif atau ID surat tidak tersedia, fallback ke URL berkas langsung (getLetterFileUrl).
  */
 export function getLetterShortUrl(
   letterId?: number | bigint | string | null,
@@ -429,11 +428,15 @@ export function getLetterShortUrl(
   const fileUrl = getLetterFileUrl(fileName, scope);
   if (!fileUrl) return null;
 
-  const publicBase = getPublicBaseUrl();
-  if (publicBase && letterId) {
+  const shortBase = (ENV.SHORT_LINK_BASE_URL && ENV.SHORT_LINK_BASE_URL.trim() !== '')
+    ? ENV.SHORT_LINK_BASE_URL.trim().replace(/\/+$/, '')
+    : getPublicBaseUrl();
+
+  if (shortBase && letterId) {
     const cleanId = String(letterId).trim();
-    if (cleanId && cleanId !== '0' && cleanId !== '-') {
-      return `${publicBase}/s/${cleanId}`;
+    if (cleanId && cleanId !== '0' && cleanId !== '-' && !cleanId.includes('/')) {
+      const scopeCode = scope === 'WAMEN' ? 'w' : 'm';
+      return `${shortBase}/s/${scopeCode}/${cleanId}`;
     }
   }
 
@@ -472,10 +475,13 @@ export function getLetterFileUrl(fileName?: string | null, scope: 'MENAKER' | 'W
 export function formatNomorAgendaLink(
   nomorAgenda: string | null | undefined,
   fileName?: string | null,
-  scope: 'MENAKER' | 'WAMEN' = 'MENAKER'
+  scope: 'MENAKER' | 'WAMEN' = 'MENAKER',
+  letterId?: number | bigint | string | null
 ): string {
   const agenda = (nomorAgenda || '-').trim();
-  const fileUrl = getLetterShortUrl(agenda, fileName, scope) || getLetterFileUrl(fileName, scope);
+  const fileUrl =
+    (letterId ? getLetterShortUrl(letterId, fileName, scope) : null) ||
+    getLetterFileUrl(fileName, scope);
   if (!fileUrl) {
     return agenda;
   }

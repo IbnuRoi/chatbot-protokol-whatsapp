@@ -78,6 +78,8 @@ export interface ExtractedSuratData {
   dateEvent?: string;
   timeEvent?: string;
   placeEvent?: string;
+  extractionFailed?: boolean;
+  extractionErrorReason?: string;
 }
 
 export interface SuratDraftData {

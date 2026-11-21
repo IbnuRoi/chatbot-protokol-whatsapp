@@ -218,14 +218,39 @@ export class PdfService {
   }
 
   /**
-   * Me-render halaman-halaman berkas PDF menjadi berkas gambar JPEG beresolusi tinggi
+   * Menghitung jumlah halaman berkas PDF menggunakan pdfjs-dist
+   */
+  public async getPdfPageCount(filePath: string): Promise<number> {
+    try {
+      if (!fs.existsSync(filePath)) return 0;
+      const buffer = fs.readFileSync(filePath);
+      const pdfjs: any = await import('pdfjs-dist/legacy/build/pdf.mjs').catch(() => import('pdfjs-dist'));
+      const doc = await pdfjs.getDocument({
+        data: new Uint8Array(buffer),
+        useSystemFonts: true,
+        disableFontFace: true,
+      }).promise;
+      return doc.numPages || 1;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Me-render halaman-halaman berkas PDF menjadi berkas gambar JPEG beresolusi terukur
    * untuk dianalisis oleh Multimodal Vision AI.
    *
    * @param filePath Path berkas PDF
-   * @param maxPages Jumlah halaman maksimum yang di-render (default: 2)
-   * @param scale Resolusi render (default: 1.5 untuk teks tajam dan jelas)
+   * @param maxPages Jumlah halaman maksimum yang di-render (default: 4)
+   * @param scale Resolusi render dasar (default: 1.5, otomatis dibatasi agar lebar <= 1600px)
+   * @param pageNumbers Daftar nomor halaman 1-based spesifik (opsional)
    */
-  public async renderPdfPagesToImages(filePath: string, maxPages = 4, scale = 1.5): Promise<string[]> {
+  public async renderPdfPagesToImages(
+    filePath: string,
+    maxPages = 4,
+    scale = 1.5,
+    pageNumbers?: number[]
+  ): Promise<string[]> {
     const renderedPaths: string[] = [];
     try {
       if (!fs.existsSync(filePath)) return [];
@@ -240,14 +265,22 @@ export class PdfService {
       }).promise;
 
       const totalPages = doc.numPages || 1;
-      const pagesToRender = Math.min(totalPages, maxPages);
+      const targetPages =
+        pageNumbers && pageNumbers.length > 0
+          ? Array.from(new Set(pageNumbers.filter((p) => p >= 1 && p <= totalPages))).slice(0, maxPages)
+          : Array.from({ length: Math.min(totalPages, maxPages) }, (_, idx) => idx + 1);
+
       const timestamp = Date.now();
       const baseName = path.basename(filePath, path.extname(filePath)).replace(/[^a-zA-Z0-9_-]/g, '_');
 
-      for (let i = 1; i <= pagesToRender; i++) {
+      for (const i of targetPages) {
         try {
           const page = await doc.getPage(i);
-          const viewport = page.getViewport({ scale });
+          const rawViewport = page.getViewport({ scale });
+          const maxWidthPx = 1600;
+          const clampedScale = rawViewport.width > maxWidthPx ? scale * (maxWidthPx / rawViewport.width) : scale;
+          const viewport = clampedScale === scale ? rawViewport : page.getViewport({ scale: clampedScale });
+
           const canvas = createCanvas(Math.floor(viewport.width), Math.floor(viewport.height));
           const ctx = canvas.getContext('2d');
 
@@ -256,7 +289,7 @@ export class PdfService {
             viewport,
           }).promise;
 
-          const imgBuffer = canvas.toBuffer('image/jpeg', 85);
+          const imgBuffer = canvas.toBuffer('image/jpeg', 80);
           const tempImgName = `temp_scan_${timestamp}_${baseName}_p${i}.jpg`;
           const tempImgPath = path.join(ENV.TEMP_STORAGE_PATH, tempImgName);
           fs.writeFileSync(tempImgPath, imgBuffer);

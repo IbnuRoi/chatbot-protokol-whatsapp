@@ -15,6 +15,7 @@ export interface NormalizedJadwal {
   tanggalKegiatan: string; // Format YYYY-MM-DD
   waktuMulai: string; // Format HH:mm
   waktuSelesai: string | null; // Format HH:mm
+  sampaiSelesai?: boolean;
   lokasi: string;
   pejabatHadir: string;
   pendamping?: string;
@@ -556,18 +557,34 @@ export class JadwalService {
       waktuMulai = `${hh}:${mm}`;
     }
 
-    // 3. Tentukan waktu selesai
+    // 3. Tentukan waktu selesai dan flag sampai selesai (until_finish = 1)
+    const isUntilFinish = Number(event.until_finish) === 1;
+    let sampaiSelesai = false;
+
     if (letter && letter.time_event_finish) {
       const hh = String(letter.time_event_finish.getUTCHours()).padStart(2, '0');
       const mm = String(letter.time_event_finish.getUTCMinutes()).padStart(2, '0');
-      waktuSelesai = `${hh}:${mm}`;
+      const isZeroSentinel = hh === '00' && mm === '00' && waktuMulai !== '00:00';
+      if (!isZeroSentinel && !isUntilFinish) {
+        waktuSelesai = `${hh}:${mm}`;
+      } else if (isUntilFinish) {
+        sampaiSelesai = true;
+      }
+    } else if (isUntilFinish) {
+      // Kolom until_finish = 1 berarti acara berlangsung sampai selesai;
+      // abaikan event_time_finish (sering terisi default 00:00:00 atau tanggal akhir multi-hari)
+      waktuSelesai = null;
+      sampaiSelesai = true;
     } else if (event.event_time_finish) {
       const rawHour = event.event_time_finish.getUTCHours();
       const rawMin = event.event_time_finish.getUTCMinutes();
-      const finalH = rawHour < 6 ? (rawHour + 7) % 24 : rawHour;
-      const hh = String(finalH).padStart(2, '0');
-      const mm = String(rawMin).padStart(2, '0');
-      waktuSelesai = `${hh}:${mm}`;
+      // Jangan konversi nilai sentinel tengah malam 00:00 menjadi 07:00 WIB jika jam mulai bukan 00:00
+      if (!(rawHour === 0 && rawMin === 0 && waktuMulai !== '00:00')) {
+        const finalH = rawHour < 6 ? (rawHour + 7) % 24 : rawHour;
+        const hh = String(finalH).padStart(2, '0');
+        const mm = String(rawMin).padStart(2, '0');
+        waktuSelesai = `${hh}:${mm}`;
+      }
     }
 
     // 4. Lokasi
@@ -617,6 +634,7 @@ export class JadwalService {
       tanggalKegiatan: tglKegiatan || this.getTodayString(),
       waktuMulai,
       waktuSelesai,
+      sampaiSelesai,
       lokasi: lokasi || '-',
       pejabatHadir: extracted.pendamping || '-',
       pendamping: extracted.pendamping,
@@ -653,7 +671,9 @@ export class JadwalService {
     if (letter.time_event_finish) {
       const hh = String(letter.time_event_finish.getUTCHours()).padStart(2, '0');
       const mm = String(letter.time_event_finish.getUTCMinutes()).padStart(2, '0');
-      waktuSelesai = `${hh}:${mm}`;
+      if (!(hh === '00' && mm === '00' && waktuMulai !== '00:00')) {
+        waktuSelesai = `${hh}:${mm}`;
+      }
     }
 
     const lokasi = cleanHtml(letter.place_event) || '-';
@@ -679,6 +699,7 @@ export class JadwalService {
       tanggalKegiatan: tglKegiatan,
       waktuMulai,
       waktuSelesai,
+      sampaiSelesai: false,
       lokasi: lokasi || '-',
       pejabatHadir: extracted.pendamping || '-',
       pendamping: extracted.pendamping,

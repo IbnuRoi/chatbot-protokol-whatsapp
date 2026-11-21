@@ -16,6 +16,49 @@ export class MetaWebhookServer {
   private processedMessageIds = new Set<string>();
 
   /**
+   * Mencari nama berkas surat di satu atau lebih scope database berdasarkan ID, nomor agenda, atau potongan nama file
+   */
+  private async resolveShortLinkFile(
+    letterIdParam: string,
+    scopes: ProtocolScope[]
+  ): Promise<{ fileName: string; scope: ProtocolScope } | null> {
+    const isNumericId = /^\d+$/.test(letterIdParam);
+
+    for (const scope of scopes) {
+      if (scope === 'WAMEN' && !ENV.DB_NAME_WAMEN && !ENV.DATABASE_URL_WAMEN) {
+        continue;
+      }
+
+      try {
+        const client = dbManager.getClient(scope);
+        const letter = isNumericId
+          ? await client.letters.findFirst({
+              where: { id: BigInt(letterIdParam), deleted_at: null },
+              select: { id: true, file: true },
+            })
+          : await client.letters.findFirst({
+              where: {
+                deleted_at: null,
+                OR: [
+                  { agenda_number: letterIdParam },
+                  { file: { contains: letterIdParam } },
+                ],
+              },
+              select: { id: true, file: true },
+            });
+
+        if (letter && letter.file) {
+          return { fileName: letter.file, scope };
+        }
+      } catch (dbErr: any) {
+        console.warn(`⚠️ [Short Link ${scope}] Gagal mencari surat "${letterIdParam}": ${dbErr.message}`);
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Menjalankan server HTTP Webhook untuk menerima verifikasi dan pesan dari Meta WhatsApp Cloud API
    */
   public start(): Promise<void> {
@@ -28,12 +71,6 @@ export class MetaWebhookServer {
           const isGetOrHead = method === 'GET' || method === 'HEAD';
           const cleanPath = pathname.replace(/\/+$/, '') || '/';
           const hasMetaVerificationParams = Boolean(reqUrl.searchParams.get('hub.mode'));
-
-          const isWebhookPath =
-            cleanPath === '/webhook' ||
-            cleanPath === '/webhook-chatbot' ||
-            cleanPath.startsWith('/webhook') ||
-            hasMetaVerificationParams;
 
           // 1. Health check endpoint (GET /) jika bukan permintaan verifikasi Meta
           if (
@@ -54,84 +91,39 @@ export class MetaWebhookServer {
             return;
           }
 
-          // 2. Short URL Document Redirect (GET /s/:id atau /d/:id atau /surat/:id)
-          const redirectMatch = pathname.match(/^\/(?:s|d|surat)\/([a-zA-Z0-9_.-]+)/i);
+          // 2. Short URL Document Redirect:
+          // Mendukung /s/:id, /s/m/:id, /s/w/:id (serta prefix /webhook-chatbot/s/...)
+          const redirectMatch = cleanPath.match(
+            /^(?:\/webhook-chatbot)?\/(?:s|d|surat)\/(?:(m|w|menaker|wamen)\/)?([a-zA-Z0-9_.-]+)$/i
+          );
           if (isGetOrHead && redirectMatch) {
-            const letterIdParam = redirectMatch[1].trim();
-            console.log(`\n🔗 [Short Link Redirect] Menerima akses tautan berkas: ${pathname} (ID/Ref: ${letterIdParam})`);
+            const scopeSeg = (redirectMatch[1] || '').toLowerCase();
+            const letterIdParam = redirectMatch[2].trim();
+            const hasWamenDb = Boolean(ENV.DB_NAME_WAMEN || ENV.DATABASE_URL_WAMEN);
+            const scopesToTry: ProtocolScope[] =
+              scopeSeg === 'w' || scopeSeg === 'wamen'
+                ? ['WAMEN']
+                : scopeSeg === 'm' || scopeSeg === 'menaker'
+                  ? ['MENAKER']
+                  : hasWamenDb
+                    ? ['MENAKER', 'WAMEN']
+                    : ['MENAKER'];
 
-            let targetFileName: string | null = null;
-            let foundScope: ProtocolScope = 'MENAKER';
+            console.log(
+              `\n🔗 [Short Link Redirect] Menerima akses tautan berkas: ${pathname} (Scope: ${scopeSeg || 'auto'}, ID/Ref: ${letterIdParam})`
+            );
 
-            // Jika parameter berupa angka (Letter ID)
-            if (/^\d+$/.test(letterIdParam)) {
-              try {
-                // Cari di database Menaker dulu
-                let letter = await dbManager.getClient('MENAKER').letters.findFirst({
-                  where: { id: BigInt(letterIdParam) },
-                  select: { id: true, file: true, agenda_number: true },
-                });
-                if (letter && letter.file) {
-                  targetFileName = letter.file;
-                  foundScope = 'MENAKER';
-                } else if (ENV.DB_NAME_WAMEN || ENV.DATABASE_URL_WAMEN) {
-                  // Fallback ke database Wamen
-                  letter = await dbManager.getClient('WAMEN').letters.findFirst({
-                    where: { id: BigInt(letterIdParam) },
-                    select: { id: true, file: true, agenda_number: true },
-                  });
-                  if (letter && letter.file) {
-                    targetFileName = letter.file;
-                    foundScope = 'WAMEN';
-                  }
-                }
-              } catch (dbErr: any) {
-                console.warn(`⚠️ [Short Link] Gagal mencari surat ID ${letterIdParam}: ${dbErr.message}`);
-              }
+            let resolved = await this.resolveShortLinkFile(letterIdParam, scopesToTry);
+
+            // Jika tetap belum ditemukan tapi parameter berakhiran .pdf, anggap sebagai nama file langsung
+            if (!resolved && letterIdParam.toLowerCase().endsWith('.pdf')) {
+              resolved = { fileName: letterIdParam, scope: scopesToTry[0] };
             }
 
-            // Jika belum ditemukan, coba cocokkan dengan agenda_number atau nama file langsung
-            if (!targetFileName) {
-              try {
-                let letter = await dbManager.getClient('MENAKER').letters.findFirst({
-                  where: {
-                    OR: [
-                      { agenda_number: letterIdParam },
-                      { file: { contains: letterIdParam } },
-                    ],
-                  },
-                  select: { id: true, file: true },
-                });
-                if (letter && letter.file) {
-                  targetFileName = letter.file;
-                  foundScope = 'MENAKER';
-                } else if (ENV.DB_NAME_WAMEN || ENV.DATABASE_URL_WAMEN) {
-                  letter = await dbManager.getClient('WAMEN').letters.findFirst({
-                    where: {
-                      OR: [
-                        { agenda_number: letterIdParam },
-                        { file: { contains: letterIdParam } },
-                      ],
-                    },
-                    select: { id: true, file: true },
-                  });
-                  if (letter && letter.file) {
-                    targetFileName = letter.file;
-                    foundScope = 'WAMEN';
-                  }
-                }
-              } catch {}
-            }
-
-            // Jika tetap belum ditemukan tapi parameter berakhiran .pdf, anggap sebagai file langsung
-            if (!targetFileName && letterIdParam.toLowerCase().endsWith('.pdf')) {
-              targetFileName = letterIdParam;
-            }
-
-            if (targetFileName) {
-              const fullFileUrl = getLetterFileUrl(targetFileName, foundScope);
+            if (resolved) {
+              const fullFileUrl = getLetterFileUrl(resolved.fileName, resolved.scope);
               if (fullFileUrl) {
-                console.log(`➡️ [Short Link Redirect ${foundScope}] Mengalihkan ke berkas asli: ${fullFileUrl}`);
+                console.log(`➡️ [Short Link Redirect ${resolved.scope}] Mengalihkan ke berkas asli: ${fullFileUrl}`);
                 res.writeHead(302, {
                   'Location': fullFileUrl,
                   'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -165,6 +157,12 @@ export class MetaWebhookServer {
 </html>`);
             return;
           }
+
+          const isWebhookPath =
+            cleanPath === '/webhook' ||
+            cleanPath === '/webhook-chatbot' ||
+            cleanPath.startsWith('/webhook') ||
+            hasMetaVerificationParams;
 
           // 3. Verifikasi Webhook Meta (GET/HEAD /webhook, /webhook-chatbot, atau dengan parameter hub.mode)
           if (isGetOrHead && isWebhookPath) {

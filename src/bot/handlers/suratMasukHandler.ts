@@ -439,8 +439,13 @@ export class SuratMasukHandler {
         })
       : '';
 
+    const extractionWarning = data?.extractionFailed
+      ? `⚠️ *Catatan:* Dokumen PDF scan kurang terbaca oleh AI otomatis${data.extractionErrorReason ? ` (${data.extractionErrorReason})` : ''}. Sebagian isian diambil dari nama berkas — mohon periksa/lengkapi via *✏️ Koreksi / Edit* sebelum menyimpan.\n\n`
+      : '';
+
     const text =
       `${title}\n\n` +
+      extractionWarning +
       `Sistem telah membaca isi surat dan menentukan kategori serta perihalnya:\n\n` +
       `• 📌 *Nomor Agenda* : ${agendaDisplay}\n` +
       `• 📑 *Kategori Surat*: *${jenisCode}*\n` +
@@ -450,9 +455,9 @@ export class SuratMasukHandler {
       `• ✍️ *Asal Surat*    : ${data?.asalSurat || '-'}\n` +
       `• 📋 *Subject*       : ${finalSubject}\n` +
       `• 📝 *Perihal Resmi* : ${finalPerihal}\n` +
-      (data?.dateEvent && data.dateEvent !== '-' ? `• 🗓️ *Tanggal Acara*   : ${data.dateEvent}\n` : '') +
-      (data?.timeEvent && data.timeEvent !== '-' ? `• ⏰ *Jam Acara*       : ${data.timeEvent}\n` : '') +
-      (data?.placeEvent && data.placeEvent !== '-' ? `• 📍 *Tempat Acara*    : ${data.placeEvent}\n` : '') +
+      (!isLp ? `• 🗓️ *Tanggal Acara*   : ${data?.dateEvent && data.dateEvent !== '-' ? data.dateEvent : '-'}\n` : '') +
+      (!isLp ? `• ⏰ *Jam Acara*       : ${data?.timeEvent && data.timeEvent !== '-' ? data.timeEvent : '-'}\n` : '') +
+      (!isLp ? `• 📍 *Tempat Acara*    : ${data?.placeEvent && data.placeEvent !== '-' ? data.placeEvent : '-'}\n` : '') +
       (isTap ? `• 🎬 *Rencana Tayang*: ${narasiTayang}\n` : '') +
       (isLp ? `• 📅 *Jadwal Acara*  : ⚪ Tidak Masuk Kalender Kegiatan (Kategori LP / Laporan)\n` : '') +
       `• 👤 *Nama PIC*      : ${picName}\n` +

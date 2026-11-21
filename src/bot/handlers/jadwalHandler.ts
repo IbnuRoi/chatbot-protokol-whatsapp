@@ -25,7 +25,7 @@ export class JadwalHandler {
    * Merender format kartu satu agenda kegiatan dalam daftar sesuai standar resmi protokol
    */
   private formatJadwalItem(j: NormalizedJadwal, index: number, showTanggal: boolean = false, scope: ProtocolScope = 'MENAKER'): string {
-    const waktuStr = formatWaktuProtokol(j.waktuMulai, j.waktuSelesai);
+    const waktuStr = formatWaktuProtokol(j.waktuMulai, j.waktuSelesai, j.sampaiSelesai);
 
     let headerItem = `*${index}. Pukul ${waktuStr}*`;
     if (showTanggal) {
@@ -151,7 +151,7 @@ export class JadwalHandler {
     if (jadwalsBesok.length === 0) {
       const nextResult = await jadwalService.getJadwalBerikutnyaTerdekat(session.scope);
       const nextInfo = nextResult
-        ? `\n\n💡 *Agenda terdekat berikutnya:* ${nextResult.item.namaKegiatan} pada hari *${formatTanggalIndo(nextResult.item.tanggalKegiatan)}* pukul ${formatWaktuProtokol(nextResult.item.waktuMulai, nextResult.item.waktuSelesai)}.`
+        ? `\n\n💡 *Agenda terdekat berikutnya:* ${nextResult.item.namaKegiatan} pada hari *${formatTanggalIndo(nextResult.item.tanggalKegiatan)}* pukul ${formatWaktuProtokol(nextResult.item.waktuMulai, nextResult.item.waktuSelesai, nextResult.item.sampaiSelesai)}.`
         : '';
       const text =
         `*JADWAL KEGIATAN PROTOKOL*\n` +
@@ -410,7 +410,7 @@ export class JadwalHandler {
    * Merender rincian detail satu agenda kegiatan
    */
   public renderDetailJadwal(item: NormalizedJadwal, session?: UserSession): BotResponse {
-    const waktu = formatWaktuDisplay(item.waktuMulai, item.waktuSelesai);
+    const waktu = formatWaktuDisplay(item.waktuMulai, item.waktuSelesai, item.sampaiSelesai);
     const formattedDate = formatTanggalIndo(item.tanggalKegiatan);
 
     let suratNote = '';
@@ -676,7 +676,7 @@ export class JadwalHandler {
       const item = nextResult.item;
       const formattedDate = formatTanggalIndo(item.tanggalKegiatan);
       const statusLabel = nextResult.isToday ? `Hari Ini (${formattedDate})` : formattedDate;
-      const waktu = formatWaktuDisplay(item.waktuMulai, item.waktuSelesai);
+      const waktu = formatWaktuDisplay(item.waktuMulai, item.waktuSelesai, item.sampaiSelesai);
       const statusDisp = formatStatusBadge(item.statusDisposisi, item.statusDisposisiCode);
 
       session.jadwalSearchResults = [item];

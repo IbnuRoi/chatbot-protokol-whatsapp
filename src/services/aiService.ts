@@ -1093,7 +1093,7 @@ export const KNOWN_INSTITUTIONS: Array<{ pattern: RegExp; fullName: string; shor
   { pattern: /\b(?:KEMENDAG)\b/i, fullName: 'Kementerian Perdagangan', shortName: 'Kemendag' },
   { pattern: /\b(?:KEMENTAN)\b/i, fullName: 'Kementerian Pertanian', shortName: 'Kementan' },
   { pattern: /\b(?:PANRB|KEMENPANRB)\b/i, fullName: 'Kementerian Pendayagunaan Aparatur Negara dan Reformasi Birokrasi', shortName: 'KemenPAN-RB' },
-  { pattern: /\b(?:BAPPENAS)\b/i, fullName: 'Kementerian PPN/Bappenas', shortName: 'Bappenas' },
+  { pattern: /\b(?:BAPPENAS|MPPN|KEMENTERIAN\s+PPN)\b/i, fullName: 'Kementerian PPN/Bappenas', shortName: 'Bappenas' },
   { pattern: /\b(?:KEMENBUMN)\b/i, fullName: 'Kementerian BUMN', shortName: 'Kementerian BUMN' },
   { pattern: /\b(?:KEMENPORA)\b/i, fullName: 'Kementerian Pemuda dan Olahraga', shortName: 'Kemenpora' },
   { pattern: /\b(?:KEMENPAREKRAF|KEMENPAR)\b/i, fullName: 'Kementerian Pariwisata', shortName: 'Kemenpar' },
@@ -1195,27 +1195,122 @@ export class AiService {
   private initClients(): void {
     const pdfKey = (ENV.PDF_EXTRACTION_API_KEY || ENV.GEMINI_API_KEY || '').trim();
     const chatKey = (ENV.CHAT_API_KEY || ENV.OPENROUTER_API_KEY || '').trim();
-    const apiKey = pdfKey || chatKey;
+    const openRouterKey = pdfKey.startsWith('sk-') ? pdfKey : chatKey;
+    const rawGeminiKey = process.env.GEMINI_API_KEY?.trim() || (!pdfKey.startsWith('sk-') ? pdfKey : '');
 
-    if (!apiKey) return;
+    if (rawGeminiKey && !rawGeminiKey.startsWith('sk-')) {
+      this.genAiClient = new GoogleGenAI({ apiKey: rawGeminiKey });
+    }
 
-    const provider = (ENV.PDF_EXTRACTION_PROVIDER || '').toLowerCase();
-
-    // Jika pengguna mengisi GEMINI_API_KEY / PDF_EXTRACTION_API_KEY dengan key Google Gemini (bukan sk-) dan provider 'gemini'
-    if (pdfKey && !pdfKey.startsWith('sk-') && provider === 'gemini') {
-      this.genAiClient = new GoogleGenAI({ apiKey: pdfKey });
-    } else {
-      // Menggunakan OpenRouter (baik key gratis CHAT_API_KEY maupun key berbayar yang dimasukkan ke PDF_EXTRACTION_API_KEY / OPENROUTER_API_KEY)
+    if (openRouterKey) {
       this.openAiClient = new OpenAI({
         baseURL: 'https://openrouter.ai/api/v1',
-        apiKey,
-        timeout: 45000,
+        apiKey: openRouterKey,
+        timeout: 90000,
         defaultHeaders: {
           'HTTP-Referer': 'https://kemnaker.go.id',
           'X-Title': 'Kemnaker Protokol PDF Extractor',
         },
       });
     }
+  }
+
+  /**
+   * Menentukan model ekstraksi dokumen sesuai provider aktif (OpenRouter vs Gemini native)
+   */
+  private resolvePdfExtractionModel(isUsingOpenRouter: boolean): string {
+    const configured = (ENV.PDF_EXTRACTION_MODEL || '').trim();
+    if (isUsingOpenRouter) {
+      if (!configured) return 'google/gemini-2.5-flash';
+      if (configured.includes('/')) return configured;
+      if (configured.startsWith('gemini-')) return `google/${configured}`;
+      return configured;
+    }
+    return (configured.includes('/') ? configured.split('/').pop() : configured) || 'gemini-2.5-flash';
+  }
+
+  /**
+   * Daftar kandidat model OpenRouter berurutan (model utama lalu model cadangan)
+   */
+  private getOpenRouterCandidateModels(primaryModel: string, isVision: boolean): string[] {
+    const fallbacks = isVision
+      ? ['google/gemini-2.5-flash', 'google/gemini-2.0-flash-001', 'openai/gpt-4o-mini']
+      : ['google/gemini-2.5-flash', 'openai/gpt-4o-mini'];
+    return [primaryModel, ...fallbacks].filter((m, i, arr) => Boolean(m) && arr.indexOf(m) === i);
+  }
+
+  private shouldPreferGeminiNative(): boolean {
+    const provider = (ENV.PDF_EXTRACTION_PROVIDER || '').toLowerCase();
+    return Boolean(this.genAiClient) && (provider === 'gemini' || !this.openAiClient);
+  }
+
+  /**
+   * Membangun fallback terstruktur dari nama file bila seluruh upaya AI & teks gagal,
+   * sekaligus menandai extractionFailed = true agar petugas mendapat peringatan di layar review.
+   */
+  private buildFilenameFallbackExtraction(originalFileName?: string, errorReason?: string): ExtractedSuratData {
+    const cleanFileName = (originalFileName || 'dokumen.pdf').trim();
+    const baseName = cleanFileName.replace(/\.[a-zA-Z0-9]+$/, '').trim();
+    const lower = baseName.toLowerCase();
+
+    let kategoriSurat: ExtractedSuratData['kategoriSurat'] = 'UND';
+    let sesiAcara = 'Sambutan dan Arahan';
+    if (/video\s+ucapan|ucapan\s+video/i.test(lower)) {
+      kategoriSurat = 'TAP';
+    } else if (/wawancara|peliputan/i.test(lower)) {
+      kategoriSurat = 'WR';
+    } else if (/audiensi|silaturahmi|tatap\s+muka/i.test(lower)) {
+      kategoriSurat = 'AU';
+    } else if (/pernikahan|resepsi|akad\s+nikah/i.test(lower)) {
+      kategoriSurat = 'UNR';
+    } else if (/laporan\s+(?:kegiatan|pelaksanaan|pertanggungjawaban)/i.test(lower)) {
+      kategoriSurat = 'LP';
+    } else if (/sambutan|keynote|arahan|narasumber|pembicara|membuka/i.test(lower)) {
+      kategoriSurat = 'PH';
+      if (/keynote/i.test(lower)) sesiAcara = 'Keynote Speech';
+      else if (/narasumber|pembicara/i.test(lower)) sesiAcara = 'Narasumber';
+      else if (/arahan/i.test(lower)) sesiAcara = 'Arahan';
+      else sesiAcara = 'Sambutan';
+    }
+
+    const detectedInst = detectInstitutionFromText(baseName);
+    const penyelenggara = detectedInst?.fullName || 'Instansi Terkait';
+    const shortInst = detectedInst?.shortName || 'Instansi Terkait';
+
+    // Ambil bagian judul setelah kode nomor/instansi jika dipisahkan " - "
+    const dashSplit = baseName.split(/\s+-\s+/);
+    const candidateTopic = dashSplit.length >= 2 ? dashSplit.slice(1).join(' - ').trim() : baseName;
+    const cleanedAcara = candidateTopic.length >= 5 ? cleanNamaAcara(candidateTopic, penyelenggara) : 'Kegiatan';
+
+    const draftData: ExtractedSuratData = {
+      kategoriSurat,
+      alasanKategori: 'Fallback berbasis nama berkas karena pembacaan dokumen scan oleh AI gagal.',
+      tanggalSurat: this.getTodayFormatted(),
+      nomorSurat: `REF-${baseName}`,
+      subject: `Surat Masuk (${cleanFileName})`,
+      asalSurat: `Pimpinan - ${shortInst}`,
+      event: cleanedAcara,
+      perihal: '',
+      picPengirim: '-',
+      picName: '-',
+      picPhoneNumber: '-',
+      penyelenggara,
+      namaAcara: cleanedAcara,
+      sesiAcara,
+      extractionFailed: true,
+      extractionErrorReason: errorReason,
+    };
+
+    if (cleanedAcara !== 'Kegiatan' || penyelenggara !== 'Instansi Terkait') {
+      draftData.perihal = formatPerihalByTemplate(draftData);
+      draftData.subject = generateSubjectSummary(draftData.perihal, draftData);
+      draftData.event = draftData.perihal;
+    } else {
+      draftData.perihal = 'Surat dari Instansi Terkait terkait Kegiatan';
+      draftData.event = draftData.perihal;
+    }
+
+    return draftData;
   }
 
   /**
@@ -1227,14 +1322,21 @@ export class AiService {
     pdfFilePath?: string
   ): Promise<ExtractedSuratData> {
     // 1. Cek apakah dokumen PDF merupakan PDF hasil scan (tanpa layer teks atau teks sangat sedikit/rusak)
-    if (pdfFilePath && (await pdfService.isScannedPdf(pdfFilePath, pdfText))) {
+    const isScanned = pdfFilePath ? await pdfService.isScannedPdf(pdfFilePath, pdfText) : false;
+    if (pdfFilePath && isScanned) {
       console.log(
         `[AiService] Dokumen PDF '${originalFileName || path.basename(pdfFilePath)}' terdeteksi sebagai PDF hasil scan (tanpa teks digital). Mengalihkan ke Multimodal Vision AI...`
       );
-      const renderedPages = await pdfService.renderPdfPagesToImages(pdfFilePath, 4);
+      const totalPages = await pdfService.getPdfPageCount(pdfFilePath);
+      const selectedPages =
+        totalPages > 4
+          ? [1, 2, Math.max(3, totalPages - 1), totalPages]
+          : undefined;
+      const renderedPages = await pdfService.renderPdfPagesToImages(pdfFilePath, 4, 1.5, selectedPages);
+
       if (renderedPages.length > 0) {
         try {
-          const visionResult = await this.extractSuratFromImages(renderedPages, originalFileName);
+          const visionResult = await this.extractSuratFromImages(renderedPages, originalFileName, pdfText);
           return visionResult;
         } catch (visionErr) {
           console.warn('[AiService] Vision AI pada PDF scan gagal, mencoba fallback parser:', visionErr);
@@ -1242,33 +1344,19 @@ export class AiService {
           pdfService.cleanupRenderedPages(renderedPages);
         }
       }
+
+      return this.buildFilenameFallbackExtraction(originalFileName, 'Halaman PDF scan gagal dirender');
     }
 
     return this.extractDocumentMetadata(pdfText, originalFileName);
   }
 
   public async extractDocumentMetadata(pdfText: string, originalFileName?: string): Promise<ExtractedSuratData> {
-    const isUsingOpenRouter = Boolean(this.openAiClient);
-    let model = 'google/gemini-2.5-flash';
-
-    if (isUsingOpenRouter) {
-      if (ENV.PDF_EXTRACTION_MODEL && ENV.PDF_EXTRACTION_MODEL.includes('/')) {
-        model = ENV.PDF_EXTRACTION_MODEL;
-      } else if (ENV.PDF_EXTRACTION_MODEL && !ENV.PDF_EXTRACTION_MODEL.startsWith('gemini-')) {
-        model = ENV.PDF_EXTRACTION_MODEL;
-      } else if (ENV.PDF_EXTRACTION_MODEL) {
-        model = `google/${ENV.PDF_EXTRACTION_MODEL}`;
-      } else {
-        model = 'google/gemini-2.5-flash';
-      }
-    } else {
-      model = ENV.PDF_EXTRACTION_MODEL || 'gemini-2.5-flash';
-    }
+    const preferGemini = this.shouldPreferGeminiNative();
 
     // 1. Ekstraksi cerdas menggunakan AI
     if ((this.genAiClient || this.openAiClient) && pdfText.trim().length > 20) {
-      try {
-        const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan (Kemnaker) yang ahli dan sangat teliti dalam menganalisis dokumen surat dinas masuk.
+      const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan (Kemnaker) yang ahli dan sangat teliti dalam menganalisis dokumen surat dinas masuk.
 
 TUGAS UTAMA:
 Pahami isi dokumen surat resmi di bawah ini secara cermat dari bagian KOP SURAT teratas, nomor registrasi, tanggal terbit, perihal, isi acara, hingga pejabat penandatangan dan kontak narahubung di alinea penutup.
@@ -1311,89 +1399,156 @@ TEKS SURAT:
 ${pdfText.slice(0, 6000)}
 `;
 
-        const candidateModels = isUsingOpenRouter
-          ? [model, 'google/gemini-2.5-flash', 'openai/gpt-4o-mini'].filter((m, i, arr) => Boolean(m) && arr.indexOf(m) === i)
-          : [model];
+      const tryGeminiText = async (): Promise<ExtractedSuratData | null> => {
+        if (!this.genAiClient) return null;
+        const gModel = this.resolvePdfExtractionModel(false);
+        try {
+          const res = await this.genAiClient.models.generateContent({ model: gModel, contents: prompt });
+          return this.parseAiExtractionResponse(res.text || '', originalFileName, pdfText);
+        } catch (err: any) {
+          console.warn(`[AiService] Ekstraksi teks Gemini (${gModel}) gagal:`, err?.message || err);
+          return null;
+        }
+      };
 
-        let rawText = '';
-        for (const candidate of candidateModels) {
+      const tryOpenRouterText = async (): Promise<ExtractedSuratData | null> => {
+        if (!this.openAiClient) return null;
+        const candidates = this.getOpenRouterCandidateModels(this.resolvePdfExtractionModel(true), false);
+        for (const candidate of candidates) {
           try {
-            if (this.openAiClient) {
-              const res = await this.openAiClient.chat.completions.create({
-                model: candidate,
-                messages: [{ role: 'user', content: prompt }],
-                temperature: 0.1,
-                max_tokens: 2500,
-              });
-              rawText = res.choices?.[0]?.message?.content || '';
-              if (!rawText && (res.choices?.[0]?.message as any)?.reasoning) {
-                rawText = (res.choices?.[0]?.message as any).reasoning;
-              }
-            } else if (this.genAiClient) {
-              const res = await this.genAiClient.models.generateContent({
-                model: candidate,
-                contents: prompt,
-              });
-              rawText = res.text || '';
+            const res = await this.openAiClient.chat.completions.create({
+              model: candidate,
+              messages: [{ role: 'user', content: prompt }],
+              temperature: 0.1,
+              max_tokens: 2500,
+            });
+            let rawText = res.choices?.[0]?.message?.content || '';
+            if (!rawText && (res.choices?.[0]?.message as any)?.reasoning) {
+              rawText = (res.choices?.[0]?.message as any).reasoning;
             }
-
-            if (rawText && rawText.trim().length > 10) {
-              break;
-            }
+            const parsed = this.parseAiExtractionResponse(rawText, originalFileName, pdfText);
+            if (parsed) return parsed;
           } catch (modelErr: any) {
             console.warn(`[AiService] Percobaan ekstraksi AI model ${candidate} gagal:`, modelErr?.message || modelErr);
           }
         }
+        return null;
+      };
 
-        const parsedResult = this.parseAiExtractionResponse(rawText, originalFileName, pdfText);
-        if (parsedResult) {
-          return parsedResult;
-        }
-      } catch (err) {
-        console.warn(`[AiService] Ekstraksi cerdas AI (${model}) gagal, menggunakan fallback parser:`, err);
-      }
+      const aiResult = preferGemini
+        ? (await tryGeminiText()) || (await tryOpenRouterText())
+        : (await tryOpenRouterText()) || (await tryGeminiText());
+
+      if (aiResult) return aiResult;
     }
 
-    // 2. Fallback Rule-Based Parser (Jika AI Key kosong atau respons tidak sesuai)
+    // 2. Fallback Rule-Based Parser (Jika AI Key kosong atau seluruh model teks gagal)
     return this.fallbackRuleBasedExtraction(pdfText, originalFileName);
+  }
+
+  /**
+   * Menjalankan ekstraksi Vision AI terhadap sekumpulan payload gambar dengan fallback model & provider
+   */
+  private async tryExtractImagesWithModels(
+    imagePayloads: Array<{ mimeType: string; base64: string }>,
+    prompt: string,
+    originalFileName?: string,
+    docText?: string
+  ): Promise<{ result: ExtractedSuratData | null; lastError?: string }> {
+    let lastError = '';
+    const preferGemini = this.shouldPreferGeminiNative();
+
+    const tryGeminiVision = async (): Promise<ExtractedSuratData | null> => {
+      if (!this.genAiClient) return null;
+      const gModel = this.resolvePdfExtractionModel(false);
+      try {
+        const parts: any[] = [{ text: prompt }];
+        for (const item of imagePayloads) {
+          parts.push({ inlineData: { mimeType: item.mimeType, data: item.base64 } });
+        }
+        const res = await this.genAiClient.models.generateContent({
+          model: gModel,
+          contents: [{ role: 'user', parts }],
+        });
+        const parsed = this.parseAiExtractionResponse(res.text || '', originalFileName, docText);
+        if (!parsed) lastError = `Output Vision Gemini (${gModel}) bukan JSON valid`;
+        return parsed;
+      } catch (err: any) {
+        lastError = err?.message || String(err);
+        console.warn(`[AiService] Ekstraksi Vision AI Gemini (${gModel}, ${imagePayloads.length} hal) gagal:`, lastError);
+        return null;
+      }
+    };
+
+    const tryOpenRouterVision = async (): Promise<ExtractedSuratData | null> => {
+      if (!this.openAiClient) return null;
+      const candidates = this.getOpenRouterCandidateModels(this.resolvePdfExtractionModel(true), true);
+      const content: any[] = [{ type: 'text', text: prompt }];
+      for (const item of imagePayloads) {
+        content.push({
+          type: 'image_url',
+          image_url: { url: `data:${item.mimeType};base64,${item.base64}` },
+        });
+      }
+
+      for (const candidate of candidates) {
+        try {
+          const res = await this.openAiClient.chat.completions.create({
+            model: candidate,
+            messages: [{ role: 'user', content }],
+            temperature: 0.1,
+            max_tokens: 2500,
+          });
+          let rawText = res.choices?.[0]?.message?.content || '';
+          if (!rawText && (res.choices?.[0]?.message as any)?.reasoning) {
+            rawText = (res.choices?.[0]?.message as any).reasoning;
+          }
+          const parsed = this.parseAiExtractionResponse(rawText, originalFileName, docText);
+          if (parsed) return parsed;
+          lastError = `Output Vision (${candidate}) bukan JSON valid`;
+        } catch (err: any) {
+          lastError = err?.message || String(err);
+          console.warn(
+            `[AiService] Ekstraksi Vision AI gambar (${candidate}, ${imagePayloads.length} hal) gagal:`,
+            lastError
+          );
+        }
+      }
+      return null;
+    };
+
+    const result = preferGemini
+      ? (await tryGeminiVision()) || (await tryOpenRouterVision())
+      : (await tryOpenRouterVision()) || (await tryGeminiVision());
+
+    return { result, lastError };
   }
 
   /**
    * Ekstraksi metadata dan isi surat dinas langsung dari berkas gambar atau kumpulan halaman scan (Multimodal Vision AI)
    * Mendukung dokumen satu halaman maupun multi-halaman (misal: halaman surat dinas & lembar lampiran rundown acara)
    */
-  public async extractSuratFromImages(imagePaths: string[], originalFileName?: string): Promise<ExtractedSuratData> {
+  public async extractSuratFromImages(
+    imagePaths: string[],
+    originalFileName?: string,
+    docText?: string
+  ): Promise<ExtractedSuratData> {
     const validPaths = imagePaths.filter((p) => fs.existsSync(p));
-
-    const isUsingOpenRouter = Boolean(this.openAiClient);
-    let model = 'google/gemini-2.5-flash';
-
-    if (isUsingOpenRouter) {
-      if (ENV.PDF_EXTRACTION_MODEL && (ENV.PDF_EXTRACTION_MODEL.includes('/') || ENV.PDF_EXTRACTION_MODEL.includes('vision'))) {
-        model = ENV.PDF_EXTRACTION_MODEL;
-      } else if (ENV.PDF_EXTRACTION_MODEL && !ENV.PDF_EXTRACTION_MODEL.startsWith('gemini-')) {
-        model = ENV.PDF_EXTRACTION_MODEL;
-      } else {
-        model = 'google/gemini-2.5-flash';
-      }
-    } else {
-      model = ENV.PDF_EXTRACTION_MODEL || 'gemini-2.5-flash';
-    }
+    let lastError = 'AI belum dikonfigurasi';
 
     if ((this.genAiClient || this.openAiClient) && validPaths.length > 0) {
-      try {
-        const imagePayloads: Array<{ mimeType: string; base64: string }> = [];
-        for (const imgPath of validPaths) {
-          const buffer = fs.readFileSync(imgPath);
-          const ext = path.extname(imgPath).toLowerCase();
-          const mimeType = imageService.detectImageMimeType(buffer, ext) || 'image/jpeg';
-          imagePayloads.push({
-            mimeType,
-            base64: buffer.toString('base64'),
-          });
-        }
+      const imagePayloads: Array<{ mimeType: string; base64: string }> = [];
+      for (const imgPath of validPaths) {
+        const buffer = fs.readFileSync(imgPath);
+        const ext = path.extname(imgPath).toLowerCase();
+        const mimeType = imageService.detectImageMimeType(buffer, ext) || 'image/jpeg';
+        imagePayloads.push({
+          mimeType,
+          base64: buffer.toString('base64'),
+        });
+      }
 
-        const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan (Kemnaker) yang ahli dan sangat teliti dalam menganalisis berkas dokumen surat dinas resmi (baik dokumen hasil scan scanner/kamera HP, foto fisik surat, maupun berkas gambar dokumen dinas).
+      const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan (Kemnaker) yang ahli dan sangat teliti dalam menganalisis berkas dokumen surat dinas resmi (baik dokumen hasil scan scanner/kamera HP, foto fisik surat, maupun berkas gambar dokumen dinas).
 
 TUGAS UTAMA:
 Bacalah seluruh isi dokumen surat dinas terlampir secara teliti dan menyeluruh dari gambar halaman yang disediakan (dari KOP SURAT teratas, nomor registrasi, tanggal terbit, perihal, isi acara, hingga pejabat penandatangan dan kontak narahubung di alinea penutup). Jika terdapat lebih dari satu halaman terlampir, rangkum dan gabungkan informasinya secara lengkap.
@@ -1433,83 +1588,36 @@ Bacalah seluruh isi dokumen surat dinas terlampir secara teliti dan menyeluruh d
 KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN TANPA PENJELASAN LAIN:
 `;
 
-        let rawText = '';
-        if (this.openAiClient) {
-          const content: any[] = [{ type: 'text', text: prompt }];
-          for (const item of imagePayloads) {
-            content.push({
-              type: 'image_url',
-              image_url: {
-                url: `data:${item.mimeType};base64,${item.base64}`,
-              },
-            });
-          }
-
-          const res = await this.openAiClient.chat.completions.create({
-            model,
-            messages: [
-              {
-                role: 'user',
-                content,
-              },
-            ],
-            temperature: 0.1,
-            max_tokens: 2500,
-          });
-          rawText = res.choices?.[0]?.message?.content || '';
-          if (!rawText && (res.choices?.[0]?.message as any)?.reasoning) {
-            rawText = (res.choices?.[0]?.message as any).reasoning;
-          }
-        } else if (this.genAiClient) {
-          const parts: any[] = [{ text: prompt }];
-          for (const item of imagePayloads) {
-            parts.push({
-              inlineData: {
-                mimeType: item.mimeType,
-                data: item.base64,
-              },
-            });
-          }
-
-          const res = await this.genAiClient.models.generateContent({
-            model,
-            contents: [
-              {
-                role: 'user',
-                parts,
-              },
-            ],
-          });
-          rawText = res.text || '';
-        }
-
-        const parsedResult = this.parseAiExtractionResponse(rawText, originalFileName);
-        if (parsedResult) {
-          return parsedResult;
-        }
-      } catch (err) {
-        console.warn(`[AiService] Ekstraksi Vision AI gambar (${model}) gagal:`, err);
+      const firstAttempt = await this.tryExtractImagesWithModels(imagePayloads, prompt, originalFileName, docText);
+      if (firstAttempt.result) {
+        return firstAttempt.result;
       }
+      lastError = firstAttempt.lastError || 'Gagal memanggil Vision AI';
+
+      // Retry khusus Halaman 1 saja jika pengiriman multi-halaman gagal / timeout
+      if (imagePayloads.length > 1) {
+        console.warn(
+          `[AiService] Ekstraksi ${imagePayloads.length} halaman gagal (${lastError}). Mencoba ulang khusus Halaman 1 saja...`
+        );
+        const pageOneAttempt = await this.tryExtractImagesWithModels(
+          [imagePayloads[0]],
+          prompt,
+          originalFileName,
+          docText
+        );
+        if (pageOneAttempt.result) {
+          return pageOneAttempt.result;
+        }
+        if (pageOneAttempt.lastError) {
+          lastError = pageOneAttempt.lastError;
+        }
+      }
+    } else if (validPaths.length === 0) {
+      lastError = 'Halaman PDF gagal dirender ke gambar';
     }
 
-    // Fallback default jika AI offline
     const cleanFileName = originalFileName || (validPaths[0] ? path.basename(validPaths[0]) : 'dokumen.pdf');
-    return {
-      kategoriSurat: 'UND',
-      alasanKategori: 'Pemeriksaan default dari dokumen scan/gambar.',
-      tanggalSurat: this.getTodayFormatted(),
-      nomorSurat: `REF-${cleanFileName.replace(/\.[a-zA-Z0-9]+$/, '')}`,
-      subject: `Surat Masuk (${cleanFileName})`,
-      asalSurat: 'Pimpinan - Instansi Terkait',
-      event: `Surat dari Instansi Terkait terkait Kegiatan`,
-      perihal: `Surat dari Instansi Terkait terkait Kegiatan`,
-      picPengirim: '-',
-      picName: '-',
-      picPhoneNumber: '-',
-      penyelenggara: 'Instansi Terkait',
-      namaAcara: 'Kegiatan',
-      sesiAcara: 'Sambutan dan Arahan',
-    };
+    return this.buildFilenameFallbackExtraction(cleanFileName, lastError.slice(0, 120));
   }
 
   /**
@@ -2006,6 +2114,8 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       }
     }
 
+    const isLowConfidence = nomorSurat.startsWith('REF-') && !dateEvent && !timeEvent;
+
     const data: ExtractedSuratData = {
       kategoriSurat,
       tanggalSurat,
@@ -2026,6 +2136,12 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       mempelai1: fallbackMempelai1,
       mempelai2: fallbackMempelai2,
       perihal: '',
+      ...(isLowConfidence
+        ? {
+            extractionFailed: true,
+            extractionErrorReason: 'AI tidak tersedia atau teks dokumen tidak terbaca',
+          }
+        : {}),
     };
 
     // Format perihal berdasarkan template resmi

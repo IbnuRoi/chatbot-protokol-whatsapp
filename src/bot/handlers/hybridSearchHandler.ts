@@ -107,7 +107,7 @@ export class HybridSearchHandler {
       const greeting = getGreetingWib();
       const listText = schedules
         .map((j, idx) => {
-          const waktuStr = formatWaktuProtokol(j.waktuMulai, j.waktuSelesai);
+          const waktuStr = formatWaktuProtokol(j.waktuMulai, j.waktuSelesai, j.sampaiSelesai);
           const tglIndo = formatTanggalIndo(j.tanggalKegiatan, true);
           const headerItem = `*${idx + 1}. ${tglIndo} | Pukul ${waktuStr}*`;
 
@@ -225,7 +225,7 @@ export class HybridSearchHandler {
     // 1. Format bagian Jadwal Kegiatan (dengan tanggal pelaksanaan)
     const jadwalListText = displayedSchedules
       .map((j, idx) => {
-        const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai);
+        const waktu = formatWaktuDisplay(j.waktuMulai, j.waktuSelesai, j.sampaiSelesai);
         const formattedDate = formatTanggalIndo(j.tanggalKegiatan);
         const statusBadge = formatStatusBadge(j.statusDisposisi, j.statusDisposisiCode);
         const lines = [
@@ -297,12 +297,12 @@ export class HybridSearchHandler {
   /**
    * Merender detail lengkap agenda kegiatan protokol
    */
-  public renderDetailJadwal(item: NormalizedJadwal): BotResponse {
-    const waktu = item.waktuSelesai ? `${item.waktuMulai} - ${item.waktuSelesai}` : item.waktuMulai;
+  public renderDetailJadwal(item: NormalizedJadwal, session?: UserSession): BotResponse {
+    const waktu = formatWaktuDisplay(item.waktuMulai, item.waktuSelesai, item.sampaiSelesai);
     const formattedDate = formatTanggalIndo(item.tanggalKegiatan);
 
     let suratNote = '';
-    const fileUrl = getLetterShortUrl(item.surat?.id, item.surat?.fileName);
+    const fileUrl = getLetterShortUrl(item.surat?.id, item.surat?.fileName, session?.scope);
     if (item.surat?.nomorAgenda && item.surat.nomorAgenda !== '-') {
       suratNote = `\n• *Surat Terkait*        : ${item.surat.nomorAgenda}`;
       if (fileUrl) {
@@ -349,7 +349,7 @@ export class HybridSearchHandler {
         `📌 *RINCIAN AGENDA KEGIATAN*\n\n` +
         `• *Kegiatan*            : *${item.namaKegiatan}*\n` +
         `• *Tanggal Pelaksanaan* : ${formattedDate}\n` +
-        `• *Waktu*               : ${waktu} WIB\n` +
+        `• *Waktu*               : ${waktu}\n` +
         `• *Lokasi*              : ${item.lokasi && item.lokasi !== '-' ? item.lokasi : 'Belum ditentukan'}\n` +
         `• *Status Disposisi*    : ${statusBadge}` +
         arahanLine +
@@ -400,7 +400,7 @@ export class HybridSearchHandler {
     if (jadwalMatch) {
       const jIdx = parseInt(jadwalMatch[1], 10);
       if (jIdx >= 1 && jIdx <= schedules.length) {
-        return this.renderDetailJadwal(schedules[jIdx - 1]);
+        return this.renderDetailJadwal(schedules[jIdx - 1], session);
       }
     }
 
@@ -411,7 +411,7 @@ export class HybridSearchHandler {
         return cariSuratHandler.showDetailSurat(session, letters[numericIndex - 1].id);
       }
       if (numericIndex <= schedules.length && numericIndex > letters.length) {
-        return this.renderDetailJadwal(schedules[numericIndex - 1]);
+        return this.renderDetailJadwal(schedules[numericIndex - 1], session);
       }
       if (numericIndex <= letters.length && numericIndex <= schedules.length) {
         return cariSuratHandler.showDetailSurat(session, letters[numericIndex - 1].id);
@@ -466,7 +466,7 @@ export class HybridSearchHandler {
       }
 
       if (isExplicitJadwal && bestSchedule && bestSchedule.score >= 20) {
-        return this.renderDetailJadwal(bestSchedule.item);
+        return this.renderDetailJadwal(bestSchedule.item, session);
       }
 
       const letterScore = bestLetter?.score || 0;
@@ -476,7 +476,7 @@ export class HybridSearchHandler {
         if (letterScore > scheduleScore && bestLetter) {
           return cariSuratHandler.showDetailSurat(session, bestLetter.item.id);
         } else if (scheduleScore > letterScore && bestSchedule) {
-          return this.renderDetailJadwal(bestSchedule.item);
+          return this.renderDetailJadwal(bestSchedule.item, session);
         } else if (bestLetter) {
           // Bila skor berimbang, tampilkan detail surat yang relevan
           return cariSuratHandler.showDetailSurat(session, bestLetter.item.id);
