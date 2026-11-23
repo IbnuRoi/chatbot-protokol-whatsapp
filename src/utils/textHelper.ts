@@ -416,9 +416,27 @@ export function getPublicBaseUrl(): string | null {
 }
 
 /**
- * Menghasilkan tautan pendek (Short URL Redirect) untuk berkas surat dengan penanda scope tenant.
- * Contoh: https://<domain>/s/m/45 (Menaker) atau https://<domain>/s/w/45 (Wamen).
- * Jika base URL publik tidak aktif atau ID surat tidak tersedia, fallback ke URL berkas langsung (getLetterFileUrl).
+ * Menentukan base URL untuk pembuatan short link berkas surat.
+ * Prioritas:
+ * 1. SHORT_LINK_BASE_URL (eksplisit di ENV, mis. jika Nginx sudah mem-proxy /s/)
+ * 2. META_WEBHOOK_URL (endpoint proxy aktif seperti https://protokol.gatsu51.com/webhook-chatbot)
+ * 3. PUBLIC_BASE_URL / Cloudflare Tunnel aktif
+ */
+export function getShortLinkBaseUrl(): string | null {
+  if (ENV.SHORT_LINK_BASE_URL && ENV.SHORT_LINK_BASE_URL.trim() !== '') {
+    return ENV.SHORT_LINK_BASE_URL.trim().replace(/\/+$/, '');
+  }
+  if (ENV.META_WEBHOOK_URL && ENV.META_WEBHOOK_URL.trim() !== '') {
+    return ENV.META_WEBHOOK_URL.trim().replace(/\/+$/, '');
+  }
+  return getPublicBaseUrl();
+}
+
+/**
+ * Menghasilkan tautan pendek (Short URL Direct File Serve) untuk berkas surat dengan penanda scope tenant.
+ * Contoh: https://<domain>/s/m/45 atau https://<domain>/webhook-chatbot/s/m/45 (Menaker),
+ * dan /s/w/45 (Wamen).
+ * Jika base URL tidak aktif atau ID surat tidak tersedia, fallback ke URL berkas langsung (getLetterFileUrl).
  */
 export function getLetterShortUrl(
   letterId?: number | bigint | string | null,
@@ -428,9 +446,7 @@ export function getLetterShortUrl(
   const fileUrl = getLetterFileUrl(fileName, scope);
   if (!fileUrl) return null;
 
-  const shortBase = (ENV.SHORT_LINK_BASE_URL && ENV.SHORT_LINK_BASE_URL.trim() !== '')
-    ? ENV.SHORT_LINK_BASE_URL.trim().replace(/\/+$/, '')
-    : getPublicBaseUrl();
+  const shortBase = getShortLinkBaseUrl();
 
   if (shortBase && letterId) {
     const cleanId = String(letterId).trim();
@@ -1673,7 +1689,7 @@ export function formatSuratListItem(s: SuratCardData, index: number, scope: 'MEN
 
   lines.push(`   📋 *Status*     : ${statusBadge}`);
 
-  const fileUrl = getLetterFileUrl(s.fileName, scope);
+  const fileUrl = getLetterShortUrl(s.id, s.fileName, scope);
   if (fileUrl) {
     lines.push(`   📎 *Dokumen*    : ${fileUrl}`);
   }

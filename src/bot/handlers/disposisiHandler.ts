@@ -7,7 +7,7 @@ import { pdfService } from '../../services/pdfService';
 import { menuHandler } from './menuHandler';
 import { BotResponse } from '../types';
 import {
-  getLetterFileUrl,
+  getLetterShortUrl,
   generateDispositionFileName,
   isPureGreeting,
   cleanHtml,
@@ -1043,7 +1043,7 @@ export class DisposisiHandler {
 
     const waktuInputStr = formatWaktuInputIndo(surat.createdAt);
 
-    const fileUrl = getLetterFileUrl(surat.fileName);
+    const fileUrl = getLetterShortUrl(surat.id, surat.fileName, session.scope);
     const fileLine = fileUrl ? `• *Link Berkas Surat*: ${fileUrl}\n` : '';
 
     const text =
