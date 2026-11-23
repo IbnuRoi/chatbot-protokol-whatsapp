@@ -118,8 +118,6 @@ export const ENV = {
     process.env.META_AUTO_TUNNEL === 'true' ||
     (process.env.META_AUTO_TUNNEL !== 'false' && !process.env.PUBLIC_BASE_URL && !process.env.META_WEBHOOK_URL),
   PUBLIC_BASE_URL: (process.env.PUBLIC_BASE_URL || process.env.META_WEBHOOK_URL || '').replace(/\/+$/, ''),
-  META_WEBHOOK_URL: (process.env.META_WEBHOOK_URL || '').replace(/\/+$/, ''),
-  SHORT_LINK_BASE_URL: (process.env.SHORT_LINK_BASE_URL || '').replace(/\/+$/, ''),
 };
 
 // Pastikan direktori storage tersedia

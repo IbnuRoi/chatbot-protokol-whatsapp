@@ -399,65 +399,6 @@ export function cleanQueryForSelection(input: string): string {
 import { ENV } from '../config/env';
 import crypto from 'crypto';
 import path from 'path';
-import { cloudflaredTunnel } from '../bot/providers/cloudflaredTunnel';
-
-/**
- * Mengambil base URL publik aktif (baik dari ENV.PUBLIC_BASE_URL maupun dari tunnel Cloudflare)
- */
-export function getPublicBaseUrl(): string | null {
-  if (ENV.PUBLIC_BASE_URL && ENV.PUBLIC_BASE_URL.trim() !== '') {
-    return ENV.PUBLIC_BASE_URL.trim().replace(/\/+$/, '');
-  }
-  const tunnelUrl = cloudflaredTunnel.getPublicUrl();
-  if (tunnelUrl && tunnelUrl.trim() !== '') {
-    return tunnelUrl.trim().replace(/\/+$/, '');
-  }
-  return null;
-}
-
-/**
- * Menentukan base URL untuk pembuatan short link berkas surat.
- * Prioritas:
- * 1. SHORT_LINK_BASE_URL (eksplisit di ENV, mis. jika Nginx sudah mem-proxy /s/)
- * 2. META_WEBHOOK_URL (endpoint proxy aktif seperti https://protokol.gatsu51.com/webhook-chatbot)
- * 3. PUBLIC_BASE_URL / Cloudflare Tunnel aktif
- */
-export function getShortLinkBaseUrl(): string | null {
-  if (ENV.SHORT_LINK_BASE_URL && ENV.SHORT_LINK_BASE_URL.trim() !== '') {
-    return ENV.SHORT_LINK_BASE_URL.trim().replace(/\/+$/, '');
-  }
-  if (ENV.META_WEBHOOK_URL && ENV.META_WEBHOOK_URL.trim() !== '') {
-    return ENV.META_WEBHOOK_URL.trim().replace(/\/+$/, '');
-  }
-  return getPublicBaseUrl();
-}
-
-/**
- * Menghasilkan tautan pendek (Short URL Direct File Serve) untuk berkas surat dengan penanda scope tenant.
- * Contoh: https://<domain>/s/m/45 atau https://<domain>/webhook-chatbot/s/m/45 (Menaker),
- * dan /s/w/45 (Wamen).
- * Jika base URL tidak aktif atau ID surat tidak tersedia, fallback ke URL berkas langsung (getLetterFileUrl).
- */
-export function getLetterShortUrl(
-  letterId?: number | bigint | string | null,
-  fileName?: string | null,
-  scope: 'MENAKER' | 'WAMEN' = 'MENAKER'
-): string | null {
-  const fileUrl = getLetterFileUrl(fileName, scope);
-  if (!fileUrl) return null;
-
-  const shortBase = getShortLinkBaseUrl();
-
-  if (shortBase && letterId) {
-    const cleanId = String(letterId).trim();
-    if (cleanId && cleanId !== '0' && cleanId !== '-' && !cleanId.includes('/')) {
-      const scopeCode = scope === 'WAMEN' ? 'w' : 'm';
-      return `${shortBase}/s/${scopeCode}/${cleanId}`;
-    }
-  }
-
-  return fileUrl;
-}
 
 /**
  * Mengambil URL publik berkas surat yang dapat langsung diklik oleh pengguna di WhatsApp.
@@ -491,13 +432,10 @@ export function getLetterFileUrl(fileName?: string | null, scope: 'MENAKER' | 'W
 export function formatNomorAgendaLink(
   nomorAgenda: string | null | undefined,
   fileName?: string | null,
-  scope: 'MENAKER' | 'WAMEN' = 'MENAKER',
-  letterId?: number | bigint | string | null
+  scope: 'MENAKER' | 'WAMEN' = 'MENAKER'
 ): string {
   const agenda = (nomorAgenda || '-').trim();
-  const fileUrl =
-    (letterId ? getLetterShortUrl(letterId, fileName, scope) : null) ||
-    getLetterFileUrl(fileName, scope);
+  const fileUrl = getLetterFileUrl(fileName, scope);
   if (!fileUrl) {
     return agenda;
   }
@@ -1689,7 +1627,7 @@ export function formatSuratListItem(s: SuratCardData, index: number, scope: 'MEN
 
   lines.push(`   📋 *Status*     : ${statusBadge}`);
 
-  const fileUrl = getLetterShortUrl(s.id, s.fileName, scope);
+  const fileUrl = getLetterFileUrl(s.fileName, scope);
   if (fileUrl) {
     lines.push(`   📎 *Dokumen*    : ${fileUrl}`);
   }
@@ -1703,7 +1641,7 @@ export function formatSuratListItem(s: SuratCardData, index: number, scope: 'MEN
 export function formatSuratDetail(surat: SuratCardData, waktuInputStr: string, scope: 'MENAKER' | 'WAMEN' = 'MENAKER'): string {
   const disposisi = surat.disposisi;
   const isSudah = disposisi?.status === 'SUDAH_DISPOSISI';
-  const fileUrl = getLetterShortUrl(surat.id, surat.fileName, scope);
+  const fileUrl = getLetterFileUrl(surat.fileName, scope);
 
   const cleanPerihalText = cleanHtml(surat.perihal) || cleanHtml(surat.subject) || 'Surat Masuk';
   const noSuratLine =
