@@ -188,6 +188,66 @@ export class PdfService {
   }
 
   /**
+   * Mencari path berkas surat di disk lokal server sesuai scope (MENAKER / WAMEN) dengan proteksi path traversal.
+   */
+  public resolveLocalLetterFilePath(letterFileName?: string | null, scope?: ProtocolScope): string | null {
+    if (!letterFileName || letterFileName === '-' || letterFileName.trim().length === 0) {
+      return null;
+    }
+
+    let clean = letterFileName.trim();
+    if (clean.startsWith('http://') || clean.startsWith('https://')) {
+      return null;
+    }
+
+    clean = clean.replace(/^\/?(?:files\/letter\/)+/i, '').replace(/^\/+/, '');
+    const normalizedRel = path.normalize(clean).replace(/^(\.\.(?:[/\\]|$))+/, '');
+    if (!normalizedRel || normalizedRel === '.' || normalizedRel.includes('..')) {
+      return null;
+    }
+
+    const menakerDirs = [
+      ENV.UPLOAD_STORAGE_PATH,
+      ENV.PRIVATE_STORAGE_PATH,
+      path.join(process.cwd(), 'storage', 'letters'),
+      path.join(process.cwd(), 'storage', 'private'),
+      ...(ENV.FILES_ROOT
+        ? [path.join(ENV.FILES_ROOT, 'letter'), path.join(ENV.FILES_ROOT, 'letters'), ENV.FILES_ROOT]
+        : []),
+    ];
+
+    const wamenDirs = [
+      ENV.UPLOAD_STORAGE_PATH_WAMEN,
+      path.join(process.cwd(), 'storage', 'letters_wamen'),
+      ...(ENV.FILES_ROOT_WAMEN
+        ? [path.join(ENV.FILES_ROOT_WAMEN, 'letter'), path.join(ENV.FILES_ROOT_WAMEN, 'letters'), ENV.FILES_ROOT_WAMEN]
+        : []),
+    ];
+
+    const baseDirs =
+      scope === 'WAMEN'
+        ? wamenDirs
+        : scope === 'MENAKER'
+          ? menakerDirs
+          : [...menakerDirs, ...wamenDirs];
+
+    for (const baseDir of baseDirs) {
+      if (!baseDir) continue;
+      const resolvedBase = path.resolve(baseDir);
+      const candidate = path.resolve(resolvedBase, normalizedRel);
+      if (candidate !== resolvedBase && candidate.startsWith(resolvedBase + path.sep) && fs.existsSync(candidate)) {
+        try {
+          if (fs.statSync(candidate).isFile()) {
+            return candidate;
+          }
+        } catch {}
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Mendeteksi apakah berkas PDF merupakan PDF hasil scan kamera/alat scanner
    * (tidak memiliki layer teks digital yang memadai, melainkan halaman berupa gambar bitmap)
    */
@@ -392,38 +452,7 @@ export class PdfService {
       }
 
       // 2. Masukkan Seluruh Halaman Berkas Surat Masuk Asli (Halaman 2 dst)
-      let letterFilePath: string | null = null;
-      if (letterFileName && letterFileName !== '-' && letterFileName.trim().length > 0) {
-        const candidatePaths = [
-          path.join(ENV.UPLOAD_STORAGE_PATH, letterFileName),
-          path.join(ENV.PRIVATE_STORAGE_PATH, letterFileName),
-          path.join(ENV.UPLOAD_STORAGE_PATH_WAMEN, letterFileName),
-          path.join(process.cwd(), 'storage', 'letters', letterFileName),
-          path.join(process.cwd(), 'storage', 'letters_wamen', letterFileName),
-          path.join(process.cwd(), 'storage', 'private', letterFileName),
-          ...(ENV.FILES_ROOT
-            ? [
-                path.join(ENV.FILES_ROOT, 'letter', letterFileName),
-                path.join(ENV.FILES_ROOT, 'letters', letterFileName),
-                path.join(ENV.FILES_ROOT, letterFileName),
-              ]
-            : []),
-          ...(ENV.FILES_ROOT_WAMEN && ENV.FILES_ROOT_WAMEN !== ENV.FILES_ROOT
-            ? [
-                path.join(ENV.FILES_ROOT_WAMEN, 'letter', letterFileName),
-                path.join(ENV.FILES_ROOT_WAMEN, 'letters', letterFileName),
-                path.join(ENV.FILES_ROOT_WAMEN, letterFileName),
-              ]
-            : []),
-        ];
-
-        for (const cp of candidatePaths) {
-          if (fs.existsSync(cp)) {
-            letterFilePath = cp;
-            break;
-          }
-        }
-      }
+      const letterFilePath = this.resolveLocalLetterFilePath(letterFileName, scope);
 
       if (letterFilePath && fs.existsSync(letterFilePath)) {
         const letterExt = path.extname(letterFilePath).toLowerCase();

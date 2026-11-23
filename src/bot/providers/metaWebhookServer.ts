@@ -1,4 +1,5 @@
 import http from 'http';
+import fs from 'fs';
 import { URL } from 'url';
 import path from 'path';
 import { ENV } from '../../config/env';
@@ -7,12 +8,88 @@ import { metaClient } from './metaClient';
 import { pdfService } from '../../services/pdfService';
 import { imageService } from '../../services/imageService';
 import { cloudflaredTunnel } from './cloudflaredTunnel';
-import { ProtocolScope } from '../../database/dbManager';
+import { dbManager, ProtocolScope } from '../../database/dbManager';
+import { getLetterFileUrl } from '../../utils/textHelper';
 
 export class MetaWebhookServer {
   private server: http.Server | null = null;
   private port: number = ENV.META_WEBHOOK_PORT || 3000;
   private processedMessageIds = new Set<string>();
+
+  private detectServeMimeType(filePathOrName: string): string {
+    const ext = path.extname(filePathOrName).toLowerCase();
+    if (ext === '.pdf') return 'application/pdf';
+    if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+    if (ext === '.png') return 'image/png';
+    if (ext === '.webp') return 'image/webp';
+    return 'application/octet-stream';
+  }
+
+  private renderShortLinkErrorHtml(title: string, message: string): string {
+    return `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <title>Berkas Dokumen Protokol</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 80vh; margin: 0; background: #f8fafc; color: #1e293b; text-align: center; }
+    .card { background: white; padding: 36px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); max-width: 420px; margin: 16px; border: 1px solid #e2e8f0; }
+    h2 { margin-top: 0; color: #e11d48; font-size: 1.25rem; }
+    p { color: #64748b; font-size: 0.95rem; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>${title}</h2>
+    <p>${message}</p>
+  </div>
+</body>
+</html>`;
+  }
+
+  /**
+   * Mencari nama berkas surat di satu atau lebih scope database berdasarkan ID, nomor agenda, atau potongan nama file
+   */
+  private async resolveShortLinkFile(
+    letterIdParam: string,
+    scopes: ProtocolScope[]
+  ): Promise<{ fileName: string; scope: ProtocolScope } | null> {
+    const isNumericId = /^\d+$/.test(letterIdParam);
+
+    for (const scope of scopes) {
+      if (scope === 'WAMEN' && !ENV.DB_NAME_WAMEN && !ENV.DATABASE_URL_WAMEN) {
+        continue;
+      }
+
+      try {
+        const client = dbManager.getClient(scope);
+        const letter = isNumericId
+          ? await client.letters.findFirst({
+              where: { id: BigInt(letterIdParam), deleted_at: null },
+              select: { id: true, file: true },
+            })
+          : await client.letters.findFirst({
+              where: {
+                deleted_at: null,
+                OR: [
+                  { agenda_number: letterIdParam },
+                  { file: { contains: letterIdParam } },
+                ],
+              },
+              select: { id: true, file: true },
+            });
+
+        if (letter && letter.file) {
+          return { fileName: letter.file, scope };
+        }
+      } catch (dbErr: any) {
+        console.warn(`⚠️ [Short Link ${scope}] Gagal mencari surat "${letterIdParam}": ${dbErr.message}`);
+      }
+    }
+
+    return null;
+  }
 
   /**
    * Menjalankan server HTTP Webhook untuk menerima verifikasi dan pesan dari Meta WhatsApp Cloud API
@@ -47,6 +124,140 @@ export class MetaWebhookServer {
             return;
           }
 
+          // 2. Short URL Document Redirect:
+          // Mendukung /s/:id, /s/m/:id, /s/w/:id (serta prefix /webhook-chatbot/s/...)
+          const redirectMatch = cleanPath.match(
+            /^(?:\/webhook-chatbot)?\/(?:s|d|surat)\/(?:(m|w|menaker|wamen)\/)?([a-zA-Z0-9_.-]+)$/i
+          );
+          if (isGetOrHead && redirectMatch) {
+            const scopeSeg = (redirectMatch[1] || '').toLowerCase();
+            const letterIdParam = redirectMatch[2].trim();
+            const hasWamenDb = Boolean(ENV.DB_NAME_WAMEN || ENV.DATABASE_URL_WAMEN);
+            const scopesToTry: ProtocolScope[] =
+              scopeSeg === 'w' || scopeSeg === 'wamen'
+                ? ['WAMEN']
+                : scopeSeg === 'm' || scopeSeg === 'menaker'
+                  ? ['MENAKER']
+                  : hasWamenDb
+                    ? ['MENAKER', 'WAMEN']
+                    : ['MENAKER'];
+
+            console.log(
+              `\n🔗 [Short Link File] Menerima akses tautan berkas: ${pathname} (Scope: ${scopeSeg || 'auto'}, ID/Ref: ${letterIdParam})`
+            );
+
+            let resolved = await this.resolveShortLinkFile(letterIdParam, scopesToTry);
+
+            // Jika tetap belum ditemukan tapi parameter berakhiran .pdf, hanya cocokkan jika ada file valid di disk
+            if (!resolved && letterIdParam.toLowerCase().endsWith('.pdf')) {
+              const safeDirectName = path.basename(letterIdParam);
+              for (const candidateScope of scopesToTry) {
+                if (pdfService.resolveLocalLetterFilePath(safeDirectName, candidateScope)) {
+                  resolved = { fileName: safeDirectName, scope: candidateScope };
+                  break;
+                }
+              }
+            }
+
+            if (resolved) {
+              const safeDownloadName = path.basename(resolved.fileName).replace(/["\r\n]/g, '_') || 'dokumen.pdf';
+              const localFilePath = pdfService.resolveLocalLetterFilePath(resolved.fileName, resolved.scope);
+
+              // 2a. Utamakan stream langsung dari disk lokal server (bebas login website & bebas ketergantungan SSL web)
+              if (localFilePath && fs.existsSync(localFilePath)) {
+                const fileSize = fs.statSync(localFilePath).size;
+                const mimeType = this.detectServeMimeType(localFilePath);
+                console.log(`📄 [Short Link Direct ${resolved.scope}] Mengirim berkas lokal: ${localFilePath} (${fileSize} bytes)`);
+                res.writeHead(200, {
+                  'Content-Type': mimeType,
+                  'Content-Length': String(fileSize),
+                  'Content-Disposition': `inline; filename="${safeDownloadName}"`,
+                  'Accept-Ranges': 'bytes',
+                  'Cache-Control': 'private, max-age=3600',
+                  'X-Content-Type-Options': 'nosniff',
+                });
+                if (method === 'HEAD') {
+                  res.end();
+                  return;
+                }
+                const stream = fs.createReadStream(localFilePath);
+                stream.on('error', (streamErr) => {
+                  console.warn(`⚠️ [Short Link Direct ${resolved.scope}] Gagal membaca stream berkas:`, streamErr);
+                  if (!res.headersSent) {
+                    res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+                  }
+                  res.end('Gagal membaca berkas dokumen.');
+                });
+                stream.pipe(res);
+                return;
+              }
+
+              // 2b. Fallback: proxy fetch dari server upstream agar user tetap tidak diarahkan ke halaman login / CORS
+              const fullFileUrl = getLetterFileUrl(resolved.fileName, resolved.scope);
+              if (fullFileUrl) {
+                try {
+                  const upstream = await fetch(fullFileUrl, {
+                    method: method === 'HEAD' ? 'HEAD' : 'GET',
+                    signal: AbortSignal.timeout(12000),
+                  });
+                  const upstreamType = (upstream.headers.get('content-type') || '').toLowerCase();
+
+                  if (upstream.ok && !upstreamType.includes('text/html')) {
+                    const mimeType = upstreamType.split(';')[0] || this.detectServeMimeType(resolved.fileName);
+                    if (method === 'HEAD') {
+                      const contentLength = upstream.headers.get('content-length');
+                      res.writeHead(200, {
+                        'Content-Type': mimeType,
+                        ...(contentLength ? { 'Content-Length': contentLength } : {}),
+                        'Content-Disposition': `inline; filename="${safeDownloadName}"`,
+                        'Cache-Control': 'private, max-age=3600',
+                        'X-Content-Type-Options': 'nosniff',
+                      });
+                      res.end();
+                      return;
+                    }
+
+                    const fileBuf = Buffer.from(await upstream.arrayBuffer());
+                    console.log(`🌐 [Short Link Proxy ${resolved.scope}] Berhasil mengunduh & mengirim berkas (${fileBuf.length} bytes)`);
+                    res.writeHead(200, {
+                      'Content-Type': mimeType,
+                      'Content-Length': String(fileBuf.length),
+                      'Content-Disposition': `inline; filename="${safeDownloadName}"`,
+                      'Cache-Control': 'private, max-age=3600',
+                      'X-Content-Type-Options': 'nosniff',
+                    });
+                    res.end(fileBuf);
+                    return;
+                  }
+
+                  console.warn(
+                    `⚠️ [Short Link Proxy ${resolved.scope}] Upstream tidak valid (${upstream.status}, type: ${upstreamType || 'unknown'}) untuk ${fullFileUrl}`
+                  );
+                } catch (proxyErr: any) {
+                  console.warn(`⚠️ [Short Link Proxy ${resolved.scope}] Gagal mengambil berkas dari ${fullFileUrl}:`, proxyErr?.message || proxyErr);
+                }
+              }
+
+              res.writeHead(502, { 'Content-Type': 'text/html; charset=utf-8' });
+              res.end(
+                this.renderShortLinkErrorHtml(
+                  'Berkas Belum Tersedia',
+                  'Berkas surat ditemukan di database, namun file fisiknya tidak ditemukan di penyimpanan lokal dan server arsip web sedang tidak dapat diakses.'
+                )
+              );
+              return;
+            }
+
+            // Fallback tampilan 404 jika berkas tidak ditemukan
+            res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(
+              this.renderShortLinkErrorHtml(
+                'Dokumen Tidak Ditemukan',
+                'Berkas surat yang Anda tuju belum dilampirkan atau telah diarsipkan dari sistem database protokol.'
+              )
+            );
+            return;
+          }
 
           const isWebhookPath =
             cleanPath === '/webhook' ||

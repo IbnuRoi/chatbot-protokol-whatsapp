@@ -9,6 +9,7 @@ import {
   scoreTextMatch,
   cleanQueryForSelection,
   getLetterFileUrl,
+  getLetterShortUrl,
   isPureGreeting,
   formatStatusBadge,
   formatListSummary,
@@ -156,7 +157,7 @@ export class HybridSearchHandler {
           }
 
           let fileLine = '';
-          const fileUrl = getLetterFileUrl(j.surat?.fileName, session.scope);
+          const fileUrl = getLetterShortUrl(j.surat?.id, j.surat?.fileName, session.scope);
           if (fileUrl) {
             fileLine = `\n*Berkas Surat:* ${fileUrl}`;
           }
@@ -251,7 +252,7 @@ export class HybridSearchHandler {
         if (cleanPic && cleanPic !== '-') {
           lines.push(`   👤 *PIC*     : ${cleanPic}`);
         }
-        const fileUrl = getLetterFileUrl(j.surat?.fileName, session.scope);
+        const fileUrl = getLetterShortUrl(j.surat?.id, j.surat?.fileName, session.scope);
         if (fileUrl) {
           lines.push(`   📎 *Berkas*  : ${fileUrl}`);
         }
@@ -301,7 +302,7 @@ export class HybridSearchHandler {
     const formattedDate = formatTanggalIndo(item.tanggalKegiatan);
 
     let suratNote = '';
-    const fileUrl = getLetterFileUrl(item.surat?.fileName, session?.scope);
+    const fileUrl = getLetterShortUrl(item.surat?.id, item.surat?.fileName, session?.scope);
     if (item.surat?.nomorAgenda && item.surat.nomorAgenda !== '-') {
       suratNote = `\n• *Surat Terkait*        : ${item.surat.nomorAgenda}`;
       if (fileUrl) {
