@@ -300,15 +300,41 @@ export class NluService {
 
     if (isDisposisiInquiry) {
       const isDisposisiSearch = /\b(?:cari|carikan|temukan)\b/i.test(normLowerText);
+      const isExplicitInputDisposisi =
+        /\b(?:input|upload|unggah|catat|masukkan|kirim|rekam|tambah|buat|edit|ubah)\b/i.test(normLowerText);
       const isDisposisiTracking =
         /\b(?:cek|lacak|status|pantau|lihat|progress|posisi|sudah.*(?:belum|kah))\b/i.test(normLowerText) ||
         /\b(?:nomor|no\.?)\s*(?:agenda|surat)\b/i.test(normLowerText) ||
         /\b\d+\/[A-Za-z0-9\-\/]+\/\d{4}\b/.test(cleanText);
 
+      // Ekstrak nomor agenda / nomor surat hanya jika benar-benar berupa kode nomor (mengandung digit)
+      const agendaOrNomorMatch =
+        cleanText.match(/\b(\d+[\/\-][A-Za-z0-9\-\/]+)\b/) ||
+        cleanText.match(/\b([A-Za-z0-9\-\/]*\d+[A-Za-z0-9\-\/]*)\b/);
+      const nomor = agendaOrNomorMatch ? agendaOrNomorMatch[1] : undefined;
+
+      // Cek apakah user ingin mencari disposisi secara umum ("cari disposisi", "cari disposisi wamen", atau "cari disposisi <nomor>")
+      if (isDisposisiSearch && !isExplicitInputDisposisi) {
+        const cleanedQuery = cleanText
+          .replace(/\b(?:tolong|mohon|bantu|coba|mau|ingin|cari|carikan|temukan|status|lembar|disposisi|surat|wamen|wakil\s+menteri|menaker|menteri|untuk|di)\b/gi, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const searchTarget = nomor || (cleanedQuery.length >= 2 && !/\btentang\b/i.test(normLowerText) ? cleanedQuery : undefined);
+
+        if (!/\btentang\b/i.test(normLowerText) || nomor) {
+          return {
+            intent: 'DISPOSISI',
+            confidence: 1.0,
+            conversationalReply: searchTarget
+              ? `Baik ${userName}, saya bantu cari data disposisi untuk *"${searchTarget}"*:`
+              : `Baik ${userName}, silakan masukkan nomor agenda, nomor surat, atau perihal untuk mencari status disposisi:`,
+            entities: searchTarget ? { nomorSurat: searchTarget } : {},
+          };
+        }
+      }
+
       if (!isDisposisiSearch) {
-        if (isDisposisiTracking) {
-          const matches = cleanText.match(/([A-Z0-9\-\/]{4,})/i);
-          const nomor = matches && !matches[1].toLowerCase().includes('disposisi') ? matches[1] : undefined;
+        if (isDisposisiTracking && !isExplicitInputDisposisi) {
           return {
             intent: 'DISPOSISI',
             confidence: 1.0,
@@ -317,7 +343,7 @@ export class NluService {
           };
         }
 
-        // Jika bukan pelacakan dan bukan pencarian (misal user mengetik "disposisi", "lembar disposisi", "mau disposisi", "upload disposisi", "kirim disposisi", dll.)
+        // Jika bukan pelacakan dan bukan pencarian (misal user mengetik "disposisi", "lembar disposisi", "input disposisi", "upload disposisi", "input disposisi wamen", dll.)
         return {
           intent: 'INPUT_DISPOSISI',
           confidence: 1.0,
@@ -1537,8 +1563,10 @@ export class NluService {
         lower.includes('carikan') ||
         lower.includes('temukan');
 
-      const matches = text.match(/([A-Z0-9\-\/]{4,})/i);
-      const nomor = matches && !matches[1].toLowerCase().includes('disposisi') ? matches[1] : undefined;
+      const agendaOrNomorMatch =
+        text.match(/\b(\d+[\/\-][A-Za-z0-9\-\/]+)\b/) ||
+        text.match(/\b([A-Za-z0-9\-\/]*\d+[A-Za-z0-9\-\/]*)\b/);
+      const nomor = agendaOrNomorMatch ? agendaOrNomorMatch[1] : undefined;
 
       if (!isCari && (isTracking || nomor)) {
         return {

@@ -1,4 +1,4 @@
-import { sessionService, BotState, UserSession } from '../../services/sessionService';
+import { sessionService, BotState, UserSession, isGufronation } from '../../services/sessionService';
 import { suratService } from '../../services/suratService';
 import { pdfService } from '../../services/pdfService';
 import { imageService } from '../../services/imageService';
@@ -23,7 +23,7 @@ export class SuratMasukHandler {
   /**
    * Menghasilkan teks respon pembatalan registrasi karena nomor surat sudah ada di database
    */
-  public formatDuplicateNomorSuratResponse(nomorSurat: string, existing: any): BotResponse {
+  public formatDuplicateNomorSuratResponse(nomorSurat: string, existing: any, session?: UserSession): BotResponse {
     const rawPerihal = cleanHtml(existing.note || existing.subject || '-');
     const cleanPerihal = rawPerihal.replace(/\s+/g, ' ').trim();
     const tglSuratStr = existing.date_letter ? formatTanggalIndo(new Date(existing.date_letter)) : '-';
@@ -47,7 +47,7 @@ export class SuratMasukHandler {
 
     return {
       text,
-      list: menuHandler.getMainMenuInteractiveList(),
+      list: menuHandler.getMainMenuInteractiveList(session?.scope || 'MENAKER', isGufronation(session)),
     };
   }
   /**
@@ -286,7 +286,7 @@ export class SuratMasukHandler {
         console.warn(`[SuratMasukHandler] Menolak upload PDF: Nomor surat "${extractedNomorSurat}" sudah terdaftar di database (Agenda: ${duplicate.agenda_number}).`);
         pdfService.deleteTempPdf(tempFilePath);
         sessionService.resetSession(session.whatsappNumber);
-        return this.formatDuplicateNomorSuratResponse(extractedNomorSurat, duplicate);
+        return this.formatDuplicateNomorSuratResponse(extractedNomorSurat, duplicate, session);
       }
     }
 
@@ -350,7 +350,7 @@ export class SuratMasukHandler {
         console.warn(`[SuratMasukHandler] Menolak upload Gambar: Nomor surat "${extractedNomorSurat}" sudah terdaftar di database (Agenda: ${duplicate.agenda_number}).`);
         pdfService.deleteTempPdf(tempFilePath);
         sessionService.resetSession(session.whatsappNumber);
-        return this.formatDuplicateNomorSuratResponse(extractedNomorSurat, duplicate);
+        return this.formatDuplicateNomorSuratResponse(extractedNomorSurat, duplicate, session);
       }
     }
 
@@ -598,14 +598,15 @@ export class SuratMasukHandler {
             conflictNote +
             noteFooter +
             `Bila ada hal lain yang ingin Anda kelola atau cari, silakan beri tahu saya ya. 😊`,
-          list: menuHandler.getMainMenuInteractiveList(),
+          list: menuHandler.getMainMenuInteractiveList(session.scope, isGufronation(session)),
         };
       } else {
         if (result.isDuplicateNomorSurat && result.duplicateLetter) {
           sessionService.resetSession(session.whatsappNumber);
           return this.formatDuplicateNomorSuratResponse(
             session.draftSurat?.extractedData?.nomorSurat || '-',
-            result.duplicateLetter
+            result.duplicateLetter,
+            session
           );
         }
         return {
@@ -793,7 +794,7 @@ export class SuratMasukHandler {
             } catch {}
           }
           sessionService.resetSession(session.whatsappNumber);
-          return this.formatDuplicateNomorSuratResponse(candidateNomor, duplicate);
+          return this.formatDuplicateNomorSuratResponse(candidateNomor, duplicate, session);
         }
       }
       session.draftSurat.extractedData.nomorSurat = candidateNomor;
@@ -1866,7 +1867,7 @@ export class SuratMasukHandler {
               } catch {}
             }
             sessionService.resetSession(session.whatsappNumber);
-            return this.formatDuplicateNomorSuratResponse(candidateNomor, duplicate);
+            return this.formatDuplicateNomorSuratResponse(candidateNomor, duplicate, session);
           }
         }
         session.draftSurat.extractedData.nomorSurat = candidateNomor;
@@ -2136,14 +2137,15 @@ export class SuratMasukHandler {
             `• ⏰ *Waktu Input*     : ${waktuInputStr}\n` +
             conflictNote +
             noteFooter,
-          list: menuHandler.getMainMenuInteractiveList(),
+          list: menuHandler.getMainMenuInteractiveList(session.scope, isGufronation(session)),
         };
       } else {
         if (result.isDuplicateNomorSurat && result.duplicateLetter) {
           sessionService.resetSession(session.whatsappNumber);
           return this.formatDuplicateNomorSuratResponse(
             session.draftSurat?.extractedData?.nomorSurat || '-',
-            result.duplicateLetter
+            result.duplicateLetter,
+            session
           );
         }
         return {

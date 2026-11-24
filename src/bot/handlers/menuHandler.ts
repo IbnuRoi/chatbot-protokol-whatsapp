@@ -11,29 +11,30 @@ export class MenuHandler {
     isGufron: boolean = false
   ): BotReplyList {
     const isWamen = scope === 'WAMEN';
+    const scopeShort = isWamen ? 'Wamen' : 'Menaker';
     const sections: any[] = [
       {
-        title: `Pelayanan & Administrasi (${isWamen ? 'Wamen' : 'Menaker'})`,
+        title: `Layanan Protokol (${scopeShort})`,
         rows: [
           {
             id: '1',
             title: '1. Registrasi Surat',
-            description: `Unggah berkas naskah dinas baru (${isWamen ? 'Wamen' : 'Menaker'})`,
+            description: `Unggah berkas naskah dinas baru (${scopeShort})`,
           },
           {
             id: '2',
             title: '2. Agenda Jadwal',
-            description: `Cek agenda kegiatan protokol ${isWamen ? 'Wamen' : 'Menaker'}`,
+            description: `Cek agenda kegiatan protokol ${scopeShort}`,
           },
           {
             id: '3',
             title: '3. Disposisi Surat',
-            description: `Lacak status & arahan disposisi ${isWamen ? 'Wamen' : 'Menaker'}`,
+            description: `Cari & cek status disposisi ${scopeShort}`,
           },
           {
             id: 'UPLOAD_DISPOSISI',
             title: '📤 Upload Disposisi',
-            description: `Unggah foto / scan PDF lembar disposisi pimpinan`,
+            description: `Input / unggah lembar disposisi ${scopeShort}`,
           },
         ],
       },
@@ -43,12 +44,12 @@ export class MenuHandler {
           {
             id: '4',
             title: '4. Riwayat Surat',
-            description: `Daftar surat masuk ${isWamen ? 'Wamen' : 'Menaker'} terkini`,
+            description: `Daftar surat masuk ${scopeShort} terkini`,
           },
           {
             id: '5',
             title: '5. Cari Surat & Agenda',
-            description: 'Pencarian arsip persuratan dan agenda',
+            description: `Pencarian arsip surat dan agenda ${scopeShort}`,
           },
           {
             id: '6',

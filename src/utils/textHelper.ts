@@ -1139,7 +1139,7 @@ export function cleanTemplatePrefix(title: string | null | undefined): string {
 
   // 1. Hapus suffix arahan atau catatan lama di akhir jika sudah pernah ditambahkan sebelumnya
   text = text
-    .replace(/\s*\(?\s*(?:(?:arahan|disposisi)\s+menaker\s*:[^\)]*|belum\s+ada\s+disposisi)\)?\s*$/i, '')
+    .replace(/\s*\(?\s*(?:(?:arahan|disposisi)\s+(?:menaker|wamen|wakil\s+menteri|wamenaker|pimpinan|menteri)\s*:[^\)]*|belum\s+ada\s+disposisi)\)?\s*$/i, '')
     .trim();
 
   // 2. Daftar pola spesifik yang umum di perihal surat masuk
@@ -1499,8 +1499,8 @@ export function extractEventTitleDetails(rawTitle: string | null | undefined): E
       continue;
     }
 
-    // Deteksi Arahan Menaker / Disposisi Menaker di awal/tengah baris
-    const arahanMatch = line.match(/^[\(\[]?\s*(?:arahan|disposisi|dispo)\s+(?:menaker|pimpinan|menteri)\s*:?\s*([^\]\)]*)[\)\]]?(.*)$/i);
+    // Deteksi Arahan Menaker / Wamen / Disposisi di awal/tengah baris
+    const arahanMatch = line.match(/^[\(\[]?\s*(?:arahan|disposisi|dispo)\s+(?:menaker|wamen|wakil\s+menteri|wamenaker|pimpinan|menteri)\s*:?\s*([^\]\)]*)[\)\]]?(.*)$/i);
     if (arahanMatch) {
       const coreArahan = arahanMatch[1].trim();
       const extraNote = cleanItem(arahanMatch[2].trim());
@@ -1529,7 +1529,7 @@ export function extractEventTitleDetails(rawTitle: string | null | undefined): E
       if (item) catatanList.push(item);
     } else {
       // Masih di TITLE
-      const inlineArahanMatch = line.match(/^(.*?)\s*[\(\[]\s*(?:arahan|disposisi|dispo)\s+(?:menaker|pimpinan|menteri)\s*:?\s*([^\]\)]*)[\)\]](.*)$/i);
+      const inlineArahanMatch = line.match(/^(.*?)\s*[\(\[]\s*(?:arahan|disposisi|dispo)\s+(?:menaker|wamen|wakil\s+menteri|wamenaker|pimpinan|menteri)\s*:?\s*([^\]\)]*)[\)\]](.*)$/i);
       if (inlineArahanMatch) {
         const titlePart = inlineArahanMatch[1].trim();
         const coreArahan = inlineArahanMatch[2].trim();

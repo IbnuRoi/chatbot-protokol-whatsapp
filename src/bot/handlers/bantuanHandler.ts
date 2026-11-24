@@ -8,13 +8,16 @@ export class BantuanHandler {
    */
   public async showBantuanMenu(session: UserSession): Promise<BotResponse> {
     sessionService.setState(session.whatsappNumber, BotState.BANTUAN_MENU);
+    const isWamen = session.scope === 'WAMEN';
+    const scopeLabel = isWamen ? 'Wakil Menteri (Wamen)' : 'Menteri (Menaker)';
 
     const text =
-      `❓ *PUSAT BANTUAN & PANDUAN PENGGUNAAN*\n\n` +
+      `❓ *PUSAT BANTUAN & PANDUAN PENGGUNAAN*\n` +
+      `🏛️ _Ruang Lingkup Aktif: ${scopeLabel}_\n\n` +
       `Ada beberapa topik panduan yang dapat saya jelaskan:\n\n` +
       `• *1* - 📥 *Panduan Registrasi Surat Masuk* (Alur upload & OCR berkas)\n` +
       `• *2* - 📅 *Panduan Menu Jadwal Kegiatan* (Cek agenda protokol)\n` +
-      `• *3* - 🔍 *Panduan Status Disposisi* (Lacak surat pimpinan)\n` +
+      `• *3* - 🔍 *Panduan Cari & Input Disposisi* (Lacak & unggah disposisi ${isWamen ? 'Wamen' : 'Menaker'})\n` +
       `• *4* - 📜 *Panduan Riwayat Surat* (Membaca arsip surat)\n` +
       `• *5* - 🔎 *Panduan Cari Surat* (Pencarian perihal & topik)\n` +
       `• *6* - 📎 *Petunjuk Unggah Berkas PDF* (Ketentuan & format)\n` +
@@ -64,11 +67,17 @@ export class BantuanHandler {
         buttons: menuButtons,
       };
     } else if (clean === '3' || lower.includes('disposisi') || lower.includes('lacak')) {
+      const isWamen = session.scope === 'WAMEN';
+      const scopeName = isWamen ? 'Wakil Menteri (Wamen)' : 'Menteri (Menaker)';
+      const agendaSample = isWamen ? '308/WM/UND/IX/2026' : '308/M/UND/IX/2026';
       return {
         text:
-          `🔍 *PANDUAN STATUS DISPOSISI*\n\n` +
-          `• Cukup sebutkan Nomor Agenda (misal: UND/2026/09/0001) atau Nomor Surat pengirim.\n` +
-          `• Saya akan langsung memeriksa apakah surat sudah menerima disposisi Pimpinan atau masih dalam antrean.` +
+          `🔍 *PANDUAN CARI & INPUT DISPOSISI (${scopeName})*\n\n` +
+          `• *Cari / Lacak Status Disposisi*:\n` +
+          `  Ketik menu *3* atau langsung tulis *"cek disposisi <nomor agenda/perihal>"* (contoh: _${agendaSample}_).\n` +
+          `• *Input / Unggah Lembar Disposisi*:\n` +
+          `  Ketik *"upload disposisi"* atau pilih tombol *📤 Upload Disposisi* di menu utama, lalu kirimkan foto/PDF scan lembar disposisi.\n` +
+          `• Data otomatis dibaca & disimpan ke database *${scopeName}*.` +
           navText,
         buttons: menuButtons,
       };

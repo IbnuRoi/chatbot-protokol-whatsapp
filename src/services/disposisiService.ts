@@ -52,8 +52,8 @@ export class DisposisiService {
     if (!clean) return null;
 
     const client = this.getClient(scope);
-    // Cari exact match atau insensitive match pada agenda_number atau number_or_date
-    const letter = await client.letters.findFirst({
+    // 1. Prioritaskan pencocokan pada Nomor Agenda atau Nomor Surat
+    let letter = await client.letters.findFirst({
       where: {
         deleted_at: null,
         OR: [
@@ -65,6 +65,23 @@ export class DisposisiService {
       },
       orderBy: { id: 'desc' },
     });
+
+    // 2. Fallback: jika belum ketemu dan query berupa kata kunci teks (perihal/instansi >= 3 huruf),
+    // cari juga pada subject, perihal (note), atau pengirim (from)
+    if (!letter && clean.length >= 3 && /[a-zA-Z]/.test(clean) && !clean.includes('/')) {
+      letter = await client.letters.findFirst({
+        where: {
+          deleted_at: null,
+          OR: [
+            { subject: { contains: clean, mode: 'insensitive' } },
+            { note: { contains: clean, mode: 'insensitive' } },
+            { from: { contains: clean, mode: 'insensitive' } },
+            { place_event: { contains: clean, mode: 'insensitive' } },
+          ],
+        },
+        orderBy: { id: 'desc' },
+      });
+    }
 
     if (!letter) return null;
 

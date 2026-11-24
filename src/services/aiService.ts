@@ -3,6 +3,7 @@ import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
 import { ENV } from '../config/env';
+import { ProtocolScope } from '../database/dbManager';
 import { ExtractedSuratData, ExtractedDisposisiData } from './sessionService';
 import { splitPicNameAndPhone, sanitizePlaceEvent, cleanTemplatePrefix, buildNarasiPenayanganTap } from '../utils/textHelper';
 import { parseIndonesianDateToDate, formatTanggalIndo, isValidDate, extractWaktuAcaraFromText } from '../utils/dateHelper';
@@ -2223,7 +2224,8 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
    */
   public async extractDisposisiFromPdf(
     pdfFilePath: string,
-    originalFileName?: string
+    originalFileName?: string,
+    scope: ProtocolScope = 'MENAKER'
   ): Promise<ExtractedDisposisiData> {
     const pdfText = await pdfService.extractText(pdfFilePath);
 
@@ -2231,12 +2233,12 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
     // Render 2 halaman pertama pada skala tinggi (2.0x) agar kotak centang dan teks kecil sangat tajam.
     try {
       console.log(
-        `[AiService] Memproses ekstraksi lembar disposisi '${originalFileName || path.basename(pdfFilePath)}' dengan Vision AI (Page 1-2)...`
+        `[AiService ${scope}] Memproses ekstraksi lembar disposisi '${originalFileName || path.basename(pdfFilePath)}' dengan Vision AI (Page 1-2)...`
       );
       const renderedPages = await pdfService.renderPdfPagesToImages(pdfFilePath, 2, 2.0);
       if (renderedPages.length > 0) {
         try {
-          const visionResult = await this.extractDisposisiFromImages(renderedPages, originalFileName, pdfText);
+          const visionResult = await this.extractDisposisiFromImages(renderedPages, originalFileName, pdfText, scope);
           // Jika nomor agenda atau perihal berhasil diekstrak secara valid, kembalikan hasil vision
           if (
             (visionResult.nomorAgenda && visionResult.nomorAgenda !== '-') ||
@@ -2249,15 +2251,15 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
         }
       }
     } catch (visionErr) {
-      console.warn('[AiService] Upaya ekstraksi Vision AI gagal, beralih ke analisis teks:', visionErr);
+      console.warn(`[AiService ${scope}] Upaya ekstraksi Vision AI gagal, beralih ke analisis teks:`, visionErr);
     }
 
     // Fallback ekstraksi berbasis teks digital jika Vision AI gagal
     if (pdfText && pdfText.trim().length > 30) {
-      return this.extractDisposisiFromText(pdfText, originalFileName);
+      return this.extractDisposisiFromText(pdfText, originalFileName, scope);
     }
 
-    return this.parseDisposisiResponse('', originalFileName, pdfText || '');
+    return this.parseDisposisiResponse('', originalFileName, pdfText || '', scope);
   }
 
   /**
@@ -2265,7 +2267,8 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
    */
   public async extractDisposisiFromText(
     text: string,
-    originalFileName?: string
+    originalFileName?: string,
+    scope: ProtocolScope = 'MENAKER'
   ): Promise<ExtractedDisposisiData> {
     const isUsingOpenRouter = Boolean(this.openAiClient);
     let model = 'openrouter/free';
@@ -2279,7 +2282,10 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       model = ENV.PDF_EXTRACTION_MODEL || 'gemini-2.5-flash';
     }
 
-    const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan (Kemnaker) yang bertugas mengekstrak formulir LEMBAR DISPOSISI resmi Kemnaker.
+    const defaultPemberi = scope === 'WAMEN' ? 'Wakil Menteri Ketenagakerjaan RI' : 'Menteri Ketenagakerjaan RI';
+    const sampleAgenda = scope === 'WAMEN' ? '308/WM/PH/IX/2026' : '308/M/PH/IX/2026';
+
+    const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan (Kemnaker) yang bertugas mengekstrak formulir LEMBAR DISPOSISI resmi Kemnaker (${scope === 'WAMEN' ? 'Wakil Menteri Ketenagakerjaan' : 'Menteri Ketenagakerjaan'}).
 
 Teks dokumen Lembar Disposisi:
 """
@@ -2289,7 +2295,7 @@ ${text.slice(0, 10000)}
 PANDUAN EKSTRAKSI FORMULIR LEMBAR DISPOSISI KEMNAKER:
 1. "isDisposisi": boolean (true jika dokumen adalah formulir lembar disposisi).
 2. "sifat": sifat dokumen jika dicentang ("Rahasia", "Penting/Segera", "Biasa", "Tembusan").
-3. "nomorAgenda": nomor agenda disposisi pada kolom "Nomor Agenda" (misal: "308/M/PH/IX/2026"). JANGAN mengambil nomor surat pengirim!
+3. "nomorAgenda": nomor agenda disposisi pada kolom "Nomor Agenda" (misal: "${sampleAgenda}"). JANGAN mengambil nomor surat pengirim!
 4. "tanggalDisposisi": tanggal di sebelah kanan nomor agenda pada kolom "Tanggal :" (misal: "8 September 2026").
 5. "nomorSurat": nomor surat dinas pengirim pada baris "Nomor / Tanggal :" (misal: "Panasonic.2026").
 6. "tanggalSurat": tanggal surat dinas pengirim di sebelah kanan nomor surat (misal: "3 September 2026").
@@ -2299,8 +2305,8 @@ PANDUAN EKSTRAKSI FORMULIR LEMBAR DISPOSISI KEMNAKER:
    - "tanggalAcara": misal "Kamis, 8 Oktober 2026"
    - "waktuAcara": misal "08:30 WIB - selesai"
    - "tempatAcara": misal "Auditorium Universitas Darma Persada (UNSADA), Jakarta Timur"
-10. "pemberiDisposisi": pejabat pemberi disposisi (default: "Menteri Ketenagakerjaan RI").
-11. "namaPemberiDisposisi": nama pimpinan jika tertera (misal: "Yassierli").
+10. "pemberiDisposisi": pejabat pemberi disposisi (default: "${defaultPemberi}").
+11. "namaPemberiDisposisi": nama pimpinan jika tertera (misal: "${scope === 'WAMEN' ? 'Immanuel Ebenezer' : 'Yassierli'}").
 12. "diteruskanKepada": array string nama-nama pejabat yang dituju/dicentang. HANYA masukkan yang benar-benar dipilih/dicentang. Kembalikan [] jika tidak ada yang dicentang.
 13. "arahanDisposisi": array string instruksi tindakan pada lajur disposisi (misal: ["Agendakan / Acarakan"]). Kembalikan [] jika lajur disposisi tidak dicentang sama sekali.
 14. "catatan": catatan teks tertulis instruksi khusus pimpinan (misal: "Dipamitkan", "Di pamitkan", dsb). Kembalikan "-" jika tidak ada catatan teks khusus.
@@ -2329,10 +2335,10 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
         rawText = res.text || '';
       }
     } catch (e) {
-      console.warn('[AiService] Ekstraksi disposisi dari teks gagal:', e);
+      console.warn(`[AiService ${scope}] Ekstraksi disposisi dari teks gagal:`, e);
     }
 
-    return this.parseDisposisiResponse(rawText, originalFileName, text);
+    return this.parseDisposisiResponse(rawText, originalFileName, text, scope);
   }
 
   /**
@@ -2341,7 +2347,8 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
   public async extractDisposisiFromImages(
     imagePaths: string[],
     originalFileName?: string,
-    fallbackDocText?: string
+    fallbackDocText?: string,
+    scope: ProtocolScope = 'MENAKER'
   ): Promise<ExtractedDisposisiData> {
     const validPaths = imagePaths.filter((p) => fs.existsSync(p));
 
@@ -2370,17 +2377,21 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
           });
         }
 
-        const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan Republik Indonesia (Kemnaker) yang ahli dalam membaca formulir LEMBAR DISPOSISI resmi Kemnaker beserta surat dinas pendukungnya.
+        const defaultPemberi = scope === 'WAMEN' ? 'Wakil Menteri Ketenagakerjaan RI' : 'Menteri Ketenagakerjaan RI';
+        const sampleAgenda = scope === 'WAMEN' ? '308/WM/PH/IX/2026' : '308/M/PH/IX/2026';
+        const scopeTitle = scope === 'WAMEN' ? 'Wakil Menteri Ketenagakerjaan' : 'Menteri Ketenagakerjaan';
+
+        const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan Republik Indonesia (Kemnaker) yang ahli dalam membaca formulir LEMBAR DISPOSISI resmi Kemnaker (${scopeTitle}) beserta surat dinas pendukungnya.
 
 DOKUMEN TERLAMPIR:
-- Halaman 1: Formulir LEMBAR DISPOSISI resmi Kemnaker.
+- Halaman 1: Formulir LEMBAR DISPOSISI resmi Kemnaker (${scopeTitle}).
 - Halaman berikutnya (jika ada): Surat dinas masuk atau proposal pendukung.
 
 PANDUAN EKSTRAKSI FORMULIR LEMBAR DISPOSISI KEMNAKER (FOKUS UTAMA HALAMAN 1):
 1. SIFAT DOKUMEN:
    Pilihan di bagian atas: "Rahasia", "Penting/Segera", "Biasa", "Tembusan".
 2. TABEL IDENTITAS SURAT:
-   - "Nomor Agenda": nomor agenda resmi pada kolom "Nomor Agenda" (misal: "308/M/PH/IX/2026"). JANGAN tertukar dengan nomor surat pengirim!
+   - "Nomor Agenda": nomor agenda resmi pada kolom "Nomor Agenda" (misal: "${sampleAgenda}"). JANGAN tertukar dengan nomor surat pengirim!
    - "Tanggal Disposisi": tanggal di sebelah kanan nomor agenda pada kolom "Tanggal :" (misal: "8 September 2026").
    - "Nomor Surat": nomor surat dinas pengirim pada baris "Nomor / Tanggal :" (misal: "Panasonic.2026"). JANGAN sampai terlewat jika tertera di formulir!
    - "Tanggal Surat": tanggal surat dinas pengirim di sebelah kanan nomor surat (misal: "3 September 2026").
@@ -2429,26 +2440,26 @@ PANDUAN EKSTRAKSI FORMULIR LEMBAR DISPOSISI KEMNAKER (FOKUS UTAMA HALAMAN 1):
    12. Untuk diketahui
    13. File / Simpan / Arsip
    14. Agendakan / Acarakan
-   15. Mendampingi Menteri
-   16. Mewakili Menteri
+   15. Mendampingi Menteri / Wamen
+   16. Mewakili Menteri / Wamen
    ATURAN KRUSIAL LAJUR DISPOSISI:
    - Periksa posisi kotak yang dicentang secara presisi dan lurus horizontal dengan teksnya.
    - Misalnya: jika tanda centang tinta [✔] berada pada kotak baris ke-14 "Agendakan / Acarakan", maka hasilnya adalah ["Agendakan / Acarakan"]. JANGAN tertukar dengan baris di atasnya ("File / Simpan / Arsip")!
    - JIKA TIDAK ADA KOTAK YANG DICENTANG sama sekali pada lajur disposisi, WAJIB kembalikan array kosong []. JANGAN PERNAH mengarang arahan jika lajur disposisi kosong!
 5. CATATAN & TANDA TANGAN:
-   - Kolom "Catatan:" di sebelah kanan lajur disposisi memuat tanda tangan pimpinan (misal Menteri Ketenagakerjaan RI).
+   - Kolom "Catatan:" di sebelah kanan lajur disposisi memuat tanda tangan pimpinan (misal ${defaultPemberi}).
    - "catatan" diisi HANYA jika ada tulisan tangan arahan/catatan instruksi khusus dari pimpinan (misal: "Dipamitkan", "Di pamitkan", "Pamit", dsb).
    - Jika tertulis "di pamitkan" / "dipamitkan" / "pamit", WAJIB tuliskan persis kata tersebut pada field "catatan".
    - Jika hanya ada tanda tangan, nama jabatan/pejabat, stempel, atau coretan paraf tanggal (seperti "8/9" atau "28/9"), maka "catatan" isi dengan "-". JANGAN pernah membaca coretan paraf tanggal atau tanda tangan sebagai teks catatan (misal jangan membaca paraf tanggal menjadi karakter acak seperti "g%2")!
 6. PEMBERI DISPOSISI:
-   - Pejabat pimpinan yang menandatangani (misal: "Menteri Ketenagakerjaan RI" atau "Menteri Ketenagakerjaan").
-   - "namaPemberiDisposisi": nama pimpinan jika tertera (misal: "Yassierli").
+   - Pejabat pimpinan yang menandatangani (default: "${defaultPemberi}").
+   - "namaPemberiDisposisi": nama pimpinan jika tertera (misal: "${scope === 'WAMEN' ? 'Immanuel Ebenezer' : 'Yassierli'}").
 
 OUTPUT FORMAT: Kembalikan HANYA JSON valid tanpa blok markdown:
 {
   "isDisposisi": true,
   "sifat": "Penting/Segera",
-  "nomorAgenda": "308/M/PH/IX/2026",
+  "nomorAgenda": "${sampleAgenda}",
   "tanggalDisposisi": "8 September 2026",
   "nomorSurat": "Panasonic.2026",
   "tanggalSurat": "3 September 2026",
@@ -2457,8 +2468,8 @@ OUTPUT FORMAT: Kembalikan HANYA JSON valid tanpa blok markdown:
   "tanggalAcara": "Kamis, 8 Oktober 2026",
   "waktuAcara": "08:30 WIB - selesai",
   "tempatAcara": "Auditorium Universitas Darma Persada (UNSADA), Jakarta Timur",
-  "pemberiDisposisi": "Menteri Ketenagakerjaan RI",
-  "namaPemberiDisposisi": "Yassierli",
+  "pemberiDisposisi": "${defaultPemberi}",
+  "namaPemberiDisposisi": "${scope === 'WAMEN' ? 'Immanuel Ebenezer' : 'Yassierli'}",
   "diteruskanKepada": ["Kabag TU Pimpinan dan Protokol Kementerian"],
   "arahanDisposisi": ["Agendakan / Acarakan"],
   "catatan": "-"
@@ -2504,14 +2515,14 @@ OUTPUT FORMAT: Kembalikan HANYA JSON valid tanpa blok markdown:
           rawText = res.text || '';
         }
 
-        const parsed = this.parseDisposisiResponse(rawText, originalFileName, fallbackDocText);
+        const parsed = this.parseDisposisiResponse(rawText, originalFileName, fallbackDocText, scope);
         if (parsed) return parsed;
       } catch (err) {
-        console.warn(`[AiService] Ekstraksi Vision AI disposisi (${model}) gagal:`, err);
+        console.warn(`[AiService ${scope}] Ekstraksi Vision AI disposisi (${model}) gagal:`, err);
       }
     }
 
-    return this.parseDisposisiResponse('', originalFileName, fallbackDocText);
+    return this.parseDisposisiResponse('', originalFileName, fallbackDocText, scope);
   }
 
   /**
@@ -2520,7 +2531,8 @@ OUTPUT FORMAT: Kembalikan HANYA JSON valid tanpa blok markdown:
   private parseDisposisiResponse(
     rawText: string,
     _originalFileName?: string,
-    sourceDocumentText?: string
+    sourceDocumentText?: string,
+    scope: ProtocolScope = 'MENAKER'
   ): ExtractedDisposisiData {
     let cleanJson = (rawText || '')
       .replace(/<think>[\s\S]*?<\/think>/gi, '')
@@ -2615,7 +2627,9 @@ OUTPUT FORMAT: Kembalikan HANYA JSON valid tanpa blok markdown:
       waktuAcara: String(parsed.waktuAcara || '').trim() || '-',
       tempatAcara: String(parsed.tempatAcara || '').trim() || '-',
       tanggalDisposisi: finalTanggalDisposisi,
-      pemberiDisposisi: String(parsed.pemberiDisposisi || '').trim() || 'Menteri Ketenagakerjaan RI',
+      pemberiDisposisi:
+        String(parsed.pemberiDisposisi || '').trim() ||
+        (scope === 'WAMEN' ? 'Wakil Menteri Ketenagakerjaan RI' : 'Menteri Ketenagakerjaan RI'),
       namaPemberiDisposisi: String(parsed.namaPemberiDisposisi || '').trim() || '-',
       diteruskanKepada: diteruskan,
       arahanDisposisi: arahan.length > 0 ? arahan : ['Agendakan / Acarakan'],

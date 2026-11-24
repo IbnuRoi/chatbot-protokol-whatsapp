@@ -1,4 +1,4 @@
-import { sessionService, BotState, UserSession, JadwalArahanDraftData } from '../../services/sessionService';
+import { sessionService, BotState, UserSession, JadwalArahanDraftData, isGufronation } from '../../services/sessionService';
 import { jadwalService } from '../../services/jadwalService';
 import { prisma } from '../../database/prisma';
 import { sendPushNotification } from '../whatsappClient';
@@ -321,7 +321,7 @@ export class ArahanLangsungHandler {
           conflictNote +
           `\n🔔 _Notifikasi pemberitahuan telah dikirimkan secara otomatis ke WhatsApp Bapak Gufronation._\n\n` +
           `Ada agenda atau administrasi lain yang ingin Anda kelola? Silakan beri tahu saya ya. 😊`,
-        list: menuHandler.getMainMenuInteractiveList(),
+        list: menuHandler.getMainMenuInteractiveList(session.scope, isGufronation(session)),
       };
     }
 

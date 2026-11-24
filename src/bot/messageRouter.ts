@@ -53,6 +53,45 @@ function isUnspecificSearch(text: string): boolean {
 
 export class MessageRouter {
   /**
+   * Menyelaraskan scope sesi apabila perintah disposisi secara eksplisit menyebut Wamen / Menaker
+   */
+  private applyRequestedDispositionScope(
+    session: UserSession,
+    textInput: string,
+    actionLabel: string
+  ): BotResponse | null {
+    const lowerMsg = textInput.toLowerCase();
+    const requestedScope: ProtocolScope | null = /\b(?:wamen|wakil\s+menteri)\b/i.test(lowerMsg)
+      ? 'WAMEN'
+      : /\b(?:menaker|menteri)\b/i.test(lowerMsg)
+        ? 'MENAKER'
+        : null;
+
+    if (!requestedScope || requestedScope === session.scope) {
+      return null;
+    }
+
+    const allowed = session.allowedScopes || [session.scope];
+    if (allowed.includes(requestedScope) && isGufronation(session)) {
+      sessionService.setScope(session.whatsappNumber, requestedScope);
+      session.scope = requestedScope;
+      return null;
+    }
+
+    if (!allowed.includes(requestedScope)) {
+      const currentName = session.scope === 'WAMEN' ? 'Wakil Menteri' : 'Menteri';
+      const otherName = requestedScope === 'WAMEN' ? 'Wakil Menteri' : 'Menteri';
+      return {
+        text:
+          `ℹ️ *INFORMASI OTORISASI AKSES*\n\n` +
+          `Nomor WhatsApp Anda terdaftar pada sistem *Protokol ${currentName}* sehingga tidak memiliki akses ${actionLabel} ke basis data *Protokol ${otherName}*.`,
+      };
+    }
+
+    return null;
+  }
+
+  /**
    * Titik masuk utama pemrosesan pesan dari WhatsApp atau Simulator
    */
   public async processMessage(payload: IncomingMessagePayload): Promise<BotResponse> {
@@ -153,6 +192,10 @@ export class MessageRouter {
       normLower === 'upload disposisi' ||
       lower === 'unggah disposisi' ||
       normLower === 'unggah disposisi' ||
+      lower === 'input disposisi' ||
+      normLower === 'input disposisi' ||
+      lower === 'catat disposisi' ||
+      normLower === 'catat disposisi' ||
       lower === 'kirim disposisi' ||
       normLower === 'kirim disposisi' ||
       lower === '/upload_disposisi' ||
@@ -167,7 +210,12 @@ export class MessageRouter {
       if (session.draftDisposisi?.tempFilePath) {
         pdfService.deleteTempPdf(session.draftDisposisi.tempFilePath);
       }
+      const preservedSelectedSuratId =
+        payload.buttonId === 'DISPOSISI_LAGI' ? undefined : session.selectedSuratId;
       sessionService.clearDisposisiDraft(session.whatsappNumber);
+      if (preservedSelectedSuratId) {
+        session.selectedSuratId = preservedSelectedSuratId;
+      }
       return disposisiHandler.promptUpload(session);
     }
 
@@ -1166,11 +1214,15 @@ export class MessageRouter {
       }
 
       case 'INPUT_DISPOSISI': {
+        const denied = this.applyRequestedDispositionScope(session, textInput, 'input disposisi');
+        if (denied) return denied;
         const res = await disposisiHandler.promptUpload(session);
         return prependIntro(res, nlu.conversationalReply);
       }
 
       case 'DISPOSISI': {
+        const denied = this.applyRequestedDispositionScope(session, textInput, 'pencarian disposisi');
+        if (denied) return denied;
         if (nlu.entities?.nomorSurat) {
           const res = await disposisiHandler.handleSearch(session, nlu.entities.nomorSurat);
           return prependIntro(res, nlu.conversationalReply);

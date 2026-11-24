@@ -1021,7 +1021,8 @@ export class SuratService {
         conflictingEvents = await this.findConflictingEvents(
           eventTimeStart,
           eventTimeFinish,
-          createdEvent ? createdEvent.id : undefined
+          createdEvent ? createdEvent.id : undefined,
+          scope
         );
       }
 

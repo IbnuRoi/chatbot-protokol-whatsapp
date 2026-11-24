@@ -1,7 +1,7 @@
 import fs from 'fs';
-import { sessionService, BotState, UserSession, DisposisiDraftData, ExtractedDisposisiData } from '../../services/sessionService';
+import { sessionService, BotState, UserSession, DisposisiDraftData, ExtractedDisposisiData, isGufronation } from '../../services/sessionService';
 import { disposisiService } from '../../services/disposisiService';
-import { dbManager } from '../../database/dbManager';
+import { dbManager, ProtocolScope } from '../../database/dbManager';
 import { aiService } from '../../services/aiService';
 import { pdfService } from '../../services/pdfService';
 import { menuHandler } from './menuHandler';
@@ -16,18 +16,33 @@ import {
 import { formatWaktuInputIndo, formatTanggalIndo } from '../../utils/dateHelper';
 
 export class DisposisiHandler {
+  private getDefaultPemberi(scope?: ProtocolScope): string {
+    return scope === 'WAMEN' ? 'Wakil Menteri Ketenagakerjaan RI' : 'Menteri Ketenagakerjaan RI';
+  }
+
+  private getScopeBadge(scope?: ProtocolScope): string {
+    return scope === 'WAMEN' ? '🏛️ *[PROTOKOL WAKIL MENTERI]*' : '🏛️ *[PROTOKOL MENTERI]*';
+  }
+
+  private getSampleAgenda(scope?: ProtocolScope): string {
+    return scope === 'WAMEN' ? '308/WM/UND/IX/2026' : '308/M/UND/IX/2026';
+  }
+
   /**
    * Menampilkan permintaan input nomor surat / nomor agenda atau tombol upload lembar disposisi
    */
   public async promptNomor(session: UserSession): Promise<BotResponse> {
     sessionService.setState(session.whatsappNumber, BotState.DISPOSISI_INPUT_NOMOR);
+    const scopeLabel = session.scope === 'WAMEN' ? 'Wakil Menteri (Wamen)' : 'Menteri (Menaker)';
+    const sampleAgenda = this.getSampleAgenda(session.scope);
 
     return {
       text:
-        `📬 *LAYANAN DISPOSISI SURAT*\n\n` +
-        `Silakan pilih layanan disposisi yang Anda perlukan:\n\n` +
-        `• *Unggah Lembar Disposisi*:\n  Sentuh tombol *📤 Upload Disposisi* di bawah untuk merekam arahan/status disposisi baru dari foto atau PDF scan.\n\n` +
-        `• *Lacak Status Disposisi*:\n  Ketikkan langsung *Nomor Agenda* atau *Nomor Surat* (contoh: _UND/2026/09/0001_ atau _B-104/MENKO/MARVES_).\n\n` +
+        `${this.getScopeBadge(session.scope)}\n\n` +
+        `📬 *LAYANAN DISPOSISI SURAT (${scopeLabel.toUpperCase()})*\n\n` +
+        `Silakan pilih layanan disposisi *${scopeLabel}* yang Anda perlukan:\n\n` +
+        `• *Unggah / Input Lembar Disposisi*:\n  Sentuh tombol *📤 Upload Disposisi* di bawah untuk merekam arahan/status disposisi baru dari foto atau PDF scan.\n\n` +
+        `• *Cari / Lacak Status Disposisi*:\n  Ketikkan langsung *Nomor Agenda*, *Nomor Surat*, atau *Perihal/Pengirim* (contoh: _${sampleAgenda}_ atau _B-104/MENKO/MARVES_).\n\n` +
         `_(Sentuh tombol di bawah atau ketik *Batal* untuk kembali ke menu utama)_`,
       buttons: [
         { id: 'UPLOAD_DISPOSISI', text: '📤 Upload Disposisi' },
@@ -41,6 +56,7 @@ export class DisposisiHandler {
    */
   public async promptUpload(session: UserSession): Promise<BotResponse> {
     sessionService.setState(session.whatsappNumber, BotState.DISPOSISI_UPLOAD_BERKAS);
+    const scopeLabel = session.scope === 'WAMEN' ? 'Wakil Menteri (Wamen)' : 'Menteri (Menaker)';
 
     let prefixTarget = '';
     if (session.selectedSuratId) {
@@ -58,10 +74,11 @@ export class DisposisiHandler {
 
     return {
       text:
-        `📥 *PENCATATAN DISPOSISI SURAT*\n\n` +
+        `${this.getScopeBadge(session.scope)}\n\n` +
+        `📥 *PENCATATAN DISPOSISI SURAT (${scopeLabel.toUpperCase()})*\n\n` +
         prefixTarget +
-        `Silakan kirimkan dokumen atau foto *Lembar Disposisi* (berupa file PDF scan atau foto/gambar formulir disposisi).\n\n` +
-        `Sistem akan mengekstrak otomatis Nomor Agenda, Pejabat Penerima, Arahan Pimpinan, dan Catatan Khusus dari lembar disposisi.\n\n` +
+        `Silakan kirimkan dokumen atau foto *Lembar Disposisi ${scopeLabel}* (berupa file PDF scan atau foto/gambar formulir disposisi).\n\n` +
+        `Sistem akan mengekstrak otomatis Nomor Agenda, Pejabat Penerima, Arahan Pimpinan, dan Catatan Khusus lalu menyimpannya ke database *${scopeLabel}*.\n\n` +
         `_(Ketik *Batal* atau sentuh tombol di bawah untuk kembali ke menu utama)_`,
       buttons: [
         { id: 'MENU', text: '📋 Menu Utama' },
@@ -89,12 +106,12 @@ export class DisposisiHandler {
       stats = fs.statSync(tempFilePath);
     } catch (e) {}
 
-    // 1. Ekstraksi Lembar Disposisi menggunakan AI
+    // 1. Ekstraksi Lembar Disposisi menggunakan AI sesuai scope aktif
     let extracted: ExtractedDisposisiData;
     if (isImage) {
-      extracted = await aiService.extractDisposisiFromImages([tempFilePath], originalFileName);
+      extracted = await aiService.extractDisposisiFromImages([tempFilePath], originalFileName, undefined, session.scope);
     } else {
-      extracted = await aiService.extractDisposisiFromPdf(tempFilePath, originalFileName);
+      extracted = await aiService.extractDisposisiFromPdf(tempFilePath, originalFileName, session.scope);
     }
 
     // 2. Generate nama berkas final sesuai standar database
@@ -241,7 +258,7 @@ export class DisposisiHandler {
       `• *Pengirim*     : ${pengirimDisplay}\n` +
       `• *Perihal*      : ${perihalDisplay}\n\n` +
       `🎯 *Rincian Lembar Disposisi:*\n` +
-      `• *Pemberi Disposisi* : ${ext.pemberiDisposisi || 'Menteri Ketenagakerjaan RI'}\n` +
+      `• *Pemberi Disposisi* : ${ext.pemberiDisposisi || this.getDefaultPemberi(session.scope)}\n` +
       (ext.sifat && ext.sifat !== '-' ? `• *Sifat Disposisi*   : ${ext.sifat}\n` : '') +
       `• *Diteruskan Kepada* : ${diteruskanStr}\n` +
       `• *Arahan Pimpinan*   : ${arahanStr}\n` +
@@ -484,13 +501,15 @@ export class DisposisiHandler {
       ? ext.arahanDisposisi.join(', ')
       : '-';
 
+    const defaultPemberi = this.getDefaultPemberi(session.scope);
+
     // Bubble 1: Petunjuk dan Catatan Pengisian
     const guideText =
       (customGuidePrefix ? `${customGuidePrefix}\n\n` : `✏️ *PANDUAN KOREKSI DATA DISPOSISI*\n\n`) +
       `Silakan *salin (copy)* pesan template di bawah ini, ubah data pada bagian yang salah, lalu *langsung kirimkan kembali* ke chat ini tanpa perlu memilih menu:\n\n` +
       `📌 *Catatan Pengisian:*\n` +
       `• *Nomor Agenda*: Nomor agenda surat masuk induk yang didisposisikan\n` +
-      `• *Pemberi Disposisi*: Jabatan/Nama pemberi disposisi (contoh: Menteri Ketenagakerjaan RI)\n` +
+      `• *Pemberi Disposisi*: Jabatan/Nama pemberi disposisi (contoh: ${defaultPemberi})\n` +
       `• *Sifat Disposisi*: Biasa, Segera, Sangat Segera, Rahasia, Penting\n` +
       `• *Diteruskan Kepada*: Pejabat/unit kerja tujuan, pisahkan koma jika lebih dari satu (contoh: Sekjen, Dirjen PHI)\n` +
       `• *Arahan Pimpinan*: Arahan/instruksi pimpinan, pisahkan koma jika lebih dari satu (contoh: Agendakan, Hadiri)\n` +
@@ -502,7 +521,7 @@ export class DisposisiHandler {
     // Bubble 2: Template Bersih (Murni Key-Value, Tanpa Arahan/Catatan agar 100% siap disalin dan diedit)
     const cleanTemplateText =
       `Nomor Agenda: ${ext?.nomorAgenda || '-'}\n` +
-      `Pemberi Disposisi: ${ext?.pemberiDisposisi || 'Menteri Ketenagakerjaan RI'}\n` +
+      `Pemberi Disposisi: ${ext?.pemberiDisposisi || defaultPemberi}\n` +
       `Sifat Disposisi: ${ext?.sifat || '-'}\n` +
       `Diteruskan Kepada: ${diteruskanStr}\n` +
       `Arahan Pimpinan: ${arahanStr}\n` +
@@ -579,7 +598,7 @@ export class DisposisiHandler {
 
     if (parsed.pemberiDisposisi !== undefined) {
       const val = parsed.pemberiDisposisi.trim();
-      draft.extractedData.pemberiDisposisi = val && val !== '-' ? val : 'Menteri Ketenagakerjaan RI';
+      draft.extractedData.pemberiDisposisi = val && val !== '-' ? val : this.getDefaultPemberi(session.scope);
       updatedKeys.push('Pemberi Disposisi');
     }
 
@@ -1045,9 +1064,11 @@ export class DisposisiHandler {
 
     const fileUrl = getLetterShortUrl(surat.id, surat.fileName, session.scope);
     const fileLine = fileUrl ? `• *Link Berkas Surat*: ${fileUrl}\n` : '';
+    const scopeLabel = session.scope === 'WAMEN' ? 'Wakil Menteri (Wamen)' : 'Menteri (Menaker)';
 
     const text =
-      `📬 *DETAIL DISPOSISI SURAT*\n\n` +
+      `${this.getScopeBadge(session.scope)}\n\n` +
+      `📬 *DETAIL DISPOSISI SURAT (${scopeLabel.toUpperCase()})*\n\n` +
       `• *Nomor Agenda* : ${surat.nomorAgenda}\n` +
       fileLine +
       `• *Pengirim*     : ${surat.asalSurat}\n` +
@@ -1055,11 +1076,11 @@ export class DisposisiHandler {
       `• *Diinput Oleh* : ${surat.userInput?.nama || 'Petugas Protokol'}\n` +
       `• *Waktu Input*  : ${waktuInputStr}\n\n` +
       `${statusText}\n\n` +
-      `Silakan beri tahu saya jika Anda ingin memeriksa status surat lainnya ya.`;
+      `Silakan beri tahu saya jika Anda ingin memeriksa status surat lainnya atau unggah lembar disposisi baru ya.`;
 
     return {
       text,
-      list: menuHandler.getMainMenuInteractiveList(),
+      list: menuHandler.getMainMenuInteractiveList(session.scope, isGufronation(session)),
     };
   }
 }
