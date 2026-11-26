@@ -6,7 +6,7 @@ import { ENV } from '../config/env';
 import { ProtocolScope } from '../database/dbManager';
 import { ExtractedSuratData, ExtractedDisposisiData } from './sessionService';
 import { splitPicNameAndPhone, sanitizePlaceEvent, cleanTemplatePrefix, buildNarasiPenayanganTap } from '../utils/textHelper';
-import { parseIndonesianDateToDate, formatTanggalIndo, isValidDate, extractWaktuAcaraFromText } from '../utils/dateHelper';
+import { parseIndonesianDateToDate, formatTanggalIndo, isValidDate, extractWaktuAcaraFromText, getTodayWibFormatted } from '../utils/dateHelper';
 import { imageService } from './imageService';
 import { pdfService } from './pdfService';
 
@@ -2155,62 +2155,34 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
   }
 
   private getTodayFormatted(): string {
-    const now = new Date();
-    const months = [
-      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
-    ];
-    return `${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`;
+    return getTodayWibFormatted();
   }
 
   /**
-   * Ekstraksi tanggal lembar disposisi menggunakan regex pattern dari teks dokumen fisik
+   * Ekstraksi tanggal lembar disposisi menggunakan regex pattern dari teks HALAMAN 1 dokumen disposisi fisik.
+   * Memprioritaskan kolom "Tanggal :" di baris Nomor Agenda, bukan "Nomor / Tanggal :" (tanggal surat) maupun tanggal acara.
    */
-  public extractTanggalDisposisiFromText(docText: string): string | null {
+  public extractTanggalDisposisiFromText(docText: string, referenceYear?: number): string | null {
     if (!docText || typeof docText !== 'string') return null;
 
     const clean = docText.replace(/\r/g, '');
+    const dateCapture = '([0-9]{1,2}\\s+[a-zA-Z]+\\s+[0-9]{4}|[0-9]{1,2}[-/.][0-9]{1,2}(?:[-/.][0-9]{2,4})?)';
 
-    // 1. Pola berlabel khusus: Tanggal Disposisi / Tgl Disposisi / Jakarta, [Tgl] / Diterima [Tgl]
+    // 1. Pola berlabel khusus untuk Tanggal Disposisi (hindari "Nomor / Tanggal" maupun "Tanggal Surat")
     const explicitPatterns = [
-      /(?:tgl\.?|tanggal)\s*(?:pemberian\s+)?disposisi\s*[:.]?\s*([0-9]{1,2}\s+[a-zA-Z]+\s+[0-9]{4}|[0-9]{1,2}[-/.][0-9]{1,2}[-/.][0-9]{2,4})/i,
-      /(?:jakarta|ditetapkan\s+di\s+jakarta|pada\s+tanggal)\s*[,:]?\s*([0-9]{1,2}\s+[a-zA-Z]+\s+[0-9]{4}|[0-9]{1,2}[-/.][0-9]{1,2}[-/.][0-9]{2,4})/i,
-      /(?:tgl\.?|tanggal)\s*(?:penerimaan|diterima)\s*[:.]?\s*([0-9]{1,2}\s+[a-zA-Z]+\s+[0-9]{4}|[0-9]{1,2}[-/.][0-9]{1,2}[-/.][0-9]{2,4})/i,
-      /(?:tgl\.?|tanggal)\s*surat\s*[:.]?\s*([0-9]{1,2}\s+[a-zA-Z]+\s+[0-9]{4}|[0-9]{1,2}[-/.][0-9]{1,2}[-/.][0-9]{2,4})/i,
-      /(?:tgl\.?|tanggal)\s*[:.]?\s*([0-9]{1,2}\s+[a-zA-Z]+\s+[0-9]{4}|[0-9]{1,2}[-/.][0-9]{1,2}[-/.][0-9]{2,4})/i,
+      new RegExp(`Nomor\\s+Agenda[^\\n]{0,120}?(?:Tgl\\.?|Tanggal)\\s*[:.]?\\s*${dateCapture}`, 'i'),
+      new RegExp(`(?:tgl\\.?|tanggal)\\s*(?:pemberian\\s+)?disposisi\\s*[:.]?\\s*${dateCapture}`, 'i'),
+      new RegExp(`(?:tgl\\.?|tanggal)\\s*(?:penerimaan|diterima)\\s*[:.]?\\s*${dateCapture}`, 'i'),
+      new RegExp(`(?:^|\\n)\\s*(?:tgl\\.?|tanggal)\\s*[:.]\\s*${dateCapture}`, 'i'),
     ];
 
     for (const pattern of explicitPatterns) {
       const m = clean.match(pattern);
       if (m && m[1]) {
-        const parsed = parseIndonesianDateToDate(m[1].trim());
+        const parsed = parseIndonesianDateToDate(m[1].trim(), referenceYear);
         if (parsed && isValidDate(parsed)) {
           return formatTanggalIndo(parsed, false);
         }
-      }
-    }
-
-    // 2. Pola tanggal bahasa Indonesia umum yang ditemukan di lembar disposisi
-    const monthWords = 'januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember|jan|feb|mar|apr|mei|jun|jul|ags|agu|sep|sept|okt|nov|des';
-    const generalTextDateRegex = new RegExp(
-      `\\b(3[01]|[12][0-9]|0?[1-9])\\s+(?:${monthWords})\\s+(20\\d{2})\\b`,
-      'i'
-    );
-    const genMatch = clean.match(generalTextDateRegex);
-    if (genMatch) {
-      const parsed = parseIndonesianDateToDate(genMatch[0].trim());
-      if (parsed && isValidDate(parsed)) {
-        return formatTanggalIndo(parsed, false);
-      }
-    }
-
-    // 3. Pola tanggal numerik: DD/MM/YYYY atau DD-MM-YYYY
-    const numRegex = /\b(3[01]|[12][0-9]|0?[1-9])[/.-](1[0-2]|0?[1-9])[/.-](20\d{2})\b/;
-    const numMatch = clean.match(numRegex);
-    if (numMatch) {
-      const parsed = parseIndonesianDateToDate(numMatch[0].trim());
-      if (parsed && isValidDate(parsed)) {
-        return formatTanggalIndo(parsed, false);
       }
     }
 
@@ -2220,26 +2192,27 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
   /**
    * Ekstraksi metadata dan isi Lembar Disposisi dari berkas PDF (baik PDF digital maupun scan fisik).
    * Pada lembar disposisi, centangan checklist, tanda tangan, dan paraf adalah elemen visual fisik,
-   * sehingga Multimodal Vision AI SELALU diprioritaskan pada halaman pertama berkas PDF.
+   * sehingga Multimodal Vision AI SELALU diprioritaskan pada HALAMAN 1 berkas PDF dalam format lossless PNG resolusi tinggi.
    */
   public async extractDisposisiFromPdf(
     pdfFilePath: string,
     originalFileName?: string,
     scope: ProtocolScope = 'MENAKER'
   ): Promise<ExtractedDisposisiData> {
-    const pdfText = await pdfService.extractText(pdfFilePath);
+    // Ambil HANYA teks halaman 1 agar tanggal/konten surat masuk di halaman 2+ tidak mencemari lembar disposisi
+    const page1Text = await pdfService.extractFirstPageText(pdfFilePath);
 
-    // Lembar disposisi selalu berada pada halaman 1 (atau 1-2 jika lembar disposisi + surat pengantar).
-    // Render 2 halaman pertama pada skala tinggi (2.0x) agar kotak centang dan teks kecil sangat tajam.
     try {
       console.log(
-        `[AiService ${scope}] Memproses ekstraksi lembar disposisi '${originalFileName || path.basename(pdfFilePath)}' dengan Vision AI (Page 1-2)...`
+        `[AiService ${scope}] Memproses ekstraksi lembar disposisi '${originalFileName || path.basename(pdfFilePath)}' dengan Vision AI (Page 1 High-Res PNG)...`
       );
-      const renderedPages = await pdfService.renderPdfPagesToImages(pdfFilePath, 2, 2.0);
+      const renderedPages = await pdfService.renderPdfPagesToImages(pdfFilePath, 1, 3.0, [1], {
+        format: 'png',
+        maxWidthPx: 2200,
+      });
       if (renderedPages.length > 0) {
         try {
-          const visionResult = await this.extractDisposisiFromImages(renderedPages, originalFileName, pdfText, scope);
-          // Jika nomor agenda atau perihal berhasil diekstrak secara valid, kembalikan hasil vision
+          const visionResult = await this.extractDisposisiFromImages(renderedPages, originalFileName, page1Text, scope);
           if (
             (visionResult.nomorAgenda && visionResult.nomorAgenda !== '-') ||
             (visionResult.perihal && visionResult.perihal !== '-')
@@ -2254,12 +2227,12 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       console.warn(`[AiService ${scope}] Upaya ekstraksi Vision AI gagal, beralih ke analisis teks:`, visionErr);
     }
 
-    // Fallback ekstraksi berbasis teks digital jika Vision AI gagal
-    if (pdfText && pdfText.trim().length > 30) {
-      return this.extractDisposisiFromText(pdfText, originalFileName, scope);
+    // Fallback ekstraksi berbasis teks digital halaman 1 jika Vision AI gagal
+    if (page1Text && page1Text.trim().length > 30) {
+      return this.extractDisposisiFromText(page1Text, originalFileName, scope);
     }
 
-    return this.parseDisposisiResponse('', originalFileName, pdfText || '', scope);
+    return this.parseDisposisiResponse('', originalFileName, page1Text || '', scope);
   }
 
   /**
@@ -2344,6 +2317,64 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
   /**
    * Ekstraksi Lembar Disposisi langsung dari gambar/foto (Multimodal Vision AI)
    */
+  private async callVisionModel(
+    prompt: string,
+    imagePayloads: Array<{ mimeType: string; base64: string }>,
+    model: string,
+    maxTokens: number = 1500
+  ): Promise<string> {
+    let rawText = '';
+    if (this.openAiClient) {
+      const content: any[] = [{ type: 'text', text: prompt }];
+      for (const item of imagePayloads) {
+        content.push({
+          type: 'image_url',
+          image_url: {
+            url: `data:${item.mimeType};base64,${item.base64}`,
+          },
+        });
+      }
+
+      const res = await this.openAiClient.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content }],
+        temperature: 0.05,
+        max_tokens: maxTokens,
+      });
+      rawText = res.choices?.[0]?.message?.content || '';
+      if (!rawText && (res.choices?.[0]?.message as any)?.reasoning) {
+        rawText = (res.choices?.[0]?.message as any).reasoning;
+      }
+    } else if (this.genAiClient) {
+      const parts: any[] = [{ text: prompt }];
+      for (const item of imagePayloads) {
+        parts.push({
+          inlineData: {
+            mimeType: item.mimeType,
+            data: item.base64,
+          },
+        });
+      }
+
+      const res = await this.genAiClient.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts }],
+      });
+      rawText = res.text || '';
+    }
+    return rawText;
+  }
+
+  private buildImagePayload(imgPath: string): { mimeType: string; base64: string } {
+    const buffer = fs.readFileSync(imgPath);
+    const ext = path.extname(imgPath).toLowerCase();
+    const mimeType = imageService.detectImageMimeType(buffer, ext) || 'image/png';
+    return {
+      mimeType,
+      base64: buffer.toString('base64'),
+    };
+  }
+
   public async extractDisposisiFromImages(
     imagePaths: string[],
     originalFileName?: string,
@@ -2364,46 +2395,61 @@ KEMBALIKAN OUTPUT HANYA DALAM FORMAT JSON VALID TANPA MARKDOWN (\`\`\`json) DAN 
       model = ENV.PDF_EXTRACTION_MODEL || 'gemini-2.5-flash';
     }
 
+    const tempCropsToCleanup: string[] = [];
+
     if ((this.genAiClient || this.openAiClient) && validPaths.length > 0) {
       try {
-        const imagePayloads: Array<{ mimeType: string; base64: string }> = [];
-        for (const imgPath of validPaths) {
-          const buffer = fs.readFileSync(imgPath);
-          const ext = path.extname(imgPath).toLowerCase();
-          const mimeType = imageService.detectImageMimeType(buffer, ext) || 'image/jpeg';
-          imagePayloads.push({
-            mimeType,
-            base64: buffer.toString('base64'),
-          });
-        }
+        // Pre-processing ink-purification (hapus sisa pensil pudar) + split 4 crop zoom PNG lossless
+        const cropResult = await imageService.prepareDispositionVisionCrops(validPaths[0]);
+        tempCropsToCleanup.push(...cropResult.tempFilesToCleanup);
+        const visionPaths = cropResult.cropPaths.length > 0 ? cropResult.cropPaths : validPaths;
+        const imagePayloads = visionPaths.map((p) => this.buildImagePayload(p));
+        const isCropped5 = cropResult.cropPaths.length === 5;
+        const isCropped4 = cropResult.cropPaths.length === 4;
 
         const defaultPemberi = scope === 'WAMEN' ? 'Wakil Menteri Ketenagakerjaan RI' : 'Menteri Ketenagakerjaan RI';
         const sampleAgenda = scope === 'WAMEN' ? '308/WM/PH/IX/2026' : '308/M/PH/IX/2026';
         const scopeTitle = scope === 'WAMEN' ? 'Wakil Menteri Ketenagakerjaan' : 'Menteri Ketenagakerjaan';
+        const targetLeaderWord = scope === 'WAMEN' ? 'Wakil Menteri' : 'Menteri';
 
-        const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan Republik Indonesia (Kemnaker) yang ahli dalam membaca formulir LEMBAR DISPOSISI resmi Kemnaker (${scopeTitle}) beserta surat dinas pendukungnya.
+        const imageGuide = isCropped5
+          ? `DOKUMEN TERLAMPIR (5 potongan zoom resolusi tinggi dari HALAMAN 1 Lembar Disposisi ${scopeTitle}, sudah dibersihkan dari bayangan/noda abu-abu tipis):
+- Gambar 1: Bagian HEADER (4 kotak Sifat paling atas, Nomor Agenda, kolom "Tanggal :" di kanan atas, Nomor/Tanggal Surat, Asal Surat, dan Perihal).
+- Gambar 2: Bagian DITERUSKAN KEPADA - KOLOM KIRI SAJA (daftar kotak centang pejabat kiri).
+- Gambar 3: Bagian DITERUSKAN KEPADA - KOLOM KANAN SAJA (daftar kotak centang pejabat kanan).
+- Gambar 4: Bagian LAJUR DISPOSISI KIRI SAJA (16 kotak centang instruksi dari atas ke bawah).
+- Gambar 5: Bagian KANAN BAWAH (Catatan tulisan tangan, Jabatan & Tanda Tangan Pimpinan, dan Paraf tanggal di bagian bawah).`
+          : isCropped4
+            ? `DOKUMEN TERLAMPIR (4 potongan zoom resolusi tinggi dari HALAMAN 1 Lembar Disposisi ${scopeTitle}):
+- Gambar 1: HEADER & Sifat & Tanggal.
+- Gambar 2: DITERUSKAN KEPADA Kolom Kiri.
+- Gambar 3: DITERUSKAN KEPADA Kolom Kanan.
+- Gambar 4: LAJUR DISPOSISI, Catatan & Tanda Tangan.`
+            : `DOKUMEN TERLAMPIR:
+- Gambar halaman formulir LEMBAR DISPOSISI resmi Kemnaker (${scopeTitle}) yang telah dibersihkan dari noda tipis.`;
 
-DOKUMEN TERLAMPIR:
-- Halaman 1: Formulir LEMBAR DISPOSISI resmi Kemnaker (${scopeTitle}).
-- Halaman berikutnya (jika ada): Surat dinas masuk atau proposal pendukung.
+        const prompt = `Anda adalah asisten AI Protokol Kementerian Ketenagakerjaan Republik Indonesia (Kemnaker) yang sangat presisi dalam membaca formulir LEMBAR DISPOSISI resmi Kemnaker (${scopeTitle}).
 
-PANDUAN EKSTRAKSI FORMULIR LEMBAR DISPOSISI KEMNAKER (FOKUS UTAMA HALAMAN 1):
-1. SIFAT DOKUMEN:
-   Pilihan di bagian atas: "Rahasia", "Penting/Segera", "Biasa", "Tembusan".
-2. TABEL IDENTITAS SURAT:
-   - "Nomor Agenda": nomor agenda resmi pada kolom "Nomor Agenda" (misal: "${sampleAgenda}"). JANGAN tertukar dengan nomor surat pengirim!
-   - "Tanggal Disposisi": tanggal di sebelah kanan nomor agenda pada kolom "Tanggal :" (misal: "8 September 2026").
-   - "Nomor Surat": nomor surat dinas pengirim pada baris "Nomor / Tanggal :" (misal: "Panasonic.2026"). JANGAN sampai terlewat jika tertera di formulir!
-   - "Tanggal Surat": tanggal surat dinas pengirim di sebelah kanan nomor surat (misal: "3 September 2026").
-   - "Asal Surat": instansi / pengirim surat pada baris "Asal surat :" (misal: "Mohammad Arif Rachmat Gobel - Direktur Panasonic Gobel Indonesia").
-   - "Perihal": ringkasan hal surat pada kolom "Perihal :".
-   - Jika di bawah perihal tertera rincian kegiatan, ekstrak juga:
-     * "tanggalAcara": misal "Kamis, 8 Oktober 2026"
-     * "waktuAcara": misal "08:30 WIB - selesai"
-     * "tempatAcara": misal "Auditorium Universitas Darma Persada (UNSADA), Jakarta Timur"
-3. DITERUSKAN KEPADA:
-   Daftar kotak centang [ ] pejabat tujuan:
-   - Wakil Menteri Ketenagakerjaan
+${imageGuide}
+
+PANDUAN EKSTRAKSI KETAT:
+1. SIFAT DOKUMEN (Lihat 4 kotak paling atas pada Gambar 1):
+   Pilihan: "Rahasia", "Penting/Segera", "Biasa", "Tembusan".
+   - ATURAN KETAT: KEEMPAT KOTAK SIFAT SERING KALI KOSONG SEMUA! Hanya pilih jika di dalam salah satu kotak tersebut ada tanda centang/silang TINTA PULPEN yang nyata. Jika keempat kotak kosong, WAJIB isi "sifat": "-"! JANGAN PERNAH menebak "Penting/Segera"!
+2. TABEL IDENTITAS SURAT & TANGGAL DISPOSISI (Lihat Gambar 1 & paraf bawah Gambar 4):
+   - "nomorAgenda": nomor pada kolom "Nomor Agenda" (misal: "${sampleAgenda}"). JANGAN mengambil nomor surat pengirim!
+   - "tanggalDisposisi":
+     * UTAMA: Baca nilai pada kolom "Tanggal :" yang berada DI SEBELAH KANAN BARIS "Nomor Agenda" (di atas garis pemisah "Nomor / Tanggal"). Contoh: "20 November 2026", "24 November 2026".
+     * CADANGAN: Hanya jika kolom "Tanggal :" di kanan Nomor Agenda benar-benar kosong/strip ("-"), baca tulisan tangan paraf tanggal di pojok bawah halaman (misal "G 20/11" -> "20/11").
+     * DILARANG KERAS: JANGAN gunakan tanggal hari ini (tanggal upload), JANGAN ambil tanggal pada baris "Nomor / Tanggal :" (itu adalah tanggalSurat), dan JANGAN ambil tanggal kegiatan (itu adalah tanggalAcara). Jika keduanya tidak tertulis di dokumen, isi "-".
+   - "nomorSurat": nomor surat dinas pengirim pada baris "Nomor / Tanggal :".
+   - "tanggalSurat": tanggal surat dinas pengirim di sisi kanan baris "Nomor / Tanggal :".
+   - "asalSurat": pengirim surat pada baris "Asal surat :".
+   - "perihal": isi lengkap pada kolom "Perihal :".
+   - Jika di bawah perihal tertera rincian acara, ekstrak "tanggalAcara", "waktuAcara", "tempatAcara". Jika tidak ada, isi "-".
+3. DITERUSKAN KEPADA (Periksa TELITI Gambar 2 & Gambar 3):
+   Daftar opsi kolom kiri:
+   - Wakil Menteri Ketenagakerjaan (jika tercantum pada formulir)
    - Sekretaris Jenderal
    - Dirjen Pembinaan Pelatihan Vokasi dan Produktivitas
    - Dirjen Pembinaan Penempatan Tenaga Kerja dan Perluasan Kesempatan Kerja
@@ -2412,20 +2458,17 @@ PANDUAN EKSTRAKSI FORMULIR LEMBAR DISPOSISI KEMNAKER (FOKUS UTAMA HALAMAN 1):
    - Inspektur Jenderal
    - Kepala Badan Perencanaan dan Pengembangan Ketenagakerjaan
    - Staf Ahli Bidang Ekonomi Ketenagakerjaan
+   Daftar opsi kolom kanan:
    - Staf Ahli Bidang Hubungan Internasional
-   - Staf Ahli Bidang Hubungan Antarlembaga;
+   - Staf Ahli Bidang Hubungan Antarlembaga
    - Staf Ahli Bidang Sosial, Politik dan Kebijakan Publik
    - Staf Khusus
    - Kepala Pusat Pengembangan SDM Ketenagakerjaan
    - Kepala Pusat Pasar Kerja
    - Kabag TU Pimpinan dan Protokol Kementerian
    - Kasubbag Protokol
-   ATURAN KRUSIAL DITERUSKAN KEPADA:
-   - HANYA masukkan nama pejabat yang kotaknya BENAR-BENAR TERDAPAT TANDA CENTANG / CORETAN PENA / TINTA [✔] atau tanda [X].
-   - Jika kotak kosong [ ], JANGAN dimasukkan!
-   - Jika SEMUA kotak kosong [ ], kembalikan array kosong []. JANGAN PERNAH mengarang pejabat jika kotaknya kosong!
-4. LAJUR DISPOSISI (ARAHAN TINDAKAN):
-   Daftar 16 opsi arahan di kolom kiri dengan kotak centang [ ]:
+4. LAJUR DISPOSISI (Periksa TELITI Gambar 4 sisi kiri):
+   Daftar 16 opsi berurutan dari atas ke bawah:
    1. Dipelajari / Dicermati
    2. Ditindaklanjuti
    3. Agar dimonitor
@@ -2440,85 +2483,94 @@ PANDUAN EKSTRAKSI FORMULIR LEMBAR DISPOSISI KEMNAKER (FOKUS UTAMA HALAMAN 1):
    12. Untuk diketahui
    13. File / Simpan / Arsip
    14. Agendakan / Acarakan
-   15. Mendampingi Menteri / Wamen
-   16. Mewakili Menteri / Wamen
-   ATURAN KRUSIAL LAJUR DISPOSISI:
-   - Periksa posisi kotak yang dicentang secara presisi dan lurus horizontal dengan teksnya.
-   - Misalnya: jika tanda centang tinta [✔] berada pada kotak baris ke-14 "Agendakan / Acarakan", maka hasilnya adalah ["Agendakan / Acarakan"]. JANGAN tertukar dengan baris di atasnya ("File / Simpan / Arsip")!
-   - JIKA TIDAK ADA KOTAK YANG DICENTANG sama sekali pada lajur disposisi, WAJIB kembalikan array kosong []. JANGAN PERNAH mengarang arahan jika lajur disposisi kosong!
-5. CATATAN & TANDA TANGAN:
-   - Kolom "Catatan:" di sebelah kanan lajur disposisi memuat tanda tangan pimpinan (misal ${defaultPemberi}).
-   - "catatan" diisi HANYA jika ada tulisan tangan arahan/catatan instruksi khusus dari pimpinan (misal: "Dipamitkan", "Di pamitkan", "Pamit", dsb).
-   - Jika tertulis "di pamitkan" / "dipamitkan" / "pamit", WAJIB tuliskan persis kata tersebut pada field "catatan".
-   - Jika hanya ada tanda tangan, nama jabatan/pejabat, stempel, atau coretan paraf tanggal (seperti "8/9" atau "28/9"), maka "catatan" isi dengan "-". JANGAN pernah membaca coretan paraf tanggal atau tanda tangan sebagai teks catatan (misal jangan membaca paraf tanggal menjadi karakter acak seperti "g%2")!
-6. PEMBERI DISPOSISI:
-   - Pejabat pimpinan yang menandatangani (default: "${defaultPemberi}").
-   - "namaPemberiDisposisi": nama pimpinan jika tertera (misal: "${scope === 'WAMEN' ? 'Immanuel Ebenezer' : 'Yassierli'}").
+   15. Mendampingi ${targetLeaderWord}
+   16. Mewakili ${targetLeaderWord}
+
+=== ATURAN SUPER KETAT PENGECEKAN KOTAK CENTANG [ ] ===
+1. HANYA PULPEN TEGAS DI TENGAH KOTAK: Kotak dianggap tercentang HANYA jika titik pusat / lekukan tanda centang (✔) atau silang (X) dengan tinta pulpen nyata berada DI DALAM AREA TENGAH kotak tersebut.
+2. PENANDA TITIK HIJAU VERIFIKASI PIKSEL (●): Jika pada suatu bagian (Gambar 2, Gambar 3, atau Gambar 4) terlihat penanda titik bulat HIJAU (●) di sebelah kiri kotak [ ], maka sistem piksel telah membuktikan secara matematis bagian tengah kotak tersebut berisi tinta pulpen nyata. Untuk setiap kolom yang sudah memiliki penanda ●, WAJIB prioritaskan HANYA kotak bertanda ● HIJAU dan DILARANG memilih kotak tetangga di atas/bawahnya yang TIDAK memiliki titik hijau ●!
+3. ANTI-EKOR MENYILANG KE KOTAK ATAS (WAJIB DIPATUHI!):
+   - Goresan panjang ujung kanan-atas tanda centang ✔ dari kotak baris N+1 (bawah) SANGAT SERING melewati sudut bawah/kanan kotak baris N (atas) yang sebenarnya KOSONG!
+   - Contoh nyata: centangan ✔ pada "Agendakan / Acarakan" ekornya sering menyentuh sisi bawah kotak "File / Simpan / Arsip"; centangan pada "Ditindaklanjuti" menyentuh "Dipelajari / Dicermati"; centangan pada "Kabag TU Pimpinan" menyentuh "Kepala Pusat Pasar Kerja"; centangan pada "Staf Ahli Sosial, Politik" atau "Staf Khusus" bisa berdekatan dengan "Staf Ahli Hubungan Antarlembaga"; centangan pada "Kepala Badan Perencanaan" menyentuh "Inspektur Jenderal"; centangan pada "Mewakili" ekornya menyentuh "Mendampingi".
+   - Periksa BAGIAN TENGAH & KIRI DALAM setiap kotak: jika bagian dalam kotak hanya berisi goresan ekor tipis lurus dari kotak di bawahnya sementara tengah kotaknya kosong, JANGAN masukkan kotak atas tersebut!
+3. ANTI BEKAS PENSIL: Jika tampak bercak sangat samar/kabur tanpa tinta pulpen tegas, ABAIKAN.
+4. JIKA SEMUA KOTAK LAJUR DISPOSISI KOSONG: WAJIB kembalikan "arahanDisposisi": []. JANGAN mengarang!
+5. CATATAN & PEMBERI DISPOSISI (Lihat Gambar 5):
+   - "catatan": baca tulisan tangan di area "Catatan" atas dengan cermat (misal: "Kirim bunga.", "Bu Esti wakili", "Jam 14.", "Dipamitkan", "TA Iwan"). Jika kosong atau hanya ada tanda tangan & paraf tanggal di bawah, isi "-".
+   - "pemberiDisposisi": "${defaultPemberi}" (atau sesuai jabatan yang tercetak di kolom tanda tangan).
+   - "namaPemberiDisposisi": nama pimpinan di bawah tanda tangan (misal: "${scope === 'WAMEN' ? 'Afriansyah Noor' : 'Yassierli'}").
 
 OUTPUT FORMAT: Kembalikan HANYA JSON valid tanpa blok markdown:
 {
   "isDisposisi": true,
-  "sifat": "Penting/Segera",
+  "sifat": "-",
   "nomorAgenda": "${sampleAgenda}",
-  "tanggalDisposisi": "8 September 2026",
-  "nomorSurat": "Panasonic.2026",
-  "tanggalSurat": "3 September 2026",
-  "asalSurat": "Mohammad Arif Rachmat Gobel - Direktur Panasonic Gobel Indonesia",
+  "tanggalDisposisi": "17 November 2026",
+  "nomorSurat": "B/123/XI/2026",
+  "tanggalSurat": "13 November 2026",
+  "asalSurat": "Nama Pengirim - Instansi",
   "perihal": "...",
-  "tanggalAcara": "Kamis, 8 Oktober 2026",
-  "waktuAcara": "08:30 WIB - selesai",
-  "tempatAcara": "Auditorium Universitas Darma Persada (UNSADA), Jakarta Timur",
+  "tanggalAcara": "-",
+  "waktuAcara": "-",
+  "tempatAcara": "-",
   "pemberiDisposisi": "${defaultPemberi}",
-  "namaPemberiDisposisi": "${scope === 'WAMEN' ? 'Immanuel Ebenezer' : 'Yassierli'}",
-  "diteruskanKepada": ["Kabag TU Pimpinan dan Protokol Kementerian"],
-  "arahanDisposisi": ["Agendakan / Acarakan"],
+  "namaPemberiDisposisi": "${scope === 'WAMEN' ? 'Afriansyah Noor' : 'Yassierli'}",
+  "diteruskanKepada": [],
+  "arahanDisposisi": [],
   "catatan": "-"
 }`;
 
-        let rawText = '';
-        if (this.openAiClient) {
-          const content: any[] = [{ type: 'text', text: prompt }];
-          for (const item of imagePayloads) {
-            content.push({
-              type: 'image_url',
-              image_url: {
-                url: `data:${item.mimeType};base64,${item.base64}`,
-              },
-            });
-          }
+        const rawText = await this.callVisionModel(prompt, imagePayloads, model, 1500);
+        const parsed = this.parseDisposisiResponse(rawText, originalFileName, fallbackDocText, scope);
 
-          const res = await this.openAiClient.chat.completions.create({
-            model,
-            messages: [{ role: 'user', content }],
-            temperature: 0.1,
-            max_tokens: 1500,
-          });
-          rawText = res.choices?.[0]?.message?.content || '';
-          if (!rawText && (res.choices?.[0]?.message as any)?.reasoning) {
-            rawText = (res.choices?.[0]?.message as any).reasoning;
-          }
-        } else if (this.genAiClient) {
-          const parts: any[] = [{ text: prompt }];
-          for (const item of imagePayloads) {
-            parts.push({
-              inlineData: {
-                mimeType: item.mimeType,
-                data: item.base64,
-              },
-            });
-          }
-
-          const res = await this.genAiClient.models.generateContent({
-            model,
-            contents: [{ role: 'user', parts }],
-          });
-          rawText = res.text || '';
+        // Safeguard khusus tanggal: jika AI mengembalikan persis tanggal hari ini (WIB),
+        // verifikasi ulang secara terfokus HANYA pada Gambar 1 (Header Tanggal) & Gambar Paraf bawah
+        // agar tidak pernah kecolongan tanggal saat upload / halusinasi tanggal hari ini.
+        const todayWib = this.getTodayFormatted();
+        if (
+          parsed.tanggalDisposisi &&
+          parsed.tanggalDisposisi.toLowerCase() === todayWib.toLowerCase() &&
+          imagePayloads.length > 0
+        ) {
+          try {
+            const verifyPayloads = isCropped5
+              ? [imagePayloads[0], imagePayloads[4]]
+              : isCropped4
+                ? [imagePayloads[0], imagePayloads[3]]
+                : [imagePayloads[0]];
+            const verifyPrompt = `Fokus HANYA memeriksa tanggal pada dokumen lembar disposisi ini.
+Baca:
+1. "tanggalHeader": teks tanggal persis di kolom "Tanggal :" sebelah kanan baris "Nomor Agenda" (di bagian atas Gambar 1). Jika kosong, isi "-".
+2. "tanggalParaf": tulisan tangan paraf tanggal di bagian bawah halaman (jika ada, misal "20/11"), jika tidak ada isi "-".
+JANGAN gunakan tanggal baris "Nomor / Tanggal" (tanggal surat) dan JANGAN mengarang tanggal hari ini.
+Kembalikan HANYA JSON: {"tanggalHeader":"...","tanggalParaf":"..."}`;
+            const vRaw = await this.callVisionModel(verifyPrompt, verifyPayloads, model, 200);
+            const vClean = vRaw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+            const vMatch = vClean.match(/\{[\s\S]*\}/);
+            if (vMatch) {
+              const vJson = JSON.parse(vMatch[0]);
+              const headerTgl = String(vJson.tanggalHeader || '').trim();
+              const parafTgl = String(vJson.tanggalParaf || '').trim();
+              const candidateTgl = headerTgl && headerTgl !== '-' ? headerTgl : (parafTgl && parafTgl !== '-' ? parafTgl : '');
+              const agendaYearMatch = (parsed.nomorAgenda || '').match(/\b(20\d{2})\b/);
+              const refYear = agendaYearMatch ? parseInt(agendaYearMatch[1], 10) : undefined;
+              if (!candidateTgl) {
+                parsed.tanggalDisposisi = '-';
+              } else {
+                const parsedVer = parseIndonesianDateToDate(candidateTgl, refYear);
+                if (parsedVer && isValidDate(parsedVer)) {
+                  parsed.tanggalDisposisi = formatTanggalIndo(parsedVer, false);
+                }
+              }
+            }
+          } catch {}
         }
 
-        const parsed = this.parseDisposisiResponse(rawText, originalFileName, fallbackDocText, scope);
-        if (parsed) return parsed;
+        return parsed;
       } catch (err) {
         console.warn(`[AiService ${scope}] Ekstraksi Vision AI disposisi (${model}) gagal:`, err);
+      } finally {
+        pdfService.cleanupRenderedPages(tempCropsToCleanup);
       }
     }
 
@@ -2561,8 +2613,13 @@ OUTPUT FORMAT: Kembalikan HANYA JSON valid tanpa blok markdown:
           : []);
 
     const cleanAgenda = String(parsed.nomorAgenda || '').trim();
+    const rawTanggalSurat = String(parsed.tanggalSurat || '').trim() || '-';
+    const refYearMatch =
+      cleanAgenda.match(/\b(20\d{2})\b/) ||
+      rawTanggalSurat.match(/\b(20\d{2})\b/);
+    const referenceYear = refYearMatch ? parseInt(refYearMatch[1], 10) : undefined;
 
-    // Ekstrak tanggal lembar disposisi secara akurat
+    // Ekstrak tanggal lembar disposisi secara akurat (TIDAK boleh fallback ke tanggal upload/input)
     let rawTgl = String(parsed.tanggalDisposisi || '').trim();
     if (
       !rawTgl ||
@@ -2572,10 +2629,10 @@ OUTPUT FORMAT: Kembalikan HANYA JSON valid tanpa blok markdown:
       rawTgl = '';
     }
 
-    // Jika sourceDocumentText tersedia, cari tanggal di dokumen menggunakan regex jika rawTgl kosong
-    // atau jika rawTgl bernilai tanggal hari ini saat upload padahal dokumen fisik memuat tanggal lain
+    // Jika sourceDocumentText (Halaman 1) tersedia, cari tanggal disposisi dari teks halaman 1 jika rawTgl kosong
+    // atau jika rawTgl bernilai tanggal hari ini (WIB) padahal teks halaman 1 memuat tanggal lain
     if (sourceDocumentText) {
-      const extractedFromDoc = this.extractTanggalDisposisiFromText(sourceDocumentText);
+      const extractedFromDoc = this.extractTanggalDisposisiFromText(sourceDocumentText, referenceYear);
       if (extractedFromDoc) {
         if (!rawTgl) {
           rawTgl = extractedFromDoc;
@@ -2597,7 +2654,7 @@ OUTPUT FORMAT: Kembalikan HANYA JSON valid tanpa blok markdown:
     // Format tanggal disposisi ke format standar bahasa Indonesia
     let finalTanggalDisposisi = '-';
     if (rawTgl && rawTgl !== '-') {
-      const parsedDateObj = parseIndonesianDateToDate(rawTgl);
+      const parsedDateObj = parseIndonesianDateToDate(rawTgl, referenceYear);
       if (parsedDateObj && isValidDate(parsedDateObj)) {
         finalTanggalDisposisi = formatTanggalIndo(parsedDateObj, false);
       } else {
@@ -2616,11 +2673,16 @@ OUTPUT FORMAT: Kembalikan HANYA JSON valid tanpa blok markdown:
       cleanCatatan = '-';
     }
 
+    let cleanSifat = String(parsed.sifat || '').trim();
+    if (!cleanSifat || /^(?:-|null|undefined|tidak\s+ada|kosong|none)$/i.test(cleanSifat)) {
+      cleanSifat = '-';
+    }
+
     return {
       nomorAgenda: cleanAgenda && cleanAgenda !== '-' ? cleanAgenda : '',
       nomorSurat: String(parsed.nomorSurat || '').trim() || '-',
-      tanggalSurat: String(parsed.tanggalSurat || '').trim() || '-',
-      sifat: String(parsed.sifat || '').trim() || '-',
+      tanggalSurat: rawTanggalSurat,
+      sifat: cleanSifat,
       asalSurat: String(parsed.asalSurat || '').trim() || '-',
       perihal: String(parsed.perihal || '').trim() || '-',
       tanggalAcara: String(parsed.tanggalAcara || '').trim() || '-',
@@ -2632,7 +2694,7 @@ OUTPUT FORMAT: Kembalikan HANYA JSON valid tanpa blok markdown:
         (scope === 'WAMEN' ? 'Wakil Menteri Ketenagakerjaan RI' : 'Menteri Ketenagakerjaan RI'),
       namaPemberiDisposisi: String(parsed.namaPemberiDisposisi || '').trim() || '-',
       diteruskanKepada: diteruskan,
-      arahanDisposisi: arahan.length > 0 ? arahan : ['Agendakan / Acarakan'],
+      arahanDisposisi: arahan,
       catatan: cleanCatatan,
     };
   }

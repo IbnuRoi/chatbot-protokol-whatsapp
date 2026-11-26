@@ -151,10 +151,7 @@ export class DisposisiHandler {
       } catch {}
     }
 
-    // Jika tanggal disposisi belum ditemukan dari berkas disposisi, gunakan tanggal surat masuk
-    if ((!extracted.tanggalDisposisi || extracted.tanggalDisposisi === '-') && matchedLetter?.date_letter) {
-      extracted.tanggalDisposisi = formatTanggalIndo(matchedLetter.date_letter, false);
-    }
+    // Pertahankan tanggal disposisi apa adanya dari lembar disposisi fisik (jangan menimpa dengan tanggal surat masuk / hari upload)
 
     // 4. Simpan ke draft sesi
     const draftData: DisposisiDraftData = {
@@ -583,9 +580,6 @@ export class DisposisiHandler {
           };
           const existingDisp = await disposisiService.findExistingDispositionByLetterId(matched.id, session.scope);
           draft.existingDispositionId = existingDisp ? Number(existingDisp.id) : undefined;
-          if ((!draft.extractedData.tanggalDisposisi || draft.extractedData.tanggalDisposisi === '-') && matched.date_letter) {
-            draft.extractedData.tanggalDisposisi = formatTanggalIndo(matched.date_letter, false);
-          }
         } else {
           draft.matchedLetter = undefined;
           draft.existingDispositionId = undefined;
@@ -889,9 +883,6 @@ export class DisposisiHandler {
           };
           const existingDisp = await disposisiService.findExistingDispositionByLetterId(matched.id, session.scope);
           draft.existingDispositionId = existingDisp ? Number(existingDisp.id) : undefined;
-          if ((!draft.extractedData.tanggalDisposisi || draft.extractedData.tanggalDisposisi === '-') && matched.date_letter) {
-            draft.extractedData.tanggalDisposisi = formatTanggalIndo(matched.date_letter, false);
-          }
         } else {
           draft.matchedLetter = undefined;
           draft.existingDispositionId = undefined;
@@ -977,14 +968,11 @@ export class DisposisiHandler {
     const draft = session.draftDisposisi || {};
     draft.extractedData = draft.extractedData || {
       nomorAgenda: matched.agenda_number,
-      diteruskanKepada: ['Sekretaris Jenderal'],
-      arahanDisposisi: ['Agendakan'],
+      diteruskanKepada: [],
+      arahanDisposisi: [],
     };
     draft.extractedData.nomorAgenda = matched.agenda_number;
     draft.existingDispositionId = existingDisp ? Number(existingDisp.id) : undefined;
-    if ((!draft.extractedData.tanggalDisposisi || draft.extractedData.tanggalDisposisi === '-') && matched.date_letter) {
-      draft.extractedData.tanggalDisposisi = formatTanggalIndo(matched.date_letter, false);
-    }
     draft.matchedLetter = {
       id: Number(matched.id),
       agendaNumber: matched.agenda_number,

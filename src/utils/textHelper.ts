@@ -1273,9 +1273,9 @@ export function isTidakAdaDisposisiCheck(extractedData?: {
 /**
  * Memformat judul event di database sesuai arahan disposisi pimpinan (Agendakan vs Mewakili Menteri vs Tidak Ada Disposisi/Pamitkan)
  * dengan template bold di akhir kalimat:
- * - Agendakan: <p>Judul Acara<br />\r\n<strong>(Arahan Menaker: Agendakan)</strong></p>
- * - Mewakili Menteri: <p>Judul Acara<br />\r\n<strong>(Arahan Menaker: PEJABAT_DITUNJUK)</strong></p>
- * - Tidak Ada Disposisi / Pamitkan: <p>Judul Acara<br />\r\n<strong>(Arahan Menaker: Pamitkan / Tidak Ada Disposisi)</strong></p>
+ * - Agendakan: <p>Judul Acara<br />\r\n<strong>(Disposisi Menaker: Agendakan)</strong></p>
+ * - Mewakili Menteri: <p>Judul Acara<br />\r\n<strong>(Disposisi Menaker: PEJABAT_DITUNJUK)</strong></p>
+ * - Tidak Ada Disposisi / Pamitkan: <p>Judul Acara<br />\r\n<strong>(Disposisi Menaker: Pamitkan / Tidak Ada Disposisi)</strong></p>
  */
 export function formatEventTitleFromDisposition(
   originalTitle: string | null | undefined,
@@ -1287,7 +1287,7 @@ export function formatEventTitleFromDisposition(
   const cleanedTitle = cleanTemplatePrefix(originalTitle) || 'Agenda Kegiatan Protokol';
   const resolvedOfficial = resolvePejabatDitunjuk(pejabatDitunjuk);
 
-  const leaderLabel = /wamen|wakil/i.test(pemberiDisposisi || '') ? 'Arahan Wamen' : 'Arahan Menaker';
+  const leaderLabel = /wamen|wakil/i.test(pemberiDisposisi || '') ? 'Disposisi Wamen' : 'Disposisi Menaker';
 
   let suffix = '';
   if (arahanType === 'agendakan') {
@@ -1387,11 +1387,11 @@ export function formatStatusBadge(status?: string | null, statusCode?: number | 
   if (code === 5 || s.includes('selesai') || s.includes('terlaksana')) {
     return '🟢 Selesai / Terlaksana';
   }
-  if (code === 2 || s.includes('reschedule') || s.includes('dijadwalkan ulang')) {
-    return '🔄 Dijadwalkan Ulang';
-  }
-  if (code === 3 || s.includes('diwakilkan')) {
+  if (code === 2 || s.includes('diwakilkan')) {
     return '👤 Diwakilkan';
+  }
+  if (code === 3 || s.includes('reschedule') || s.includes('dijadwalkan ulang')) {
+    return '🔄 Dijadwalkan Ulang';
   }
   if (code === 4 || s.includes('batal') || s.includes('cancel')) {
     return '❌ Dibatalkan';

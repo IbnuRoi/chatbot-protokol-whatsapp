@@ -156,7 +156,7 @@ export class SuratService {
       disposisiObj = {
         id: Number(disp.id),
         status,
-        tanggalDisposisi: disp.date || disp.created_at,
+        tanggalDisposisi: disp.date || null,
         tujuanDisposisi: disp.send_by || '-',
         instruksi: cleanNote || (isPamitOrNoDisp ? 'Tidak Ada Disposisi' : '-'),
         catatan: cleanNote || (isPamitOrNoDisp ? 'Tidak Ada Disposisi' : '-'),

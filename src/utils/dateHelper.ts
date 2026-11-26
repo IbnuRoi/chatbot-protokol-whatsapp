@@ -372,9 +372,19 @@ export function removeDateMention(text: string): string {
  * - "20/10/2026" / "20-10-2026"
  * - "20 Okt 2026"
  */
-export function parseIndonesianDateToDate(input: string | null | undefined): Date | null {
+export function getTodayWibFormatted(): string {
+  const now = new Date();
+  const wib = new Date(now.getTime() + 7 * 3600000);
+  return `${wib.getUTCDate()} ${INDO_MONTH_NAMES[wib.getUTCMonth()]} ${wib.getUTCFullYear()}`;
+}
+
+export function parseIndonesianDateToDate(
+  input: string | null | undefined,
+  referenceYear?: number
+): Date | null {
   if (!input || input.trim() === '-' || input.trim() === '') return null;
   const clean = input.trim();
+  const fallbackYear = referenceYear || new Date(Date.now() + 7 * 3600000).getUTCFullYear();
 
   // 1. Format ISO YYYY-MM-DD
   const isoMatch = clean.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
@@ -382,7 +392,9 @@ export function parseIndonesianDateToDate(input: string | null | undefined): Dat
     const y = parseInt(isoMatch[1], 10);
     const m = parseInt(isoMatch[2], 10);
     const d = parseInt(isoMatch[3], 10);
-    return new Date(Date.UTC(y, m - 1, d));
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return new Date(Date.UTC(y, m - 1, d));
+    }
   }
 
   // 2. Format DD/MM/YYYY atau DD-MM-YYYY (mendukung tahun 2 digit atau 4 digit)
@@ -394,29 +406,44 @@ export function parseIndonesianDateToDate(input: string | null | undefined): Dat
     if (y < 100) {
       y = 2000 + y;
     }
-    return new Date(Date.UTC(y, m - 1, d));
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return new Date(Date.UTC(y, m - 1, d));
+    }
   }
 
   // 3. Format dengan nama bulan bahasa Indonesia
   const monthWords = Object.keys(MONTH_MAP).join('|');
   const textRegex = new RegExp(
-    `\\b(3[01]|[12][0-9]|0?[1-9])\\s*(?:-|/|\\s)\\s*(${monthWords})(?:\\s*(?:-|/|\\s)?\\s*(\\d{4}))?\\b`,
+    `\\b(3[01]|[12][0-9]|0?[1-9])\\s*(?:-|/|\\s)\\s*(${monthWords})(?:\\s*(?:-|/|\\s)?\\s*(\\d{2,4}))?\\b`,
     'i'
   );
   const m = clean.match(textRegex);
   if (m) {
     const d = parseInt(m[1], 10);
     const mon = MONTH_MAP[m[2].toLowerCase()];
-    const y = m[3] ? parseInt(m[3], 10) : new Date().getFullYear();
-    if (mon) {
+    let y = m[3] ? parseInt(m[3], 10) : fallbackYear;
+    if (y < 100) y = 2000 + y;
+    if (mon && d >= 1 && d <= 31) {
       return new Date(Date.UTC(y, mon - 1, d));
     }
   }
 
-  // 4. Fallback ke standard Date parse
-  const fallback = new Date(clean);
-  if (!isNaN(fallback.getTime())) {
-    return fallback;
+  // 4. Format ringkas DD/MM atau DD-MM (khas paraf tanggal disposisi, mis. "20/11" atau "G 20/11")
+  const shortSlashMatch = clean.match(/(?:^|\s|[A-Za-z])(3[01]|[12][0-9]|0?[1-9])[/\-](1[0-2]|0?[1-9])(?=$|\s|[.,;)\]])/);
+  if (shortSlashMatch) {
+    const d = parseInt(shortSlashMatch[1], 10);
+    const mon = parseInt(shortSlashMatch[2], 10);
+    if (mon >= 1 && mon <= 12 && d >= 1 && d <= 31) {
+      return new Date(Date.UTC(fallbackYear, mon - 1, d));
+    }
+  }
+
+  // 5. Fallback ke standard Date parse (hanya jika string tampak seperti ISO/RFC tanggal valid dengan tahun)
+  if (/\b\d{4}\b/.test(clean)) {
+    const fallback = new Date(clean);
+    if (!isNaN(fallback.getTime())) {
+      return fallback;
+    }
   }
 
   return null;

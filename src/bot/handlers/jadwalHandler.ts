@@ -38,7 +38,7 @@ export class JadwalHandler {
     const statusLower = (j.statusDisposisi || '').toLowerCase();
     const arahanLower = (j.arahan || '').toLowerCase();
 
-    if (j.statusDisposisiCode === 3 || statusLower.includes('diwakilkan')) {
+    if (j.statusDisposisiCode === 2 || statusLower.includes('diwakilkan')) {
       if (j.pejabatHadir && j.pejabatHadir !== '-' && !j.pejabatHadir.toLowerCase().includes('diwakilkan')) {
         statusKeterangan = ` *(Diwakilkan ${j.pejabatHadir.trim()})*`;
       } else if (j.arahan && j.arahan.trim() !== '') {
@@ -47,7 +47,7 @@ export class JadwalHandler {
       } else {
         statusKeterangan = ` *(Diwakilkan)*`;
       }
-    } else if (j.statusDisposisiCode === 2 || statusLower.includes('reschedule') || statusLower.includes('jadwalkan ulang')) {
+    } else if (j.statusDisposisiCode === 3 || statusLower.includes('reschedule') || statusLower.includes('jadwalkan ulang')) {
       statusKeterangan = ` *(Dijadwalkan Ulang)*`;
     } else if (j.statusDisposisiCode === 4 || statusLower.includes('cancel') || statusLower.includes('batal')) {
       statusKeterangan = ` *(Dibatalkan)*`;

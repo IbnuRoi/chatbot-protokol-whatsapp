@@ -182,6 +182,30 @@ export class DisposisiService {
         draft.finalFileName || generateDispositionFileName(draft.tempFileName || draft.tempFilePath);
       const targetPdfName = baseFinalName.replace(/\.[^.]+$/, '') + '.pdf';
 
+      // 2b. Jika tanggal disposisi di draft masih kosong, cek teks digital HALAMAN 1 berkas asli SEBELUM merge
+      // (Jangan pernah membaca file hasil merge karena berisi surat masuk halaman 2 dst, dan jangan gunakan tanggal hari ini/input)
+      const originalSourcePath = draft.tempFilePath;
+      const agendaYearMatch = (draft.matchedLetter?.agendaNumber || draft.extractedData.nomorAgenda || '').match(/\b(20\d{2})\b/);
+      const referenceYear = agendaYearMatch ? parseInt(agendaYearMatch[1], 10) : undefined;
+
+      let parsedDate: Date | null = parseIndonesianDateToDate(draft.extractedData.tanggalDisposisi, referenceYear);
+      if (!parsedDate && originalSourcePath && fs.existsSync(originalSourcePath) && originalSourcePath.toLowerCase().endsWith('.pdf')) {
+        try {
+          const firstPageText = await pdfService.extractFirstPageText(originalSourcePath);
+          if (firstPageText) {
+            const rawDateFromDoc = aiService.extractTanggalDisposisiFromText(firstPageText, referenceYear);
+            if (rawDateFromDoc) {
+              parsedDate = parseIndonesianDateToDate(rawDateFromDoc, referenceYear);
+              if (parsedDate) {
+                draft.extractedData.tanggalDisposisi = rawDateFromDoc;
+              }
+            }
+          }
+        } catch (extractErr) {
+          console.warn(`[DisposisiService ${scope}] Gagal ekstraksi teks halaman 1 berkas disposisi untuk tanggal:`, extractErr);
+        }
+      }
+
       // 3. Gabungkan lembar disposisi (halaman 1) dengan berkas surat masuk (halaman 2 dst)
       const mergeResult = await pdfService.mergeDispositionWithLetterPdf(
         draft.tempFilePath,
@@ -194,47 +218,9 @@ export class DisposisiService {
       draft.tempFilePath = mergeResult.targetPath;
       draft.finalFileName = finalFileName;
 
-      // 4. Parse tanggal disposisi (prioritaskan tanggal dari lembar disposisi fisik, BUKAN tanggal saat upload)
-      let parsedDate: Date | null = parseIndonesianDateToDate(draft.extractedData.tanggalDisposisi);
-      if (!parsedDate && draft.extractedData.tanggalDisposisi && draft.extractedData.tanggalDisposisi !== '-') {
-        const parsed = new Date(draft.extractedData.tanggalDisposisi);
-        if (!isNaN(parsed.getTime())) {
-          parsedDate = parsed;
-        }
-      }
-
-      // Jika belum ditemukan dari extractedData, coba ekstrak langsung dari teks lembar disposisi fisik
-      if (!parsedDate && draft.tempFilePath && fs.existsSync(draft.tempFilePath)) {
-        try {
-          let textDoc = '';
-          if (draft.tempFilePath.toLowerCase().endsWith('.pdf')) {
-            textDoc = await pdfService.extractText(draft.tempFilePath);
-          }
-          if (textDoc) {
-            const rawDateFromDoc = aiService.extractTanggalDisposisiFromText(textDoc);
-            if (rawDateFromDoc) {
-              parsedDate = parseIndonesianDateToDate(rawDateFromDoc);
-              if (parsedDate) {
-                draft.extractedData.tanggalDisposisi = rawDateFromDoc;
-              }
-            }
-          }
-        } catch (extractErr) {
-          console.warn(`[DisposisiService ${scope}] Gagal ekstraksi teks dari berkas disposisi untuk tanggal:`, extractErr);
-        }
-      }
-
-      // Jika lembar disposisi tidak mencantumkan tanggal tersendiri, coba fallback ke tanggal surat masuk induk dari database
-      if (!parsedDate && draft.matchedLetter) {
-        if (draft.matchedLetter.dateLetter) {
-          parsedDate = parseIndonesianDateToDate(draft.matchedLetter.dateLetter);
-        } else if (letterRecord?.date_letter) {
-          parsedDate = new Date(letterRecord.date_letter);
-        }
-      }
-
-      // CATATAN PENTING: Jika tidak tercantum tanggal pada lembar disposisi maupun di database surat,
-      // jangan pernah fallback ke new Date() (tanggal saat upload). Tetap biarkan null sesuai skema PostgreSQL.
+      // CATATAN PENTING: Jika tanggal tidak tercantum di lembar disposisi fisik,
+      // JANGAN pernah fallback ke new Date() (tanggal saat upload/input) maupun ke date_letter surat masuk.
+      // Biarkan null agar database & UI tidak menampilkan tanggal input yang keliru.
 
       const isTidakAdaDisposisi = isTidakAdaDisposisiCheck(draft.extractedData);
       const isDipamitkan = /\b(di\s*pamitkan|dipamitkan|pamit|pamitkan)\b/i.test(draft.extractedData.catatan || '');
@@ -608,13 +594,13 @@ export class DisposisiService {
               `[DisposisiService ${scope}] Berhasil memperbarui event ID ${ev.id}: status -> 4 (Tidak Ada Disposisi / Pamitkan), title -> "${eventPayload.title}"`
             );
           } else if (isMewakili) {
-            eventPayload.status = 3n; // 3: Diwakilkan
+            eventPayload.status = 2n; // 2: Diwakilkan
             eventPayload.title = formatEventTitleFromDisposition(baseTitle, 'diwakilkan', targetOfficial, draft.extractedData.pemberiDisposisi);
             eventUpdated = true;
             eventStatusText = 'Diwakilkan';
             eventTitleText = eventPayload.title as string;
             console.log(
-              `[DisposisiService ${scope}] Berhasil memperbarui event ID ${ev.id}: status -> 3 (Diwakilkan), title -> "${eventPayload.title}"`
+              `[DisposisiService ${scope}] Berhasil memperbarui event ID ${ev.id}: status -> 2 (Diwakilkan), title -> "${eventPayload.title}"`
             );
           } else if (isAgendakan) {
             eventPayload.status = 1n; // 1: onschedule (Diagendakan)

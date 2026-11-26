@@ -297,21 +297,66 @@ export class PdfService {
   }
 
   /**
-   * Me-render halaman-halaman berkas PDF menjadi berkas gambar JPEG beresolusi terukur
+   * Mengekstrak teks HANYA dari halaman pertama berkas PDF (menggunakan pdfjs-dist)
+   * agar halaman 2 dst (mis. berkas surat masuk) tidak mencemari ekstraksi lembar disposisi.
+   */
+  public async extractFirstPageText(filePath: string): Promise<string> {
+    try {
+      if (!fs.existsSync(filePath)) return '';
+      const buffer = fs.readFileSync(filePath);
+      const pdfjs: any = await import('pdfjs-dist/legacy/build/pdf.mjs').catch(() => import('pdfjs-dist'));
+      const doc = await pdfjs.getDocument({
+        data: new Uint8Array(buffer),
+        useSystemFonts: true,
+        disableFontFace: true,
+      }).promise;
+      if (!doc || doc.numPages < 1) return '';
+      const page = await doc.getPage(1);
+      const content = await page.getTextContent();
+      const lines: string[] = [];
+      let lastY: number | null = null;
+      let currentLine = '';
+      for (const item of content.items as any[]) {
+        const str = item?.str || '';
+        const y = Array.isArray(item?.transform) ? Math.round(item.transform[5]) : null;
+        if (lastY !== null && y !== null && Math.abs(y - lastY) > 4) {
+          if (currentLine.trim()) lines.push(currentLine.trim());
+          currentLine = str;
+        } else {
+          currentLine += (currentLine && str && !currentLine.endsWith(' ') ? ' ' : '') + str;
+        }
+        if (y !== null) lastY = y;
+      }
+      if (currentLine.trim()) lines.push(currentLine.trim());
+      return lines.join('\n').trim();
+    } catch (err) {
+      console.warn('[PdfService] Gagal mengekstrak teks halaman 1 PDF:', err);
+      return '';
+    }
+  }
+
+  /**
+   * Me-render halaman-halaman berkas PDF menjadi berkas gambar (JPEG / PNG) beresolusi terukur
    * untuk dianalisis oleh Multimodal Vision AI.
    *
    * @param filePath Path berkas PDF
    * @param maxPages Jumlah halaman maksimum yang di-render (default: 4)
-   * @param scale Resolusi render dasar (default: 1.5, otomatis dibatasi agar lebar <= 1600px)
+   * @param scale Resolusi render dasar (default: 1.5)
    * @param pageNumbers Daftar nomor halaman 1-based spesifik (opsional)
+   * @param options Opsi format output ('jpeg' | 'png'), maxWidthPx, dan kualitas JPEG
    */
   public async renderPdfPagesToImages(
     filePath: string,
     maxPages = 4,
     scale = 1.5,
-    pageNumbers?: number[]
+    pageNumbers?: number[],
+    options?: { format?: 'jpeg' | 'png'; maxWidthPx?: number; jpegQuality?: number }
   ): Promise<string[]> {
     const renderedPaths: string[] = [];
+    const format = options?.format || 'jpeg';
+    const maxWidthPx = options?.maxWidthPx || 1600;
+    const jpegQuality = options?.jpegQuality || 80;
+
     try {
       if (!fs.existsSync(filePath)) return [];
 
@@ -337,20 +382,25 @@ export class PdfService {
         try {
           const page = await doc.getPage(i);
           const rawViewport = page.getViewport({ scale });
-          const maxWidthPx = 1600;
           const clampedScale = rawViewport.width > maxWidthPx ? scale * (maxWidthPx / rawViewport.width) : scale;
           const viewport = clampedScale === scale ? rawViewport : page.getViewport({ scale: clampedScale });
 
           const canvas = createCanvas(Math.floor(viewport.width), Math.floor(viewport.height));
           const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
 
           await page.render({
             canvasContext: ctx as any,
             viewport,
           }).promise;
 
-          const imgBuffer = canvas.toBuffer('image/jpeg', 80);
-          const tempImgName = `temp_scan_${timestamp}_${baseName}_p${i}.jpg`;
+          const ext = format === 'png' ? 'png' : 'jpg';
+          const imgBuffer =
+            format === 'png'
+              ? canvas.toBuffer('image/png')
+              : canvas.toBuffer('image/jpeg', jpegQuality);
+          const tempImgName = `temp_scan_${timestamp}_${baseName}_p${i}.${ext}`;
           const tempImgPath = path.join(ENV.TEMP_STORAGE_PATH, tempImgName);
           fs.writeFileSync(tempImgPath, imgBuffer);
           renderedPaths.push(tempImgPath);

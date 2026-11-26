@@ -35,13 +35,13 @@ export interface NormalizedJadwal {
 
 /**
  * Memformat status disposisi/kegiatan protokol dari kolom events.status ke representasi bahasa Indonesia
- * Sesuai dokumentasi tabel events:
- * 1 : onschedule (Terjadwal / On Schedule)
- * 2 : reschedule (Dijadwalkan Ulang / Reschedule)
- * 3 : izinkan (Diizinkan / Disetujui)
- * 4 : cancel (Dibatalkan / Cancel)
- * 5 : selesai / terlaksana
- * 6 : ditolak
+ * Sesuai mapping aktual aplikasi web & kolom database (events.status):
+ * 1 : onschedule (Terjadwal / On Schedule / Diagendakan)
+ * 2 : diwakilkan (Diwakilkan pejabat lain)
+ * 3 : reschedule (Dijadwalkan Ulang / Reschedule)
+ * 4 : izinkan (Diizinkan / Pamitkan / Tidak Ada Disposisi)
+ * 5 : file (Arsip / Selesai / Terlaksana)
+ * 6 : cancel (Dibatalkan / Ditolak)
  */
 export function formatStatusDisposisi(status: number | bigint | null | undefined): string {
   if (status === null || status === undefined) {
@@ -52,9 +52,9 @@ export function formatStatusDisposisi(status: number | bigint | null | undefined
     case 1:
       return 'Diagendakan';
     case 2:
-      return 'Dijadwalkan Ulang (Reschedule)';
-    case 3:
       return 'Diwakilkan';
+    case 3:
+      return 'Dijadwalkan Ulang (Reschedule)';
     case 4:
       return 'Dibatalkan (Cancel)';
     case 5:
@@ -522,8 +522,8 @@ export class JadwalService {
     let lokasi = cleanHtml(event.location) || '-';
 
     // 1. Tentukan tanggal kegiatan
-    if (letter && letter.date_event && event.status !== 2n) {
-      // Prioritaskan tanggal resmi dari surat kecuali event secara eksplisit di-reschedule
+    if (letter && letter.date_event && event.status !== 3n) {
+      // Prioritaskan tanggal resmi dari surat kecuali event secara eksplisit di-reschedule (status = 3)
       const dt = new Date(letter.date_event);
       const y = dt.getUTCFullYear();
       const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
@@ -618,7 +618,7 @@ export class JadwalService {
       const sLet = letter.status !== null && letter.status !== undefined ? Number(letter.status) : null;
       if (sLet === 2) {
         statusDisposisi = 'Diwakilkan';
-        statusDisposisiCode = 3;
+        statusDisposisiCode = 2;
       } else if (sLet === 1) {
         statusDisposisi = 'Diagendakan';
         statusDisposisiCode = 1;
@@ -687,7 +687,7 @@ export class JadwalService {
     let statusDisposisiCode: number | null = null;
     if (sLet === 2) {
       statusDisposisi = 'Diwakilkan';
-      statusDisposisiCode = 3;
+      statusDisposisiCode = 2;
     } else if (sLet === 1) {
       statusDisposisi = 'Diagendakan';
       statusDisposisiCode = 1;
